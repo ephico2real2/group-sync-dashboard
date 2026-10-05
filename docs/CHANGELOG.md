@@ -10,6 +10,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The release, build and repository guides, the root README and `local-development/README.md` checked against the
+  code and the lab (application 5.5.0, chart 0.70.8).** `local-development/README.md` is an image input, so the
+  application takes a MINOR; the image's contents are unchanged apart from that file and its version. Corrected: what
+  `prepare-release.py --no-commit` edits and what an issue PR keeps, the chart-bump check that leaves `Chart.yaml` out,
+  the advisory image scan, the alert count and monitoring defaults, the lab's monitoring, the oauth cookie Secret a
+  render no longer carries, and the `--argocd release` rows. The claims and their evidence are in
+  `docs/reviews/DOCS_AUDIT_2026-10-05_b4_release_build.md`. No template, value or RBAC change.
+
 - **Dependabot: `anchore/sbom-action` 0.24.2 to 0.24.3 in `.github/workflows/publish.yml` (#619; application 5.4.0,
   chart 0.70.7).** The workflow is an image input, so the application takes a MINOR; the image's contents are
   unchanged apart from its version. The pin is the commit the `v0.24.3` tag points to (`66cbf4bc`).

@@ -17,7 +17,7 @@ Run everything below from **this** directory.
 | File | What it is |
 |---|---|
 | `release-crc.sh` | build + push + deploy against **CRC's built-in registry**. Portable nowhere else |
-| `prepare-release.py` | the four version fields, the Chart.yaml history line, the changelog heading, the branch and the commit, from `--app`/`--chart` and a reason; runs the version test first (`../docs/guides/RELEASING.md`) |
+| `prepare-release.py` | the four version fields, the Chart.yaml history lines, the changelog heading, the specs it releases, the branch and the commit, from `--app`/`--chart` and a reason; runs the version test before it commits (`../docs/guides/RELEASING.md`) |
 | `restore-db.sh` | list the database copies the recovery pod can restore, and restore one (#302); it streams `restore-db.py` into the pod. `../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` section 4 |
 | `clusters.example.yaml` | template for `clusters.yaml`, the local poller config |
 | `clusters.yaml` | your local config. Gitignored |
@@ -69,6 +69,8 @@ minted Secrets survive either way). `--values` applies to both modes.
 | `--argocd --values X` | Argo | GitHub at HEAD | same | `valueFiles: [../../X]` | `X` committed, clean, pushed |
 | `--argocd <branch>` | Argo | GitHub at `<branch>` | the chart's default — the published quay image, which lags main; no in-pod commit check | default | branch on origin (fetched by full ref before the Helm release goes; the waiter wants its commit synced) |
 | `--argocd <branch> --values X` | Argo | GitHub at `<branch>` | same | `[../../X]` | `X` present at `origin/<branch>` |
+| `--argocd release` | Argo | GitHub at `release` | the digests in `promotion.yaml`, read back again | `crc.yaml`, then `promotion.yaml` | `promotion.yaml` on `origin/release` |
+| `--argocd release --values X` | Argo | GitHub at `release` | same | `X`, then `promotion.yaml` | `X` present at `origin/release` |
 | `--build-only` | untouched | — | built, **not** pushed (no credentials needed) | — | — |
 | `--allow-dirty --argocd` | **refused** | | | | Argo deploys a commit; a dirty tree has none |
 | `--build-only --argocd`, `--build-only --values X` | **refused** | | | | neither applies to a build |
@@ -123,10 +125,11 @@ recipe. `docs/design/DESIGN_hardened_image.md` has the design and the measuremen
 `docs/guides/image-vulnerability-scan.md` has the scan.
 
 What is in the pod's shell: `sh`, `bash`, `curl`, `jq`, `cat`, `ls`, `base64`, `mkdir`, `chgrp`,
-`chmod`, `rm`. What is not: `head`, `wc`, `grep`, `id`, `pip`, `rpm`, `dnf`. A command that needs
+`chmod`, `rm`, `rmdir`. What is not: `head`, `wc`, `grep`, `id`, `pip`, `rpm`, `dnf`. A command that needs
 one of those fails with "command not found".
 
-Scan locally the way CI does — Grype, because Trivy does not recognise the base's OS:
+Scan locally with the scanner CI uses — Grype, because Trivy does not recognise the base's OS. CI's
+scans only report (`fail-build: false`); `--fail-on high` makes this one fail:
 
 ```bash
 podman build --target pack -t gsd:pack -f Containerfile .
@@ -178,17 +181,17 @@ oc apply -f deploy/            # if you want to apply it yourself
 folder exists so a human, a review, or a diff in a ticket sees the exact objects before the
 cluster does.
 
-Two values the chart normally reads from the live cluster are resolved by the script instead,
-because `helm template` runs with no cluster connection and every `lookup` in the chart
-returns empty:
+Two values are resolved by the script, because `helm template` runs with no cluster connection
+and every `lookup` in the chart returns empty:
 
 * **the Ingress host**, only when `--set ingress.enabled=true` is passed — derived from the
   cluster's apps domain, because without it the chart's own guard aborts, since a hostless
   Ingress produces no Route at all on OpenShift. The default Route needs no host and no lookup;
-* **the oauth cookie secret**, read back from the live Secret. This one matters: the chart
-  mints a fresh `randAlpha 32` whenever it cannot find an existing Secret, so two consecutive
-  renders produce two different keys and applying them in turn signs every logged-in user
-  out. The script reuses the live value and says which it did.
+* **the oauth cookie secret**. Since chart 0.37.0 a render carries none: the secrets-mint hook
+  mints `<release>-oauth-session` on the cluster and keeps it, so the live key is not in what you
+  apply. The script still looks for a live `<release>-oauth-cookie`, the name before 0.37.0, and
+  passes its value as `oauthProxy.cookieSecret` when it finds one, which renders the
+  `-oauth-session` Secret with that value.
 
 **`helm upgrade --install` remains the supported deploy.** Applying rendered YAML leaves no
 Helm release, so `helm list`, `helm rollback` and `helm diff` know nothing about it. Do not
@@ -217,11 +220,12 @@ changes. `oc annotate` does nothing: verified on CRC, generation stayed at 2 and
 
 ## Notes about CRC specifically
 
-**Monitoring is disabled at the CVO level** — `cluster-monitoring-operator` and `monitoring`
-are both `unmanaged=true`, and `openshift-monitoring` has no pods. So there is no Prometheus,
-user-workload monitoring cannot be enabled the normal way, and the ServiceMonitor and
-PrometheusRule in `deploy/` are inert here. They are still validated: `promtool check rules`
-passes, and the metrics endpoint is scrapeable over the Service from inside the cluster.
+**Monitoring runs on the lab now.** `openshift-monitoring` and `openshift-user-workload-monitoring`
+have their Prometheus pods, `cluster-monitoring-config` sets `enableUserWorkload: true`, and the
+chart's PrometheusRule and ServiceMonitors are in the release namespace (read 2026-10-05). Before
+that, this CRC had monitoring disabled at the CVO level (`cluster-monitoring-operator` and
+`monitoring` `unmanaged=true`), and the two objects were inert; on such a cluster they still are,
+and `promtool check rules` is how they are validated.
 
 **The podman VM cannot resolve `*.crc.testing`.** CRC maps those names to `127.0.0.1` in
 `/etc/hosts`, which inside the VM means the VM itself. The Mac is `192.168.127.254` from

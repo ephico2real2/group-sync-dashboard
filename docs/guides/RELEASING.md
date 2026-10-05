@@ -38,7 +38,8 @@ the next MINOR or MAJOR.
 
 ## The whole flow
 
-Every merge goes through one gate, then fans out to two independent workflows:
+Every merge goes through one gate, then fans out to two independent workflows (`promote.yml` follows them;
+"Promotion to the lab", below):
 
 ```
    pull request
@@ -57,11 +58,13 @@ Every merge goes through one gate, then fans out to two independent workflows:
    (below)                     (below)
 ```
 
-**`publish.yml` — the image. It writes to nothing in this repository.**
+**`publish.yml` — the image. It commits nothing to this repository; its one write there is the provenance
+in the attestation store.**
 
 ```
    did an image input change?
-   gsd/** · pyproject.toml · README.md · Containerfile · .containerignore · build script
+   gsd/** · pyproject.toml · README.md · both Containerfiles · .containerignore · both build scripts
+   uninstall-lists.py · both image proofs · publish.yml
         |
         +-- no --> nothing published
         |
@@ -78,6 +81,8 @@ Every merge goes through one gate, then fans out to two independent workflows:
                     push  :0.7.0                     THE ALIAS. Releases only.
                                                      This is what the chart
                                                      resolves by default.
+                    push  :<chartVersion>            the chart version's label,
+                                                     which helm.yaml copies again
 
    cannot tell? (workflow_dispatch, first push, unreadable base)
         --> immutable tag only, plus a ::warning:: naming --release-tags
@@ -283,7 +288,7 @@ design that did.
 helm upgrade ... --set image.tag=0.7.0-f9fa896778
 ```
 
-**And verify, whichever form you pinned.** Every pushed image is signed and attested by digest
+**And verify, whichever form you pinned.** Every image `publish.yml` pushes from `main` is signed and attested by digest
 under GitHub's OIDC identity — no key to fetch — and every published chart package is attested
 the same way. The commands, with their outputs, are in
 `HELM_DOWNLOAD_AND_INSTALL.md#7. Verify what you downloaded`; the decisions, including why there is
@@ -309,22 +314,24 @@ What that does, and what you would do by hand without it:
    `gsd_build_info` report, and a test holds the two together.
 3. Bump `appVersion` in `charts/group-sync-dashboard/Chart.yaml` to match.
 4. Bump `Chart.yaml` `version` too, because you just changed the chart. The script derives a PATCH
-   bump; pass `--chart A.B.C` when the release is more than that. `ci.yml` fails the PR if the
-   version did not move.
+   bump; pass `--chart A.B.C` when the release is more than that. CI does not catch a missed bump
+   here: `ci.yml`'s chart check leaves `Chart.yaml` itself out, so an `appVersion`-only change passes it.
 5. Write the `# CHART A.B.C (date), KIND: …` line above `version:` and the application paragraph
    above `appVersion:` — the file's history, newest nearest the field.
 6. Turn `## Unreleased` in `docs/CHANGELOG.md` into `## Application X — chart Y — date`, with the
    reason as its first bullet, the schema line under it when the release moves the schema (below), and
-   everything merged since the last release beneath it.
+   everything merged since the last release beneath it. Move every spec marked `merged` in
+   `docs/specs/README.md`, and its spec's header, to `released`.
 7. Run `tests/test_chart_versions.py`. The script refuses to commit if it fails, and leaves the
    edits in the tree for you to read.
 8. Open the PR, merge it. `publish.yml` sees the version change and publishes both the immutable tag
    and the `:<appVersion>` alias.
 
-The script refuses a dirty tree, a version that does not advance, a bump that leaves a lower
-component non-zero, and a release branch that already exists; it commits to `release/app-X.Y.Z`
-with you as the only author and never touches `main` (`local-development/prepare-release.py#WHAT IT REFUSES`).
-All the edits land in one PR, or CI is red. That is the coupling working, not friction.
+The script refuses a dirty tree, a checkout other than `main` (unless `--no-commit`), a version that
+does not advance, a bump that leaves a lower component non-zero, and a release branch that already
+exists; it commits to `release/app-X.Y.Z` with you as the only author and never touches `main`
+(`local-development/prepare-release.py#WHAT IT REFUSES`). All the edits land in one PR, or CI is red
+(the chart `version` aside, step 4). That is the coupling working, not friction.
 
 **The schema line (#300).** An application release whose image migrates the database says so, directly under
 the reason:
@@ -363,23 +370,29 @@ cd local-development
 ```
 
 Commit the template change first; the script refuses a dirty tree, so the release commit contains
-only the release. It bumps `Chart.yaml` `version`, writes the history line, and turns `## Unreleased` into
-`## Chart A.B.C — application X.Y.Z — date`. Open the PR, merge. No image is built — `charts/**`
+only the release. It bumps `Chart.yaml` `version`, writes the history line, turns `## Unreleased` into
+`## Chart A.B.C — application X.Y.Z — date`, and moves `merged` specs to `released`. Open the PR, merge. No image is built — `charts/**`
 is deliberately absent from `publish.yml`'s path filter — and `helm.yaml` retags the existing image
 under the new chart version.
 
 ### Neither
 
 A docs-only or tooling PR outside `publish.yml`'s image-input paths, with no chart content change,
-needs neither version bump. An image-changing issue takes the next MINOR in its PR; on its branch,
-`./prepare-release.py --app X.Y.Z "Issue summary" --no-commit` prepares the matching version fields
-and release notes for review alongside the change.
+needs neither version bump. An image-changing issue takes the next MINOR in its PR. On its branch,
+`./prepare-release.py --app X.Y.Z "Issue summary" --no-commit` makes every edit of an application
+release in the tree and commits nothing: the three version fields, the chart's PATCH and both
+`Chart.yaml` history lines, `## Unreleased` turned into `## Application X.Y.Z — chart A.B.C — date`
+with the summary as its first bullet, and every `merged` spec moved to `released`. An issue PR
+without a migration keeps the version fields, the chart version and the two history lines; it restores
+`## Unreleased` with the summary as one bullet under it, and reverts the spec statuses (as `06431584`
+for #598, `4eee95e4` for #616 and `86c118f0` for #619 did).
 
 **A migration is never "neither".** A merge that adds a `_MIGRATIONS` entry (`local-development/gsd/store.py`)
 without an application release leaves the chart's default image one schema behind `main`, and that image
 refuses readiness on any database `main`'s code has migrated. `tests/test_migration_needs_app_release.py`
 fails such a PR in CI (#298). Release the application in the same PR: on its branch, run
-`./prepare-release.py --app X.Y.Z "..." --no-commit` and commit the edits. Commit the bump after the
+`./prepare-release.py --app X.Y.Z "..." --no-commit` and commit the edits, keeping the application heading
+the schema line sits under. Commit the bump after the
 migration: until the merge, the test takes the bump commit for the release.
 
 ---

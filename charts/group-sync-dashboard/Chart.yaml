@@ -382,7 +382,10 @@ type: application
 # and the lab (docs audit, batch 2). No template, value, appVersion or RBAC change.
 # CHART 0.70.7 (2026-10-05), PATCH: appVersion moves to application 5.4.0 (below); Dependabot:
 # anchore/sbom-action 0.24.2 to 0.24.3 in publish.yml, an image input (#619).
-version: 0.70.7
+# CHART 0.70.8 (2026-10-05), PATCH: appVersion moves to application 5.5.0 (below); the release,
+# build and repository guides checked against the code and the lab (docs audit, batch 4). No
+# template, value or RBAC change.
+version: 0.70.8
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -533,7 +536,9 @@ version: 0.70.7
 # chart's install and operate guides ship in the chart's docs/. MINOR.
 # 5.4.0 (2026-10-05). Dependabot: anchore/sbom-action 0.24.2 to 0.24.3 in publish.yml, an image
 # input (#619). MINOR.
-appVersion: "5.4.0"
+# 5.5.0 (2026-10-05). local-development/README.md, an image input, corrected against the code and
+# the lab (docs audit, batch 4). MINOR.
+appVersion: "5.5.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

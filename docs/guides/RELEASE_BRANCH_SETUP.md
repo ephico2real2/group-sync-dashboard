@@ -6,7 +6,7 @@ two ways to do it (the GitHub web pages, and the `gh` command line) and a check.
 
 ## In one minute
 
-The lab runs the dashboard from a branch. Until now that branch was `main`. A merge to `main` can reach the lab a
+The lab runs the dashboard from a branch. During development that branch is `main` (step 6). A merge to `main` can reach the lab a
 minute before its image has been built, and the pods wait in `ErrImagePull` until the image exists.
 
 `release` is a branch that only receives a version **after its images are proven to exist**. The workflow
