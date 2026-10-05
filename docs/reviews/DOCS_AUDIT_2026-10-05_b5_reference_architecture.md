@@ -38,7 +38,7 @@ correct claim and a wrong citation; the totals count it as fixed.
 
 | document | claims checked | fixed | not measured | code-suspect |
 |---|---|---|---|---|
-| `docs/guides/reference-architecture.md` | 258 | 79 | 19 | 1 |
+| `docs/guides/reference-architecture.md` | 259 | 80 | 19 | 1 |
 
 ## `docs/guides/reference-architecture.md`
 
@@ -51,7 +51,7 @@ correct claim and a wrong citation; the totals count it as fixed.
 | polls both, every RoleBinding and ClusterRoleBinding; SQLite on a PV; single-page UI and JSON API | CORRECT | `gsd/kube.py` lines 90-94; render: PVC `group-sync-dashboard-data` mounted at `/data` |
 | binding views are direct bindings only, and the API says so in its payload | CORRECT | `gsd/api.py` `group_detail`, lines 1874-1876 ("DIRECT bindings only. Role rules are never fetched or expanded"); no `roles`/`clusterroles` path in `gsd/` |
 | no ClusterRole write verb on a GroupSync, Group or binding at any setting | CORRECT | default render: reader ClusterRole verbs `get`/`list` only; `templates/rbac.yaml` lines 76-95; `test_chart_strategy.py` write-verb tests pass |
-| "the only object the dashboard writes anywhere is its own leader-election Lease" | FIXED | default render: Role `group-sync-dashboard-leases` (`get`, `create`, `update`), ClusterRoleBinding `group-sync-dashboard-auth-delegator` to `system:auth-delegator` (SubjectAccessReviews, `gsd/kube.py` line 1379); lab: Lease `gsd-fleet-666f1ba7f2fdead0` beside `group-sync-dashboard`; Secrets with `clusterConfig.secrets.writes.enabled` (batch 2); fleet login and revoke (`gsd/fleetlogin.py`). Now lists all of them, as the root README's "What it writes" does |
+| "the only object the dashboard writes anywhere is its own leader-election Lease" | FIXED | default render: Role `group-sync-dashboard-leases` (`get`, `create`, `update`), ClusterRoleBinding `group-sync-dashboard-auth-delegator` to `system:auth-delegator` (SubjectAccessReviews, `gsd/kube.py` line 1379); lab: Lease `gsd-fleet-666f1ba7f2fdead0` beside `group-sync-dashboard`; Secrets with `clusterConfig.secrets.writes.enabled` (batch 2); fleet login and revoke (`gsd/fleetlogin.py`). Now lists all of them, as the root README's "What it writes" does **Found by Codex's review:** the list still lacked the oauth-proxy's TokenReviews (`templates/rbac.yaml`, `system:auth-delegator`), the secrets-mint hook's Secrets under its own ServiceAccount (`templates/secrets-mint.yaml`), and the remote logins' OAuth tokens: fleet lookup and Rejoin revoke theirs (`gsd/fleetlogin.py`), `userSelfLogin` keeps, renews and revokes the superseded one (`gsd/selflogin.py`), Rejoin asks a SelfSubjectAccessReview (`gsd/rejoin.py`). Now all named. |
 
 ### §1a The whole workflow
 
@@ -81,9 +81,9 @@ correct claim and a wrong citation; the totals count it as fixed.
 | oauth-proxy `:8443` HTTPS; app binds `127.0.0.1:8080`; `-upstream=http://127.0.0.1:8080` | CORRECT | render: `-https-address=:8443`, `--host 127.0.0.1 --port 8080`, `-upstream=http://127.0.0.1:8080` |
 | Poller one thread per cluster; LeaderElector renews a Lease; ActivityRecorder buffered; Store `/data/gsd.db` + WAL; `VACUUM INTO` to `/data/backup` | CORRECT | `gsd/poller.py` line 1406 (`poll-<name>`); `gsd/leader.py` line 261; `gsd/activity.py` line 271; env `GSD_DB_PATH=/data/gsd.db`; fresh `Store`: `journal_mode` `wal`; `config.backup.dir: /data/backup` |
 | "list — read-only" to the cluster; "Lease get/create/update" | CORRECT | as §1; render: Role `-leases` verbs |
-| "The Lease arrow is the whole of the system's write surface" | FIXED | SubjectAccessReviews and, with writes on, Secrets (above). Now says the Lease is not the whole write surface and names the rest |
+| "The Lease arrow is the whole of the system's write surface" | FIXED | SubjectAccessReviews and, with writes on, Secrets (above). Now says the Lease is not the whole write surface and names the rest **Found by Codex's review:** now also names the TokenReviews, the hook's Secrets and the remote logins. |
 | `gsd/config.py`, `poller.py`, `leader.py`, `storage.py`, `state.py`, `audit.py`, `activity.py`, `metrics.py`, `api.py` rows | CORRECT | each module's docstring; `gsd/state.py` imports only stdlib and `croniter`; `gsd/storage.py` `open_backend` (line 426) |
-| `gsd/kube.py` "Read-only REST client" | FIXED | it POSTs one SubjectAccessReview (`ClusterClient.create_subject_access_review`, line 1349; `client.post` line 1379, the only write call in the file). Now says so |
+| `gsd/kube.py` "Read-only REST client" | FIXED | it POSTs one SubjectAccessReview (`ClusterClient.create_subject_access_review`, line 1349; `client.post` line 1379, the only write call in the file). Now says so **Found by Codex's review:** "the only write call in the file" is the SAR's `client.post`, but the `_send` seam carries the fleet-Lease, cluster-Secret and Rejoin SelfSubjectAccessReview writes (`gsd/fleetstate.py`, `gsd/clusterconfig/writer.py`, `gsd/rejoin.py`). The row now says "Kubernetes REST client" and names them. |
 | `gsd/store.py` "The only module containing SQL or the string `sqlite3`" | FIXED | `gsd/reporting/snapshot.py` imports `sqlite3` and speaks SQL (`tests/test_storage_seam.py` line 30 allows both); the same table already calls snapshot.py "the second". Now "the dashboard's only module … `reporting/snapshot.py` is the other" |
 | `gsd/loginlog.py` "Parses oauth-server log text into login attempts" | FIXED | its docstring: "This legacy parser and outcome vocabulary remain for historical-row fixtures and API/KPI consumers. The live pod-log reader is removed; auditlog.py is the only live input." Now says that |
 | `gsd/logincapture.py` "Reads the oauth-server's logs" | FIXED | its docstring: "Audit login capture entry point and bounded retention"; the reader is `gsd/auditlog.py` (the oauth-server audit log). Now names both |
@@ -147,7 +147,7 @@ correct claim and a wrong citation; the totals count it as fixed.
 
 | claim | verdict | evidence |
 |---|---|---|
-| "Fifteen tables" | FIXED | a fresh `Store` (`PYTHONPATH=. python`, `sqlite_master`): 35 tables, `user_version` 20. Now "Thirty-five tables …; this section is about fifteen of them" |
+| "Fifteen tables" | FIXED | a fresh `Store` (`PYTHONPATH=. python`, `sqlite_master`): 35 tables, `user_version` 20. Now "Thirty-five tables …; this section is about fifteen of them" **Found by Codex's review:** `sqlite_master` holds 36 table rows; the 36th is SQLite's own `sqlite_sequence`. Now "Thirty-five application tables (thirty-six rows in `sqlite_master` …)". |
 | "`sync_event` and `membership_event` … Everything else is a cache the next poll rebuilds" | FIXED | `binding_event` and `kyverno_result_event` are diff histories (retention windows, `Poller._prune_history` lines 1037-1050) and `managed_group_seen` is append-only (this page, below); none is rebuilt by a poll. Now names them and limits the cache statement to the current-state tables |
 | the ER diagram's fourteen tables and their relations | CORRECT | every name is in the fresh database; `groupsync_provider` and `reconcile_error` key on the CR |
 | "`dashboard_user_activity` is the fifteenth and belongs to no cluster" | FIXED | of 35, only `cluster` and `dashboard_user_activity` have no `cluster_id` (same run; batch 1 measured the same). "the fifteenth" dropped |
@@ -210,7 +210,7 @@ correct claim and a wrong citation; the totals count it as fixed.
 | the code reads and writes Leases in its own namespace only | CORRECT | `gsd/leader.py` `own_namespace` (line 36), `LeaderElector._namespace` (line 83) |
 | login capture: `get nodes/proxy`, optional `resourceNames`, `list nodes` only when unpinned, on by default, audit log at default verbosity, no `pods/log` | CORRECT | `templates/login-capture-rbac.yaml` lines 10-35; render; `loginCapture.source: audit-log` |
 | the auth-loglevel Jobs and patch grant are removed; the README has the migration note | CORRECT | no such template; chart README "OAuth Debug migration" (line 644) |
-| "No `watch`" | FIXED | the default render's `-cluster-secrets` Role grants `get`, `list`, `watch` on ConfigMaps and Secrets in the release namespace (`templates/cluster-secrets-rbac.yaml` lines 21-27); the code sends no watch (no `watch` request in `gsd/`). Now "No `watch` in the reader ClusterRole", with the Role named |
+| "No `watch`" | FIXED | the default render's `-cluster-secrets` Role grants `get`, `list`, `watch` on ConfigMaps and Secrets in the release namespace (`templates/cluster-secrets-rbac.yaml` lines 21-27); the code sends no watch (no `watch` request in `gsd/`). Now "No `watch` in the reader ClusterRole", with the Role named **Found by Codex's review:** the sentence after it, "the only thing the ServiceAccount can change", now says the reviews persist nothing, the hook uses its own ServiceAccount and remote logins use the configured account. |
 | with the defaults, the Leases are the only thing the ServiceAccount can change | CORRECT | default render: the only write verbs bound to it are the Leases' and `system:auth-delegator`'s `create` on reviews, which persist nothing; Secret writes need `writes.enabled` (default false) |
 | zero `patch` at every `unmanagedAudit.mode` | CORRECT | `test_chart_strategy.py` write-verb tests over the modes pass |
 | `users` is the Users tab's source; manual accounts; `fullName`; membership from Groups | CORRECT | `templates/rbac.yaml` lines 30-44; `poll_once` lines 380-447 |
@@ -379,6 +379,7 @@ correct claim and a wrong citation; the totals count it as fixed.
 | §11 "with `--set ingress.enabled=true` it also needs `--set ingress.host`" | FIXED | with the default Route on, that render fails: `route.enabled and ingress.enabled are both true` (`_helpers.tpl` line 127). Now `--set route.enabled=false --set ingress.enabled=true` plus the host |
 | §12 every link | CORRECT | every relative link resolves (a link check over the page) |
 | §12 `REVIEW_*.md` and `OAUTH_LOGLEVEL_REVIEW.md` are under `docs/` | CORRECT | `docs/reviews/` (87 `REVIEW_*`), `docs/research/OAUTH_LOGLEVEL_REVIEW.md` |
+| (missing) housekeeping, on by default in the chart | FIXED | **Found by Codex's review.** `housekeeping.enabled: true` (`values.yaml` lines 1179-1180); the delete routes in `gsd/api.py` (lines 1511-1588) are behind the cluster-admin tier; `gsd/housekeeping.py` never deletes the newest copy in each directory; `gsd/reporting/artifacts.py` refuses a queued or running run. A short paragraph added to §1 |
 
 ## Diagrams
 

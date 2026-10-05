@@ -38,10 +38,18 @@ It does not create, edit or delete anything it observes — not a GroupSync CR, 
 a binding's subjects, its `roleRef` or its metadata. At no value of any chart setting does the
 ClusterRole carry a write verb on any of those (`templates/rbac.yaml#NO WRITE VERB`). What it does
 write on a cluster is its own Leases in its own namespace (the elector's, and one per fleet account), the
-SubjectAccessReviews that decide a reader's tier, which store nothing, the labelled cluster Secrets in its
-own namespace with `clusterConfig.secrets.writes.enabled`, and a fleet account's login session on a remote
-cluster, which it revokes when done (§7.1). There was one write path, which labelled the
+TokenReviews and SubjectAccessReviews `system:auth-delegator` allows (the oauth-proxy's and the reader's tier;
+reviews store nothing), and the labelled cluster Secrets in its own namespace with
+`clusterConfig.secrets.writes.enabled`. The chart's secrets-mint hook, under its own ServiceAccount, creates
+the session, shared-token and ticket-key Secrets when they are absent. On a remote cluster, fleet lookup,
+`userSelfLogin` and Rejoin log in as the configured account (Rejoin: the person's), which creates an OAuth
+token for that account: fleet lookup and Rejoin revoke it on exit, `userSelfLogin` keeps and renews it and
+revokes the one it replaces, and Rejoin also asks a SelfSubjectAccessReview with it (§7.1). There was one write path, which labelled the
 unmanaged grants it discovered; §7.3 is the live-cluster measurement that removed it.
+
+Housekeeping, on by default in the chart, lets the cluster-admin tier delete finished report runs and old
+database copies on the pods' own volumes, previewed and confirmed; a queued or running run and the newest
+copy in each backup directory are never deleted (`gsd/housekeeping.py`, `gsd/reporting/artifacts.py`).
 
 ---
 
@@ -187,16 +195,16 @@ flowchart LR
 ```
 
 The Lease arrow is the dashboard's own coordination object — not anything it reports on — and every
-arrow to the observed objects is a `list`. It is not the whole write surface: the tier's
-SubjectAccessReviews (§7.5), and with `clusterConfig.secrets.writes.enabled` the cluster Secrets in its
-own namespace, are drawn nowhere here. §7.1.
+arrow to the observed objects is a `list`. It is not the whole write surface: the Token and SubjectAccessReviews (§7.5), the cluster Secrets with
+`clusterConfig.secrets.writes.enabled`, the secrets-mint hook's Secrets and the remote logins of §1 are
+drawn nowhere here. §7.1.
 
 ### The Python modules
 
 | Module | Responsibility |
 |---|---|
 | `gsd/config.py` | Load and validate `clusters.yaml`; resolve tokens and CA bundles on demand |
-| `gsd/kube.py` | Read-only REST client; one `ClusterClient` per cluster; flattens API objects into views. Its one POST is the tier's SubjectAccessReview (`gsd/kube.py#ClusterClient.create_subject_access_review`, asked by `TierResolver`) |
+| `gsd/kube.py` | Kubernetes REST client; one `ClusterClient` per cluster; flattens API objects into views. It POSTs the tier's SubjectAccessReview (`gsd/kube.py#ClusterClient.create_subject_access_review`, asked by `TierResolver`), and its `_send` seam carries the fleet-Lease, cluster-Secret and Rejoin writes |
 | `gsd/poller.py` | The poll loop; one thread per enabled cluster; leader-gated |
 | `gsd/leader.py` | Lease acquisition and renewal against `coordination.k8s.io` |
 | `gsd/store.py` | The dashboard's only module containing SQL or importing `sqlite3`; the report service's `reporting/snapshot.py` is the other (below) |
@@ -428,7 +436,8 @@ wire and in the DOM.
 
 ## 5. Data model
 
-Thirty-five tables in a fresh database; this section is about fifteen of them, the fourteen in the
+Thirty-five application tables in a fresh database (thirty-six rows in `sqlite_master`, with SQLite's
+own `sqlite_sequence`); this section is about fifteen of them, the fourteen in the
 diagram and `dashboard_user_activity` below it. The distinction that governs every operational
 decision in this system:
 
@@ -833,8 +842,9 @@ See the chart README migration note for the manual Debug-to-Normal step.
 No `watch` in the reader ClusterRole, and no write verb on anything the dashboard reports on. (The
 `-cluster-secrets` Role grants `get`, `list` and `watch` on ConfigMaps and Secrets in the release
 namespace for cluster discovery; the code sends no watch.) The Leases are its own
-coordination objects, in its own namespace; with the default values they are the only thing in the
-cluster the ServiceAccount can change.
+coordination objects, in its own namespace; with the default values they are the only object in the
+cluster the ServiceAccount can change (its Token and SubjectAccessReviews persist nothing; the secrets-mint
+hook creates Secrets under its own ServiceAccount; remote logins use the configured account, not this one).
 
 This is checkable rather than asserted, and it holds at every setting: `helm template` with
 `config.unmanagedAudit.mode` set to `off`, `log`, `annotate`, an unrecognised word and empty
