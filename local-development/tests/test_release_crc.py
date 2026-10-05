@@ -446,6 +446,73 @@ def test_argocd_branch_reads_every_linux_image_of_a_manifest_list(lab, arm64_ver
         assert "oc apply" not in calls(lab)
 
 
+# --- the opt-in: the lab deploys what promote.yml read back (#598) --------------------------------
+
+DASHBOARD_DIGEST, REPORT_DIGEST = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+PROMOTION = (f"image:\n  repository: quay.io/example/group-sync-dashboard\n  digest: {DASHBOARD_DIGEST}\n"
+             f"reporting:\n  image:\n    repository: quay.io/example/group-sync-dashboard-report\n    digest: {REPORT_DIGEST}\n")
+
+
+def _release_branch(lab, promotion: str | None) -> None:
+    """origin/release as promote.yml writes it: the chart, environments/ and promotion.yaml (or none)."""
+    _git(lab["repo"], "checkout", "-qb", "release")
+    if promotion is not None:
+        (lab["repo"] / "promotion.yaml").write_text(promotion)
+    _git(lab["repo"], "add", "-A"); _git(lab["repo"], "commit", "-q", "--allow-empty", "-m", "promote: main")
+    _git(lab["repo"], "push", "-q", "origin", "release")
+    _git(lab["repo"], "checkout", "-q", "main")
+    synced_status(lab, _git(lab["repo"], "rev-parse", "release"))
+
+
+def test_argocd_release_without_a_promotion_is_refused_before_anything_is_written(lab):
+    _release_branch(lab, None)
+    r = run(lab, "--argocd", "release")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "origin/release has no promotion.yaml" in r.stderr
+    log = calls(lab)
+    assert "helm uninstall" not in log and "oc patch" not in log and "oc apply" not in log, log
+
+
+def test_argocd_release_reads_the_pinned_digests_back_and_lists_promotion_yaml_last(lab):
+    _release_branch(lab, PROMOTION)
+    r = run(lab, "--argocd", "release",
+            STUB_IMAGES=f"quay.io/example/group-sync-dashboard@{DASHBOARD_DIGEST}={_version()} "
+                        f"quay.io/example/group-sync-dashboard-report@{REPORT_DIGEST}={_version()}")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "the digests in promotion.yaml" in r.stdout
+    log = calls(lab)
+    assert f"oc image info quay.io/example/group-sync-dashboard@{DASHBOARD_DIGEST} {LINUX_IMAGES}" in log
+    assert f"oc image info quay.io/example/group-sync-dashboard-report@{REPORT_DIGEST} {LINUX_IMAGES}" in log
+    assert f":{_version()} " not in log, "the aliases are not what release deploys"
+    patch_line = next(l for l in log.splitlines() if l.startswith("oc patch --local"))
+    patch = json.loads(patch_line.split(" -p ", 1)[1].split(" -o json")[0])
+    assert patch["spec"]["source"] == {"targetRevision": "release", "helm": {
+        "parameters": [], "valueFiles": ["../../environments/crc.yaml", "../../promotion.yaml"]}}
+
+
+def test_argocd_release_refuses_a_pinned_digest_that_is_not_the_release(lab):
+    _release_branch(lab, PROMOTION)
+    r = run(lab, "--argocd", "release",
+            STUB_IMAGES=f"quay.io/example/group-sync-dashboard@{DASHBOARD_DIGEST}={_version()} "
+                        f"quay.io/example/group-sync-dashboard-report@{REPORT_DIGEST}=0.24.0")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"group-sync-dashboard-report@{REPORT_DIGEST} is application 0.24.0" in r.stderr
+    assert "oc apply" not in calls(lab)
+
+
+def test_argocd_main_after_release_returns_to_the_files_values_and_the_aliases(lab):
+    """main stays the dev-phase default (#598): switching back sends no promotion.yaml and reads the aliases."""
+    _release_branch(lab, PROMOTION)
+    synced_status(lab, lab["full"])
+    r = run(lab, "--argocd", "main")
+    assert r.returncode == 0, r.stdout + r.stderr
+    log = calls(lab)
+    assert f"oc image info quay.io/example/group-sync-dashboard:{_version()} {LINUX_IMAGES}" in log
+    patch_line = next(l for l in log.splitlines() if l.startswith("oc patch --local"))
+    patch = json.loads(patch_line.split(" -p ", 1)[1].split(" -o json")[0])
+    assert patch["spec"]["source"] == {"targetRevision": "main", "helm": {"parameters": []}}
+
+
 # --- the waiter on its own ----------------------------------------------------------------------
 
 def wait(lab, *args: str, **env_over: str) -> subprocess.CompletedProcess:
@@ -501,6 +568,24 @@ def test_the_matrix_rows_match_the_script():
     assert "built + pushed" not in header and "built + pushed" not in readme
     assert "built, NOT pushed" in header and "built, **not** pushed" in readme
     assert header.index('if [ "$BUILD_ONLY" = true ]; then exit 0; fi') < header.index("podman login")
+
+
+def test_argocd_release_deploys_a_pinned_tag_as_promote_yml_pinned_it(lab):
+    """Review of #614 (OB2 F3): promote.yml pins a values.yaml tag's digest without a label check (SPEC_P1 note 8), so
+    `--argocd release` must deploy that digest as pinned, and still read the unpinned report image back."""
+    values = lab["repo"] / "charts" / "group-sync-dashboard" / "values.yaml"
+    pinned = values.read_text().replace('\n  tag: ""\n', '\n  tag: "1.4.0"\n', 1)
+    assert 'tag: "1.4.0"' in pinned
+    values.write_text(pinned)
+    _release_branch(lab, PROMOTION)
+    r = run(lab, "--argocd", "release",
+            STUB_IMAGES=f"quay.io/example/group-sync-dashboard@{DASHBOARD_DIGEST}=0.24.0 "
+                        f"quay.io/example/group-sync-dashboard-report@{REPORT_DIGEST}={_version()}")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "pinned in values.yaml" in r.stdout and DASHBOARD_DIGEST in r.stdout, r.stdout
+    log = calls(lab)
+    assert f"oc image info quay.io/example/group-sync-dashboard@{DASHBOARD_DIGEST}" not in log
+    assert f"oc image info quay.io/example/group-sync-dashboard-report@{REPORT_DIGEST} {LINUX_IMAGES}" in log
 
 
 def _version() -> str:

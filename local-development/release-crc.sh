@@ -39,6 +39,11 @@
 #                                                                image — lags main)                       in-pod check
 #   --argocd <branch> --values X    Argo     GitHub @ <branch>   same                  [../../X]          X present at
 #                                                                                                         origin/<branch>
+#   --argocd release                Argo     GitHub @ release    the digests in        crc.yaml, then     promotion.yaml
+#                                                                promotion.yaml, read  promotion.yaml     on origin/release
+#                                                                back again
+#   --argocd release --values X     Argo     GitHub @ release    same                  X, then            X present at
+#                                                                                      promotion.yaml     origin/release
 #   --build-only                    (none)   —                   built, NOT pushed     —                  —
 #   --allow-dirty --argocd          REFUSED: Argo deploys a commit and a dirty tree has none — the image
 #                                   would not match the chart Argo reads, and uncommitted chart edits
@@ -47,7 +52,8 @@
 #                                   --build-only` ran the cutover with nothing built).
 #
 # Typical loop: iterate with the bare script (or --values for a local variant); before merging,
-# --argocd on the pushed head; after a merge, --argocd main. The published images may lag main's
+# --argocd on the pushed head; after a merge, --argocd main, or --argocd release to deploy only what
+# promote.yml read back (#598; --argocd main switches back). The published images may lag main's
 # code, not its schema: CI fails a migration merged without an app release (#298) — a guarantee
 # about the RELEASE COMMIT, not about the tag on quay, which the branch path reads back (below).
 #
@@ -178,7 +184,9 @@ helm = {"parameters": [
     {"name": "image.repository", "value": image[0]}, {"name": "image.tag", "value": image[1]},
     {"name": "reporting.image.repository", "value": image[2]}, {"name": "reporting.image.tag", "value": image[3]},
 ] if image else []}
-if values:
+if revision == "release":   # the promoted digests last, so they win (#598)
+    helm["valueFiles"] = [values or "../../environments/crc.yaml", "../../promotion.yaml"]
+elif values:
     helm["valueFiles"] = [values]
 print(json.dumps({"spec": {"source": {"targetRevision": revision, "helm": helm}}}))
 PY
@@ -214,9 +222,10 @@ fi
 # and the other image is still checked. oc is asked for every Linux image of the tag (a manifest
 # list is refused without --filter-by-os, and this workstation's OS is not the node's), and every one
 # must carry the label. A repository overridden in values, or a digest pin, is not resolved: the
-# default repository is checked.
+# default repository is checked. On `release` the images are the digests promote.yml pinned in
+# promotion.yaml, read back again here; a `release` without that file is refused.
 published_image_is_the_release() {
-  local revision="$1" chart values app_version pinned report_pinned repo spec name this_pin ref version
+  local revision="$1" chart values app_version pinned report_pinned repo spec this_pin ref version promoted="" refs
   chart=$(git show "${revision}:charts/group-sync-dashboard/Chart.yaml") || return 1
   values=$(git show "${revision}:charts/group-sync-dashboard/values.yaml") || return 1
   app_version=$(printf '%s\n' "$chart" | sed -n 's/^appVersion: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' | head -1)
@@ -247,13 +256,27 @@ for raw in sys.stdin.read().splitlines():   # read it all: an early exit would S
     echo "ERROR: cannot read appVersion and image.repository from the chart at origin/${revision}." >&2
     return 1
   fi
-  for spec in "${repo}|${pinned}" "${repo}-report|${report_pinned}"; do
-    name="${spec%%|*}" this_pin="${spec#*|}"
+  refs=("${repo}:${app_version}|${pinned}" "${repo}-report:${app_version}|${report_pinned}")
+  if [ "$ARGO_REVISION" = release ]; then
+    if ! promoted=$(git show "${revision}:promotion.yaml" 2>/dev/null); then
+      echo "ERROR: origin/release has no promotion.yaml: promote.yml has not promoted anything yet." >&2
+      return 1
+    fi
+    # promote.yml writes this file: image.* two spaces deep, reporting.image.* four.
+    refs=("$(printf '%s\n' "$promoted" | sed -n 's/^  repository: //p' | head -1)@$(printf '%s\n' "$promoted" | sed -n 's/^  digest: //p' | head -1)|${pinned}"
+          "$(printf '%s\n' "$promoted" | sed -n 's/^    repository: //p' | head -1)@$(printf '%s\n' "$promoted" | sed -n 's/^    digest: //p' | head -1)|${report_pinned}")
+  fi
+  for spec in "${refs[@]}"; do
+    ref="${spec%%|*}" this_pin="${spec#*|}"
     if [ -n "$this_pin" ]; then
-      echo "image   : ${name}:${this_pin} (pinned in values.yaml; not checked against appVersion)"
+      # promote.yml pinned the digest of that tag without a label check (SPEC_P1 note 8); deploy it as pinned.
+      if [ -n "$promoted" ]; then
+        echo "image   : ${ref} (pinned in values.yaml as ${this_pin}; not checked against appVersion)"
+      else
+        echo "image   : ${ref%:*}:${this_pin} (pinned in values.yaml; not checked against appVersion)"
+      fi
       continue
     fi
-    ref="${name}:${app_version}"
     # oc answers one object for a single manifest and an array for a list; a mixed list prints both.
     if ! version=$(oc image info "$ref" --filter-by-os='linux/.*' --show-multiarch -o json 2>/dev/null | python3 -c '
 import json, sys
@@ -261,6 +284,7 @@ images = json.load(sys.stdin)
 images = [images] if isinstance(images, dict) else images
 print(", ".join(sorted({(i.get("config", {}).get("config", {}).get("Labels") or {}).get("org.opencontainers.image.version", "") for i in images})))'); then
       echo "ERROR: ${ref} is not in the registry, or cannot be read. Argo CD would pull it." >&2
+      [ -n "$promoted" ] && echo "       It is a digest promote.yml read back: never delete a published image." >&2
       echo "       publish.yml pushes the :${app_version} aliases on the merge that moved pyproject's version;" >&2
       echo "       wait for that run, or publish them by hand: ./build-and-push-external.sh --release-tags" >&2
       echo "       and ./build-and-push-report.sh --release-tags at the release commit." >&2
@@ -278,9 +302,12 @@ print(", ".join(sorted({(i.get("config", {}).get("config", {}).get("Labels") or 
 }
 
 # --argocd <branch> with no build: point the Application at that branch and its chart's default
-# image, e.g. `--argocd main` after a merge. Any other --argocd use builds this commit first.
+# image, e.g. `--argocd main` after a merge, or at `release` and its promoted digests. Any other --argocd use
+# builds this commit first.
 if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
-  echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), the chart's default image"
+  images="the chart's default image"
+  [ "$ARGO_REVISION" = release ] && images="the digests in promotion.yaml, last in valueFiles"
+  echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), ${images}"
   published_image_is_the_release "$EXPECTED_REVISION" || exit 1
   if helm status "${IMAGE}" -n "${NAMESPACE}" >/dev/null 2>&1; then
     echo "helm    : uninstalling release ${IMAGE} (the PVCs and the minted Secrets survive)"

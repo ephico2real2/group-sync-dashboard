@@ -129,7 +129,8 @@ fi
 # Version + immutable tag derived from the commit
 # ---------------------------------------------------------------------------
 VERSION=$(python3 -c "import re,pathlib;print(re.search(r'^version = \"(.+?)\"',pathlib.Path('pyproject.toml').read_text(),re.M).group(1))")
-COMMIT=$(git rev-parse --short=10 HEAD)
+COMMIT=$(git rev-parse HEAD)
+COMMIT="${COMMIT:0:10}"
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 if [ -n "$(git status --porcelain)" ]; then

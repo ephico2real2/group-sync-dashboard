@@ -84,7 +84,10 @@ parameters and the values file merged in, one `oc apply`) so the controller neve
 `main` in between. Nothing is written back into the tree — `helm get values`, or the Application's
 spec, records what is deployed. The typical loop: iterate with the bare script (or `--values` for
 a local variant), `--argocd` on the pushed head before the PR is called ready, `--argocd main`
-after a merge once the app release is cut. `./argocd-wait.sh` is the waiter the Argo modes use: it
+after a merge once the app release is cut. During development the lab tracks `main`, and a release merge can still
+reach it before its image is pushed (`ErrImagePull` until it is). `--argocd release` deploys only what `promote.yml`
+read back, pinned by digest, and `--argocd main` switches back (#598; `docs/RELEASING.md`, "Promotion to the
+lab"). `./argocd-wait.sh` is the waiter the Argo modes use: it
 accepts Synced/Healthy/Succeeded only once the status was computed for the current spec
 (`status.sync.comparedTo.source`) and for the expected commit, and names the failed hook or
 resource on timeout.
