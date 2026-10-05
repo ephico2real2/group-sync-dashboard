@@ -16,10 +16,12 @@ What you will be able to do afterwards:
 5. Have Kyverno do all of it for every namespace that opts in — the enterprise way.
 6. Diagnose the ways this goes wrong.
 
-**What you need**: `oc` logged in with rights to create a project, `openssl` on your machine,
-cert-manager on the cluster (`oc get crd certificates.cert-manager.io`) and, for 3.5, Kyverno
-(`oc get crd clusterpolicies.kyverno.io`; this run used Kyverno 1.16.1). Every YAML in this
-tutorial is applied with `cat <<EOF | oc apply -f -` so you can paste it as it stands; blocks
+**What you need**: `oc` logged in with rights to create a project, `openssl` 1.1 or later on
+your machine (macOS's `/usr/bin/openssl` is LibreSSL, which has no `openssl rehash`; Homebrew's
+`openssl@3` has it), cert-manager on the cluster (`oc get crd certificates.cert-manager.io`) and,
+for 3.5, Kyverno (`oc get crd clusterpolicies.kyverno.io`; this run used Kyverno 1.16.1; Kyverno
+1.19 still runs a `kyverno.io/v1` ClusterPolicy but warns that the kind is deprecated). Every
+YAML in this tutorial is applied with `cat <<EOF | oc apply -f -` so you can paste it as it stands; blocks
 that substitute a shell variable use an unquoted `EOF`, blocks that must be taken literally use
 `'EOF'`.
 
@@ -58,22 +60,24 @@ openssl x509 -noout -subject_hash -in ca.crt
 For the CA generated in Part 2 it prints `7886c608`. Two different OpenSSL builds agree, because
 the algorithm is specified: the same certificate hashed to `7886c608` on macOS OpenSSL 3.6 and on
 the container's OpenSSL 3.5. Before OpenSSL 1.0.0 the hash was MD5-based; that older value is
-still printed by `-subject_hash_old` (`bac1f22a` for the same CA), and old distributions kept
-both links per certificate so both generations of OpenSSL could find it.
+still printed by `-subject_hash_old` (`bac1f22a` for the same CA), and distributions kept
+both links per certificate so both generations of OpenSSL could find it; the hardened image in
+1.4 still does.
 
 ### 1.3 The lookup, and the number after the dot
 
 Given an issuer name to find, OpenSSL computes the hash and opens `<capath>/<hash>.0`. It loads
-every certificate in that file into the store and checks whether one has the subject it wants.
-If not, it opens `<hash>.1`, then `<hash>.2`, and so on — **and stops at the first number that
-does not exist.** Four consequences follow, and each one was demonstrated in Part 3:
+every certificate in that file into the store, then opens `<hash>.1`, then `<hash>.2`, and so on
+— **and stops at the first number that does not exist.** Then it looks in the store for a
+certificate with the subject it wants. Four consequences follow; Part 3.2 demonstrates the first
+and the third:
 
 | Rule | Why | What you see if you break it |
 |---|---|---|
 | Numbering starts at `.0` and is contiguous | the lookup stops at the first missing number | a file named `<hash>.1` with no `.0` beside it is never opened (measured: `curl` exit 60) |
 | The suffix exists for collisions | two different subject names can hash to the same 32 bits, and one subject can have two certificates (a re-keyed root, a cross-signed one) | if the directory already has `<hash>.0` for another CA, yours must be `.1` — replacing `.0` would shadow the other CA |
 | One CA per file | a file is opened only when the name being looked up hashes to *that* file's name | a correct CA saved under the wrong hash is never opened (measured: `deadbeef.0`, exit 60) |
-| A bundle cannot be dropped in as one file | same reason: only the certificate whose subject matches the file name is ever found | a 149-certificate cluster bundle named `<hash>.0` serves exactly one CA |
+| A bundle cannot be dropped in as one file | same reason: only the certificate whose subject matches the file name is ever found | a 149-certificate cluster bundle named `<hash>.0` serves exactly one CA; the others are found only after an earlier lookup in the same TLS context opened that file |
 
 ### 1.4 Where the entries come from
 
@@ -81,22 +85,23 @@ Nobody writes these names by hand. `openssl rehash` (older name `c_rehash`) walk
 creates one symlink per certificate, named by its hash. RHEL-family systems, including Red Hat's
 hardened images, go one step further: `update-ca-trust extract`, through p11-kit, generates both
 the bundle files and the hashed directory from a single trust source under
-`/etc/pki/ca-trust/`. Measured on the hardened `hi/python:3.14` image:
+`/etc/pki/ca-trust/`. Measured on the hardened `hi/python:3.14` image (the build of 2026-10-03;
+the counts change whenever the base's trust store does):
 
 ```text
 /etc/pki/ca-trust/extracted/pem/
   README
-  directory-hash/        438 entries — the per-CA PEM files
+  directory-hash/        363 entries — 121 per-CA PEM files, each linked by its hash and its old hash
   email-ca-bundle.pem
   objsign-ca-bundle.pem
-  tls-ca-bundle.pem      223752 bytes — the bundle curl reads
-/etc/pki/tls/certs/      292 entries, every one a symlink into directory-hash/
+  tls-ca-bundle.pem      185311 bytes — the bundle curl reads
+/etc/pki/tls/certs/      242 entries, every one a symlink into directory-hash/
 /etc/ssl/certs/ca-bundle.crt -> /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 /etc/ssl/cert.pem            -> /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 ```
 
 Keep that layout in mind for Part 3.1: mounting something *over* `/etc/pki/ca-trust/extracted/pem`
-hides `directory-hash/`, and every one of those 292 links then points at nothing.
+hides `directory-hash/`, and every one of those 242 links then points at nothing.
 
 ### 1.5 Who consults the directory, and who does not
 
@@ -107,14 +112,14 @@ depends on how it was built and what it was told:
 |---|---|---|
 | Python's `ssl.create_default_context()`, and so `urllib` | yes — `capath=/etc/pki/tls/certs` is the compiled default | yes, `cafile=/etc/pki/tls/cert.pem` if it exists |
 | curl | **only when told**: `--capath DIR` or `SSL_CERT_DIR=DIR` | yes — its compiled-in bundle (`/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem` on RHEL-family), or `--cacert FILE` / `CURL_CA_BUNDLE=FILE` |
-| Python `httpx` / `requests` with defaults | no | their own `certifi` bundle; `requests` also reads `REQUESTS_CA_BUNDLE` |
-| Go programs | no | the system bundle, or `SSL_CERT_FILE` / `SSL_CERT_DIR` |
+| Python `httpx` / `requests` with defaults | no; `httpx` only when `SSL_CERT_DIR` is set | their own `certifi` bundle; `requests` also reads `REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE`; `httpx` reads `SSL_CERT_FILE` |
+| Go programs | yes, but not by hash: on Linux it reads every file in `/etc/ssl/certs` and `/etc/pki/tls/certs`, or in `SSL_CERT_DIR` | the first system bundle it finds, or `SSL_CERT_FILE` |
 
 Two variables therefore matter in Part 3. `SSL_CERT_DIR` names a hashed directory and is read by
 every OpenSSL client and by curl; setting it to `/etc/pki/tls/certs`, which is already OpenSSL's
-default, changes nothing for Python and makes curl read the directory too. `SSL_CERT_FILE` names a
-bundle and is read by everyone — which is why it is dangerous when the file can be empty (see
-Part 4).
+default, changes nothing for Python's default context and makes curl read the directory too.
+`SSL_CERT_FILE` names a bundle and is read by nearly everyone (`requests` is the exception) — which
+is why it is dangerous when the file can be empty (see Part 4).
 
 **One curl rule that this tutorial found the hard way**: curl reads `SSL_CERT_DIR` (and
 `SSL_CERT_FILE`) **only when `CURL_CA_BUNDLE` is not set**. With both set, `curl -v` names only
@@ -129,7 +134,7 @@ capath = /etc/pki/tls/certs
 ```
 
 With that file `curl -v` reports both `CAfile` and `CApath`, and nothing but the curl tool reads
-it — Python, libcurl users and the application's own TLS are untouched. Parts 3.5 and 3.6 use it.
+it — Python, libcurl users and the application's own TLS are untouched. Parts 3.4 and 3.5 use it.
 
 ---
 
@@ -280,9 +285,10 @@ oc get cm trusted-ca -n ca-tutorial -o jsonpath='{.data.ca-bundle\.crt}' | grep 
 Note the `sleep`: the ConfigMap is created empty and the network operator fills it a moment
 later. Every consumer must tolerate that window (Part 4).
 
-**Layout A — mount beside the system store and name it (what the dashboard chart does).** The
+**Layout A — mount beside the system store and name it (the mount the dashboard chart uses).** The
 bundle lands in its own subdirectory; the image's own trust store is untouched; curl is told
-about the file through `CURL_CA_BUNDLE`, curl's own variable, which no other program reads.
+about the file through `CURL_CA_BUNDLE`, curl's own variable, which among the clients in 1.5 only
+`requests` also reads (the chart names it to curl in a `.curlrc` instead, 3.4).
 
 ```bash
 cat <<'EOF' | oc apply -n ca-tutorial -f -
@@ -318,8 +324,9 @@ oc exec -n ca-tutorial client-injected -- sh -c '
 # public host via the image own store: http 404
 ```
 
-`optional: true` on the volume matters: a required volume would block the first rollout of every
-install until the operator has filled the ConfigMap.
+`optional: true` on the volume lets the pod start before the ConfigMap exists; a required volume
+would hold it in `ContainerCreating` until it did. Once the ConfigMap exists, filled or not, the
+volume mounts — as an empty directory until the operator fills it.
 
 **Layout B — mount over the system bundle (what the OpenShift documentation shows).** The
 [custom PKI guide](https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/configuring_network_settings/configuring-a-custom-pki)
@@ -364,13 +371,15 @@ know before choosing it:
 
 * The mount replaces the **whole directory**. On UBI 9 that is harmless: `/etc/pki/tls/certs`
   there holds two bundle symlinks and nothing else. On the hardened images it is not: their
-  `/etc/pki/tls/certs` holds 292 symlinks into `directory-hash/`, which the mount hides, and
+  `/etc/pki/tls/certs` holds 242 symlinks into `directory-hash/`, which the mount hides, and
   OpenSSL's directory lookup — Python's default context, `urllib`, and any `<hash>.0` file you add
   in 3.2 — stops working while curl keeps working. Measured on `hi/python:3.14`: with this mount
   in place, Python's default context failed to verify a public host while curl succeeded.
-* While the ConfigMap is still empty, `tls-ca-bundle.pem` is an empty file and **every** client
-  that reads the bundle fails: curl with exit 77, Python's default context with a verification
-  error. Layout A confines that window to curl.
+* While the ConfigMap is still empty, the `items` entry names a key that does not exist yet, so
+  the kubelet does not start the pod (`configmap references non-existent config key`) until the
+  operator fills it. Add `optional: true` and the pod starts with no `tls-ca-bundle.pem`, and
+  **every** client that reads the bundle fails: curl with exit 77, Python's default context with
+  a verification error. Layout A confines that window to curl.
 
 ### 3.2 A CA you created by hand
 
@@ -653,11 +662,11 @@ The `group-sync-dashboard` chart wires all three layouts for you:
 
 | Value | Layout | Effect |
 |---|---|---|
-| `trustedCA.injected.enabled` (default on) | 3.1, layout A | the labelled ConfigMap, mounted beside the system store, named to the application in `GSD_TRUSTED_CA_FILE` and to curl in `CURL_CA_BUNDLE` |
+| `trustedCA.injected.enabled` (default on) | 3.1, layout A | the labelled ConfigMap, mounted beside the system store, named to the application in `GSD_TRUSTED_CA_FILE` and to curl as the `.curlrc`'s `cacert` |
 | `trustedCA.existingConfigMap.enabled` + `name` | 3.2 | a ConfigMap you made, mounted beside the system store and named to the application |
-| `trustedCA.existingConfigMap.subjectHash` | 3.2, the hashed file | the same ConfigMap mounted a second time as `/etc/pki/tls/certs/<hash>.0` (or `<hash>.N`), so curl and every OpenSSL client in the pod trust it |
+| `trustedCA.existingConfigMap.subjectHash` | 3.2, the hashed file | the same ConfigMap mounted a second time as `/etc/pki/tls/certs/<hash>.0` (or `<hash>.N`), so curl and every OpenSSL client in the dashboard container trust it |
 
-curl is configured by a mounted `.curlrc` (`<release>-curlrc`, found through `CURL_HOME`) that
+curl is configured by a mounted `.curlrc` (`<fullname>-curlrc`, found through `CURL_HOME`) that
 names the injected bundle as `cacert` and the hashed directory as `capath` — the only way curl
 takes both (Part 1.5). The first version of the chart used `CURL_CA_BUNDLE` and `SSL_CERT_DIR`,
 and the tutorial's own verification showed the second was being ignored.
@@ -906,7 +915,9 @@ namespace came out with no env and no CA volumes.
 ### 3.6 Clean up — or keep it
 
 The `ca-tutorial` and `ca-tutorial-app` namespaces and the `enterprise-ca-trust` policy were
-left in place on CRC so the pods above can be inspected with `oc exec`. To remove everything:
+left in place on CRC after the run so the pods above could be inspected with `oc exec`. The pods
+and the policy have gone since: on 2026-10-05 both namespaces exist with nothing of the
+tutorial's in them, and there is no `enterprise-ca-trust`. To remove everything:
 
 ```bash
 oc delete clusterpolicy enterprise-ca-trust
@@ -921,14 +932,14 @@ rm -rf ~/ca-tutorial
 | Symptom | Meaning | Check |
 |---|---|---|
 | `curl: (60) SSL certificate problem: unable to get local issuer certificate` | curl found no CA for the chain | is `SSL_CERT_DIR`, `--capath`, `CURL_CA_BUNDLE` or `--cacert` pointing at where the CA is? curl does not read the hashed directory unless told |
-| `curl: (77) error adding trust anchors from file` | the file `CURL_CA_BUNDLE` / `--cacert` names is empty or missing | an injected ConfigMap that OpenShift has not filled yet; a wrong path |
+| `curl: (77) error adding trust anchors from file` (curl 8.17 and later; earlier, with OpenSSL 3, `error setting certificate file`) | the file `CURL_CA_BUNDLE` / `--cacert` names is empty or missing | an injected ConfigMap that OpenShift has not filled yet; a wrong path |
 | Python verifies, curl does not | the CA is in the hashed directory and curl was not told about it | set `SSL_CERT_DIR=/etc/pki/tls/certs` |
 | Neither verifies although the file is there | the file name is not the CA's hash, or it is `.1` with no `.0` | `openssl x509 -noout -subject_hash -in FILE` must equal the name before the dot; numbering starts at `.0` |
 | A bundle of several CAs in one hashed file, only one works | one file serves one subject hash | one CA per file, or use a bundle where a bundle is read |
 | Worked, then the CA rotated and the pod still fails | a `subPath` mount does not follow later ConfigMap or Secret changes | restart the pod (cert-manager users: a rotated CA needs a rollout) |
 | On a hardened image, mounting over `/etc/pki/ca-trust/extracted/pem` broke Python but not curl | the mount hid `directory-hash/`, which every entry of `/etc/pki/tls/certs` links into | use layout A, or mount the single file with `subPath` |
-| `oc apply` warns about PodSecurity "restricted" | the pod lacks the `securityContext` block shown above | add it; it is required for the pod to run under the restricted profile on OpenShift 4.11+ |
-| `SSL_CERT_FILE` set, everything fails at once | it names a bundle every OpenSSL client reads, and the bundle is empty or missing | prefer a `.curlrc` for curl and the application's own setting for the application; never point `SSL_CERT_FILE` at a file that can be empty |
+| `oc apply` warns about PodSecurity "restricted" | the pod lacks the `securityContext` block shown above | add it; the restricted profile requires it, and OpenShift 4.11+ warns about a pod without it (it refuses the pod only where a namespace enforces `restricted`) |
+| `SSL_CERT_FILE` set, everything fails at once | it names a bundle nearly every client reads, and the bundle is empty or missing | prefer a `.curlrc` for curl and the application's own setting for the application; never point `SSL_CERT_FILE` at a file that can be empty |
 | `CURL_CA_BUNDLE` and `SSL_CERT_DIR` both set, the hashed CA works for Python but not curl | curl ignores `SSL_CERT_DIR` whenever `CURL_CA_BUNDLE` is set; `curl -v` shows only `CAfile` | name both in `$CURL_HOME/.curlrc` (`cacert = …`, `capath = …`), or pass `--capath` explicitly |
 
 ## Sources
