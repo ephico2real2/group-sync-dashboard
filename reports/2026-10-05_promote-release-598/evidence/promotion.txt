@@ -1,0 +1,28 @@
+## promote runs for main cb832a6a69 (gh run list)
+37252414796	workflow_run	success	cb832a6a69	2026-10-05T01:41:30Z
+37252212147	push	success	cb832a6a69	2026-10-05T01:38:25Z
+## push run 37252212147: its notices
+##[notice]main cb832a6a69's immutable image quay.io/ephico2real/group-sync-dashboard:5.2.0-cb832a6a69 is not ready;
+##[notice]its successful publish run promotes main. Nothing was promoted by this run.
+## workflow_run 37252414796: prepared, pushed, promoted
+prepared: main cb832a6a691fc2f4ccc890801fb7b05461c996ab -> release 2cca5d7887af4f1827a4bca6142c22119e05c38e
+   1f3c3303..2cca5d78  2cca5d7887af4f1827a4bca6142c22119e05c38e -> release
+promoted: main cb832a6a691fc2f4ccc890801fb7b05461c996ab -> release 2cca5d7887af4f1827a4bca6142c22119e05c38e
+## release (git)
+2cca5d78 promote: main cb832a6a691fc2f4ccc890801fb7b05461c996ab
+1f3c3303 release starts empty
+charts
+environments
+promotion.yaml
+## promotion.yaml
+# Written by .github/workflows/promote.yml for main cb832a6a691fc2f4ccc890801fb7b05461c996ab: the images it read back, by digest.
+image:
+  repository: quay.io/ephico2real/group-sync-dashboard
+  digest: sha256:cfd0cd28d3fb6a49b6cf8de6b54d11a26de1d4b6f251391a53a23348494d8a8d
+reporting:
+  image:
+    repository: quay.io/ephico2real/group-sync-dashboard-report
+    digest: sha256:2172be1bcea40f1ee1d3f78b951c203849b4bd7a5bdd3eced87048d653f8a47a
+## registry (oc image info, linux/amd64)
+group-sync-dashboard:5.2.0 -> sha256:cfd0cd28d3fb6a49b6cf8de6b54d11a26de1d4b6f251391a53a23348494d8a8d
+group-sync-dashboard-report:5.2.0 -> sha256:2172be1bcea40f1ee1d3f78b951c203849b4bd7a5bdd3eced87048d653f8a47a

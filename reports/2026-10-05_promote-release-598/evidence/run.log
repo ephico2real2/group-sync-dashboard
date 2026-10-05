@@ -1,0 +1,39 @@
+## before 01:43:53Z
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+## release-crc.sh --argocd release
+argocd  : group-sync-dashboard -> revision release (2cca5d7887), the digests in promotion.yaml, last in valueFiles
+image   : quay.io/ephico2real/group-sync-dashboard@sha256:cfd0cd28d3fb6a49b6cf8de6b54d11a26de1d4b6f251391a53a23348494d8a8d is application 5.2.0
+image   : quay.io/ephico2real/group-sync-dashboard-report@sha256:2172be1bcea40f1ee1d3f78b951c203849b4bd7a5bdd3eced87048d653f8a47a is application 5.2.0
+01:43:55Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision cb832a6a691fc2f4ccc890801fb7b05461c996ab, want 2cca5d7887) successfully synced (all tasks run)
+01:44:10Z  OutOfSync  Healthy      Running    waiting for deletion of hook batch/Job/group-sync-dashboard-secrets-mint
+01:44:25Z  OutOfSync  Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard and 1 more resources
+01:44:41Z  OutOfSync  Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard-report
+01:44:56Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+exit 0
+## after the switch 01:44:56Z
+{"targetRevision":"release","valueFiles":["../../environments/crc.yaml","../../promotion.yaml"],"params":null,"sync":"Synced","health":"Healthy","revision":"2cca5d7887af4f1827a4bca6142c22119e05c38e"}
+dashboard	quay.io/ephico2real/group-sync-dashboard@sha256:cfd0cd28d3fb6a49b6cf8de6b54d11a26de1d4b6f251391a53a23348494d8a8d
+report	quay.io/ephico2real/group-sync-dashboard-report@sha256:2172be1bcea40f1ee1d3f78b951c203849b4bd7a5bdd3eced87048d653f8a47a
+## release-crc.sh --argocd main 01:45:15Z
+argocd  : group-sync-dashboard -> revision main (cb832a6a69), the chart's default image
+image   : quay.io/ephico2real/group-sync-dashboard:5.2.0 is application 5.2.0
+image   : quay.io/ephico2real/group-sync-dashboard-report:5.2.0 is application 5.2.0
+01:45:18Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision 2cca5d7887af4f1827a4bca6142c22119e05c38e, want cb832a6a69) successfully synced (all tasks run)
+01:45:33Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+01:45:48Z  OutOfSync  Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard and 1 more resources
+01:46:03Z  OutOfSync  Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard-report
+01:46:18Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+exit 0
+## after switching back 01:46:18Z
+{"targetRevision":"main","valueFiles":["../../environments/crc.yaml"],"params":null,"sync":"Synced","health":"Healthy","revision":"cb832a6a691fc2f4ccc890801fb7b05461c996ab"}
+dashboard	quay.io/ephico2real/group-sync-dashboard:5.2.0	quay.io/ephico2real/group-sync-dashboard@sha256:cfd0cd28d3fb6a49b6cf8de6b54d11a26de1d4b6f251391a53a23348494d8a8d
+report	quay.io/ephico2real/group-sync-dashboard-report:5.2.0	quay.io/ephico2real/group-sync-dashboard-report@sha256:2172be1bcea40f1ee1d3f78b951c203849b4bd7a5bdd3eced87048d653f8a47a
+{"version":"5.2.0","commit":"cb832a6a69"}
+## PVC after
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
