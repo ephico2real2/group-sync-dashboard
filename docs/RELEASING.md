@@ -198,7 +198,8 @@ names its cluster-scoped objects by release (SPEC_P1 §2.3, "two-namespace readi
   `--argocd main` points it back at `main`, unchanged; `--argocd <branch>` still deploys a branch for testing.
   `release` is kept current either way, so it is ready whenever it is chosen.
 
-**The operator's one-time steps** (in this order, before the first promotion):
+**The operator's one-time steps** (in this order, before the first promotion). The runbook with each command, its
+check, the record of the setup on 2026-10-05, key rotation and undoing it is `docs/RELEASE_BRANCH_SETUP.md`:
 
 1. Create the deploy key. `ssh-keygen -t ed25519 -N '' -C promote-release -f promote-release` on a laptop. Add
    `promote-release.pub` under Settings → Deploy keys, with **Allow write access**.
