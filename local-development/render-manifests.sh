@@ -123,7 +123,9 @@ if [ "$OTHER" != "0" ]; then
 fi
 [ "$GENERATED" != "0" ] && find "$OUTDIR" -maxdepth 1 -type f -name '[0-9][0-9]-*.yaml' -delete
 
-RAW=$(mktemp -t gsd-render).yaml
+# A trailing-X template is the one form GNU and BSD mktemp both accept; `-t gsd-render` failed on Linux,
+# and the `.yaml` suffix it carried named a second path, so the file mktemp made was never removed (#625).
+RAW=$(mktemp "${TMPDIR:-/tmp}/gsd-render.XXXXXX")
 trap 'rm -f "$RAW"' EXIT
 helm template "$RELEASE" "$CHART" --namespace "$NAMESPACE" \
   "${EXTRA[@]+"${EXTRA[@]}"}" > "$RAW"
