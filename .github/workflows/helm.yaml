@@ -90,6 +90,7 @@ jobs:
           echo "Chart.yaml version: $version"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           new=false
+          app_new=false
           subjects=""
           for chart in charts/*/; do
             name=$(awk '/^name:/{print $2; exit}' "$chart/Chart.yaml")
@@ -100,6 +101,9 @@ jobs:
             else
               echo "will publish a new release: ${name}-${cv}"
               new=true
+              # The label step keys on THIS chart: `new` is true when any chart is new, and labelling an
+              # already-published app chart would copy a newer image over its `:<chartVersion>` (#625).
+              [ "$name" = "group-sync-dashboard" ] && app_new=true
               # The attestation's subjects are exactly the packages this run uploads: chart-releaser
               # also packages a changed-but-unbumped chart and then skips its upload, and a `*.tgz`
               # glob would attest bytes nobody can `helm pull` (review of #209, OB3 G10).
@@ -107,6 +111,7 @@ jobs:
             fi
           done
           echo "new=${new}" >> "$GITHUB_OUTPUT"
+          echo "app_new=${app_new}" >> "$GITHUB_OUTPUT"
           echo "subjects=${subjects}" >> "$GITHUB_OUTPUT"
 
       # ── Label the image this chart version deploys ────────────────────────────────────────────
@@ -143,6 +148,7 @@ jobs:
       # that copy nothing, so chart-releaser and the attestation, which run only after a green step, publish
       # nothing either.
       - name: Label the image this chart version deploys
+        if: steps.plan.outputs.app_new == 'true'
         shell: bash
         env:
           REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}

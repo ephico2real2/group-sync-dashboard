@@ -330,6 +330,54 @@ def test_missing_gh_leaves_the_branch_and_says_so(sandbox: pathlib.Path) -> None
     assert git(sandbox, "status", "--porcelain").strip() == ""
 
 
+def _pr_path(sandbox: pathlib.Path) -> dict:
+    """An `origin` the script can push to and a stub `gh` that fails, as the real one does, when the
+    head branch is not on the remote; it prints the PR URL otherwise."""
+    origin = sandbox.parent / f"{sandbox.name}-origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], env=GIT_ENV, check=True)
+    git(sandbox, "remote", "add", "origin", str(origin))
+    bin_dir = sandbox.parent / f"{sandbox.name}-stub-bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        "#!/bin/sh\n"
+        'head=""; while [ $# -gt 0 ]; do [ "$1" = "--head" ] && head=$2; shift; done\n'
+        f'git --git-dir="{origin}" rev-parse --verify --quiet "refs/heads/$head" >/dev/null '
+        '|| { echo "pull request create failed: head branch $head is not on the remote" >&2; exit 1; }\n'
+        'echo "https://github.com/o/r/pull/1"\n')
+    gh.chmod(0o755)
+    return {**GIT_ENV, "PATH": f"{bin_dir}{os.pathsep}{GIT_ENV['PATH']}"}
+
+
+def test_pr_pushes_the_branch_before_opening_the_pull_request(sandbox: pathlib.Path) -> None:
+    """#625: --pr ran `gh pr create --head <branch>` on a branch it never pushed, and `--head` makes gh skip
+    pushing, so every --pr run failed. The branch is pushed first, then the PR is opened."""
+    env = _pr_path(sandbox)
+    done = subprocess.run(
+        [sys.executable, str(sandbox / "local-development" / "prepare-release.py"),
+         "--app", "9.0.0", "Need a PR", "--pr", "--date", DATE],
+        cwd=sandbox, env=env, capture_output=True, text=True, check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "pr      : https://github.com/o/r/pull/1" in done.stdout
+    assert git(sandbox, "rev-parse", "origin/release/app-9.0.0") == git(sandbox, "rev-parse", "HEAD")
+
+
+def test_a_failed_push_leaves_the_branch_and_says_so(sandbox: pathlib.Path) -> None:
+    """A push the remote refuses is reported like a failed gh: the branch and commit exist, no PR is tried."""
+    env = _pr_path(sandbox)
+    git(sandbox, "remote", "set-url", "origin", str(sandbox.parent / f"{sandbox.name}-no-such-remote.git"))
+    done = subprocess.run(
+        [sys.executable, str(sandbox / "local-development" / "prepare-release.py"),
+         "--app", "9.0.0", "Need a PR", "--pr", "--date", DATE],
+        cwd=sandbox, env=env, capture_output=True, text=True, check=False,
+    )
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "Traceback" not in done.stderr
+    assert "git push failed (the branch and commit exist)" in done.stderr
+    assert git(sandbox, "rev-parse", "--abbrev-ref", "HEAD").strip() == "release/app-9.0.0"
+
+
 def test_a_release_promotes_merged_status_cells(sandbox: pathlib.Path) -> None:
     """Unreleased becoming a release heading is the moment `merged` becomes `released` (docs/specs/README.md).
     Status cells only: a spec body may say `merged` as history and must keep that word; a row at another

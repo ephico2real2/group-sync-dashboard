@@ -417,6 +417,10 @@ def run(args: argparse.Namespace) -> int:
     print(f"commit  : {title}")
 
     if args.pr:
+        # Push first: `gh pr create --head` skips pushing, so an unpushed branch fails there (#625).
+        pushed = git("push", "-q", "-u", "origin", branch, check=False)
+        if pushed.returncode != 0:
+            raise ReleaseError(f"git push failed (the branch and commit exist):\n{pushed.stderr}")
         try:
             done = subprocess.run(["gh", "pr", "create", "--base", "main", "--head", branch,
                                    "--title", title, "--body", body],

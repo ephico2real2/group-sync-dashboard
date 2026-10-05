@@ -287,6 +287,37 @@ class TestAttributionAmbiguity:
         groups = [self._group("g", "corp_ldap")]
         assert provider_keys_for(self._cr("corp", providers=()), groups) == ["corp_ldap"]
 
+    def test_prefix_path_gives_a_label_to_the_longest_matching_cr_name(self):
+        """#625: on the prefix path `corp` and `corp_extra` both claimed `corp_extra_ldap`, so one group had two
+        owners. With the other CRs' names in view, the longest matching name wins, as the docstring promises."""
+        groups = [self._group("g", "corp_extra_ldap"), self._group("h", "corp_ldap")]
+        names = ["corp", "corp_extra"]
+        assert provider_keys_for(self._cr("corp", providers=()), groups, names) == ["corp_ldap"]
+        assert provider_keys_for(self._cr("corp_extra", providers=()), groups, names) == ["corp_extra_ldap"]
+
+    def test_poll_counts_a_prefix_related_pair_s_group_once(self, tmp_path, monkeypatch):
+        """The poll passes every CR's name, so the group is counted under one CR, not both."""
+        from gsd import poller
+        from gsd.config import ClusterConfig
+
+        crs = [self._cr("corp", providers=()), self._cr("corp_extra", providers=())]
+        groups = [self._group("g", "corp_extra_ldap")]
+
+        class FakeClient:
+            def __init__(self, *a, **kw): pass
+            def fetch(self): return crs, groups
+            def fetch_access_group_dn(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", FakeClient)
+        store = Store(str(tmp_path / "t.db"))
+        try:
+            store.upsert_cluster("c1", "https://x", True)
+            assert poller.poll_once(store, ClusterConfig("c1", "https://x", token_env="T"), timeout=5) == "ok"
+            counts = {row["name"]: row["group_count"] for row in store.groupsyncs("c1")}
+            assert counts == {"corp": 0, "corp_extra": 1}
+        finally:
+            store.close()
+
     def test_same_name_in_two_namespaces_is_reported_not_guessed(self):
         """The label carries no namespace, so this is genuinely undecidable from the data.
         Saying so beats attributing to whichever CR happened to be iterated first."""
