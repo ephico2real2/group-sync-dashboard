@@ -150,7 +150,7 @@ Design notes, for the decisions that are not obvious from the code:
 | [`docs/guides/TUTORIAL_mermaid_diagrams.md`](docs/guides/TUTORIAL_mermaid_diagrams.md) | tutorial: how the diagrams are derived from code, written in Mermaid, checked in half a second and rendered in CI — with two built from scratch |
 | [`docs/design/DESIGN_reporting_service.md`](docs/design/DESIGN_reporting_service.md) | the report service: eleven access-review reports as HTML and PDF/A from a separate pod, its data path, its tickets |
 | [`docs/design/namespace-report-design.md`](docs/design/namespace-report-design.md) | superseded — per-namespace and access-review reports as HTML/PDF from a separate report service; the definitive answer on `--openshift-sar` |
-| [`docs/specs/README.md`](docs/specs/README.md) | **the feature programme** — thirteen modules specified with their complete code before any is implemented, one GitHub issue and milestone each, released strictly one at a time; the index, the version ladder and the definition of done |
+| [`docs/specs/README.md`](docs/specs/README.md) | **the feature programme** — sixty specifications, starting from the original thirteen modules, each specified with its complete code before any is implemented, one GitHub issue and milestone each, released strictly one at a time; the index, the version ladder and the definition of done |
 
 ## Install
 
@@ -264,13 +264,17 @@ about what it trusts, and silently widening it would be the wrong kind of helpfu
 
 ## Monitoring
 
-`/metrics` serves Prometheus exposition; the chart ships a ServiceMonitor and twelve alerting
-rules (fourteen with the off-volume backup CronJob on), both off by default (they need the Prometheus Operator CRDs, and the reference cluster runs
-no Prometheus), and a Grafana dashboard (a sidecar-labelled ConfigMap,
-`monitoring.grafanaDashboard`) that follows the ServiceMonitor's switch by default — see `docs/specs/SPEC_B3_grafana_dashboard.md`.
+`/metrics` serves Prometheus exposition; the chart ships a ServiceMonitor and twenty alerting
+rules (three only with reporting on, two only where the off-volume backup CronJob renders; both are
+the default), both on by default (they need the Prometheus Operator CRDs, which OpenShift ships), and
+a Grafana dashboard (a sidecar-labelled ConfigMap, `monitoring.grafanaDashboard`, plus a
+`GrafanaDashboard` CR where the cluster serves grafana-operator's API) that follows the
+ServiceMonitor's switch by default — see `docs/specs/SPEC_B3_grafana_dashboard.md`.
 
-Cardinality is bounded deliberately: series are per cluster and per GroupSync CR only, never
-per group or per user. That is a scale concern — 500 groups must not mean 500 series — and a
+Cardinality is bounded deliberately: the application's label names are `branch`, `change`,
+`cluster`, `commit`, `component`, `finding`, `groupsync`, `kind`, `namespace`, `node`, `origin`,
+`outcome`, `provider`, `report`, `schedule`, `severity`, `source`, `state`, `status`,
+`subject_kind`, `table`, `threshold`, `tier` and `version`, never a group or a user. That is a scale concern — 500 groups must not mean 500 series — and a
 disclosure one, since `/metrics` is unauthenticated so a ServiceMonitor can reach it.
 
 `gsd_groupsync_last_sync_timestamp_seconds` is a unix timestamp rather than a precomputed age
@@ -292,12 +296,12 @@ the WAL grows until the volume fills while the database file stays small.
 but a filesystem without working shared memory (NFS, EFS, SMB) refuses it silently, and reads
 then block on every write.
 
-The remaining five are `GroupSyncOverdue`, `DanglingRoleBinding`,
+Five more are `GroupSyncOverdue`, `DanglingRoleBinding`,
 `GroupSyncClusterUnreachable`, `GroupSyncDashboardConfigReconcileError` (a `NamespaceConfig`
 or `GroupConfig` has stopped reconciling, so RBAC is no longer being templated) and
 `GroupSyncDashboardDirectUserGrants` (grants that still name a person — a migration backlog,
 deliberately given a one-hour `for` so it is visible without paging anyone). The chart README
-lists all eight with their thresholds.
+lists all twenty with their thresholds.
 
 ## Building and shipping
 
@@ -319,10 +323,11 @@ Full detail, including CRC-specific traps, in
 ### Publishing from `main`
 
 [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs **that same script** on
-every merge to `main` that changes an image input, and writes nothing back to this repository:
-the immutable `<version>-<sha>` tag every time, the `:<version>` alias only when a human moved
-`version` in `pyproject.toml`. On `main`, the pushed digest is then signed and attested — keyless,
-under GitHub's OIDC identity — and its SBOM kept as an artifact and attached to the image. How an
+every merge to `main` that changes an image input, and commits nothing back to this repository:
+the `<version>-<sha>` tag every time, the `:<version>` alias only when a human moved
+`version` in `pyproject.toml`. With `SUPPLY_CHAIN_SBOM` and `SUPPLY_CHAIN_SIGNING` on (the unset default), its SBOM is kept as
+an artifact, and on `main` the pushed digest is signed and attested — keyless, under GitHub's OIDC
+identity — with the SBOM attached. How an
 operator checks all of that: [`charts/group-sync-dashboard/docs/HELM_DOWNLOAD_AND_INSTALL.md`](charts/group-sync-dashboard/docs/HELM_DOWNLOAD_AND_INSTALL.md);
 the release model: [`docs/guides/RELEASING.md`](docs/guides/RELEASING.md).
 
@@ -343,8 +348,9 @@ thing locally and in CI. Registry and namespace are **variables, not secrets** �
 sensitive, and as secrets they would be masked in exactly the logs where you want to see which
 registry a run pushed to.
 
-**Re-running a commit is safe.** The tag embeds the commit sha, so the same tag can only ever
-mean the same source; a re-run pushes an identical image, and the aliases are server-side copies
+**Re-running a commit names the same source.** The tag embeds the commit sha, so the same tag can
+only ever mean the same source; a re-run re-pushes it, possibly with different bytes (floating
+bases, `dnf update`), so pin `image.digest` when the bytes must not move. The aliases are server-side copies
 of that manifest, so no tag can end up naming different content than the digest that was signed.
 
 Credentials are never put on a command line — `secrets` go to the step's `env` and the script
@@ -477,6 +483,11 @@ Its own state is written in these places:
   (`charts/group-sync-dashboard/values.yaml#housekeeping:`,
   `local-development/gsd/api.py#build_app`, `local-development/gsd/housekeeping.py`,
   `local-development/gsd/reporting/artifacts.py#RunInFlight`).
+
+Beyond its own state, it creates SubjectAccessReviews to decide each reader's tier
+(`local-development/gsd/kube.py`), questions the API server answers and stores nowhere, and a fleet
+account's session logs in to its remote cluster and revokes that token when done
+(`local-development/gsd/fleetlogin.py`).
 
 ## Two things to know before reading a screen
 

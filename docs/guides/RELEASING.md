@@ -38,7 +38,8 @@ the next MINOR or MAJOR.
 
 ## The whole flow
 
-Every merge goes through one gate, then fans out to two independent workflows:
+Every merge goes through one gate, then fans out to two independent workflows, each behind its own path
+filter, so a merge starts either, both or neither (`promote.yml` follows them; "Promotion to the lab", below):
 
 ```
    pull request
@@ -57,11 +58,13 @@ Every merge goes through one gate, then fans out to two independent workflows:
    (below)                     (below)
 ```
 
-**`publish.yml` — the image. It writes to nothing in this repository.**
+**`publish.yml` — the image. It commits nothing to this repository; outside git it uploads the SBOM as a
+workflow artifact and, with signing on, writes provenance to the attestation store.**
 
 ```
    did an image input change?
-   gsd/** · pyproject.toml · README.md · Containerfile · .containerignore · build script
+   gsd/** · pyproject.toml · README.md · both Containerfiles · .containerignore · both build scripts
+   uninstall-lists.py · both image proofs · publish.yml
         |
         +-- no --> nothing published
         |
@@ -70,17 +73,19 @@ Every merge goes through one gate, then fans out to two independent workflows:
         v
    did pyproject `version` change since the previous commit?
         |
-        +-- no ---> push  :0.7.0-abc1234567          IMMUTABLE, every merge.
+        +-- no ---> push  :0.7.0-abc1234567          SHA TAG, every merge.
         |                                            The dev cluster and anyone
-        |                                            who wants a byte-pin.
+        |                                            who wants a source pin.
         |
         +-- yes --> push  :0.7.0-abc1234567    and
                     push  :0.7.0                     THE ALIAS. Releases only.
                                                      This is what the chart
                                                      resolves by default.
+                    push  :<chartVersion>            the chart version's label,
+                                                     which helm.yaml copies again
 
    cannot tell? (workflow_dispatch, first push, unreadable base)
-        --> immutable tag only, plus a ::warning:: naming --release-tags
+        --> sha tag only, plus a ::warning:: naming --release-tags
 
    then, on the digest the registry acknowledged — one digest under every tag that run pushed:
    sbom    job   Syft -> SPDX JSON, a workflow artifact                SUPPLY_CHAIN_SBOM
@@ -146,7 +151,7 @@ Every merge goes through one gate, then fans out to two independent workflows:
 
 **Read the two `rel` branches carefully — they are the part people get wrong.**
 The alias the chart actually resolves moves only when the application version changes. Image-changing issue PRs now
-carry a MINOR bump, so their merges publish both the immutable tag and the version alias. The
+carry a MINOR bump, so their merges publish both the sha tag and the version alias. The
 publisher's release-alias decision and `<appVersion>-<10-char sha>` tag scheme are unchanged.
 
 ---
@@ -171,7 +176,7 @@ is the opt-in. The second install needs its own Helm release name (`group-sync-d
 names its cluster-scoped objects by release (SPEC_P1 §2.3, "two-namespace readiness").
 
 `promote.yml` builds nothing. It runs after a green `publish.yml` on `main`, after a merge to
-`charts/group-sync-dashboard/` or `environments/`, or by hand (Run workflow, with `sha` and `rollback`). Each run:
+`charts/group-sync-dashboard/`, `environments/` or `.github/workflows/promote.yml`, or by hand (Run workflow, with `sha` and `rollback`). Each run:
 
 1. Takes `main`'s tip (or the `sha` given) and its `appVersion`.
 2. Finds the last first-parent commit that touched one of `publish.yml`'s image inputs. For an unpinned image it
@@ -180,7 +185,7 @@ names its cluster-scoped objects by release (SPEC_P1 §2.3, "two-namespace readi
    rollback. While they are still being published it prints a notice and writes nothing.
 3. Reads both images back: the version label on every Linux image, as `helm.yaml` checks it, and a signature from
    `publish.yml` on `main` (unless `SUPPLY_CHAIN_SIGNING` is `false`). A successful publish completion whose
-   immutable tag and version alias differ is a red run; it never crosses an older image with a newer main tree.
+   sha tag and version alias differ is a red run; it never crosses an older image with a newer main tree.
 4. Commits `charts/group-sync-dashboard/`, `environments/` and `promotion.yaml` to `release`, as a fast-forward.
    `promotion.yaml` pins both images by digest, and the Application lists it last, so the digests win.
 5. When the lab tracks `release`, Argo CD syncs it.
@@ -224,9 +229,9 @@ check, the record of the setup on 2026-10-05, key rotation and undoing it is `do
   ┌──────────────────────┬───────────┬──────────────────┬─────────────────────────────┐
   │ tag                  │ mutable?  │ pushed when      │ who it is for               │
   ├──────────────────────┼───────────┼──────────────────┼─────────────────────────────┤
-  │ 0.7.0-f9fa896778     │ never, by │ every merge that │ you, when you need          │
-  │                      │ POLICY    │ touches an image │ byte-identical rollbacks.   │
-  │ <appVersion>-<sha>   │           │ input            │ Always this exact source.   │
+  │ 0.7.0-f9fa896778     │ on a      │ every merge that │ you, when you need this     │
+  │                      │ rebuild of│ touches an image │ exact source. Same bytes:   │
+  │ <appVersion>-<sha>   │ the commit│ input            │ pin image.digest.           │
   ├──────────────────────┼───────────┼──────────────────┼─────────────────────────────┤
   │ 0.7.0                │ moves on  │ only when a      │ THE CHART, by default.      │
   │                      │ an APP    │ human bumps      │ image.tag is "" and         │
@@ -242,9 +247,9 @@ check, the record of the setup on 2026-10-05, key rotation and undoing it is `do
   │                      │ on main   │ back (#425)      │ resolves.                   │
   └──────────────────────┴───────────┴──────────────────┴─────────────────────────────┘
 
-  every row above is a TAG, i.e. a name. "never, by policy" is a promise this project keeps, not
-  something the registry enforces — a tag's owner can always move it. If you need a guarantee
-  rather than a promise, pin image.digest and skip the table entirely.
+  every row above is a TAG, i.e. a name. A rebuild of the same commit (a workflow_dispatch, or a
+  re-run) re-pushes its sha tag, possibly with different bytes (floating bases, dnf update), and a
+  tag's owner can always move it. If the bytes must not move, pin image.digest and skip the table.
 
   what the chart deploys, in order of precedence:
 
@@ -254,9 +259,10 @@ check, the record of the setup on 2026-10-05, key rotation and undoing it is `do
                                                note the @ — a digest is not a tag.
 
       image.tag: "0.7.0-f9fa896778"      ───►  repository:0.7.0-f9fa896778
-                                               immutable BY CONVENTION — this project never
-                                               repoints one, but it is still a name, and a
-                                               name's owner can move it.
+                                               the SOURCE, not the bytes — a rebuild of that
+                                               commit (a workflow_dispatch, or a re-run)
+                                               re-pushes it, possibly with different bytes.
+                                               Pin image.digest when the bytes must not move.
 
       image.tag: ""   (the default)      ───►  repository:<appVersion>
                                                resolved via
@@ -271,20 +277,22 @@ instead of in a pipeline; the error names `skopeo inspect` so you can get a corr
 chart deploys `:<appVersion>` unless you say otherwise.
 
 **`imagePullPolicy` is `Always`**, which is why the distinction matters rather than being pedantry:
-every container creation re-resolves the tag. On the immutable form that is a wasted round trip and
-nothing else. On an alias it means a republished image is picked up on the next crash, drain,
+every container creation re-resolves the tag. On the sha form it is a wasted round trip unless
+that commit was rebuilt. On an alias it means a republished image is picked up on the next crash, drain,
 liveness kill or scale-out. That is exactly why the alias is not republished per merge —
 `docs/design/DESIGN_decouple_chart_and_app_release.md` records the review where both reviewers refused a
 design that did.
 
-**Pin when you need byte-identical rollbacks:**
+**Pin when you need rollbacks to one source, or the digest for byte-identical ones:**
 
 ```sh
 helm upgrade ... --set image.tag=0.7.0-f9fa896778
+helm upgrade ... --set image.digest=sha256:<64 hex digits>
 ```
 
-**And verify, whichever form you pinned.** Every pushed image is signed and attested by digest
-under GitHub's OIDC identity — no key to fetch — and every published chart package is attested
+**And verify, whichever form you pinned.** With `SUPPLY_CHAIN_SIGNING` on (the unset default), every image
+`publish.yml` pushes from `main` is signed and attested by digest under GitHub's OIDC identity — no key to
+fetch — and every newly published chart package is attested
 the same way. The commands, with their outputs, are in
 `HELM_DOWNLOAD_AND_INSTALL.md#7. Verify what you downloaded`; the decisions, including why there is
 no GPG key, in `DESIGN_supply_chain.md`. Two repository variables turn the modules off,
@@ -309,22 +317,24 @@ What that does, and what you would do by hand without it:
    `gsd_build_info` report, and a test holds the two together.
 3. Bump `appVersion` in `charts/group-sync-dashboard/Chart.yaml` to match.
 4. Bump `Chart.yaml` `version` too, because you just changed the chart. The script derives a PATCH
-   bump; pass `--chart A.B.C` when the release is more than that. `ci.yml` fails the PR if the
-   version did not move.
+   bump; pass `--chart A.B.C` when the release is more than that. CI does not catch a missed bump
+   here: `ci.yml`'s chart check leaves `Chart.yaml` itself out, so an `appVersion`-only change passes it.
 5. Write the `# CHART A.B.C (date), KIND: …` line above `version:` and the application paragraph
    above `appVersion:` — the file's history, newest nearest the field.
 6. Turn `## Unreleased` in `docs/CHANGELOG.md` into `## Application X — chart Y — date`, with the
    reason as its first bullet, the schema line under it when the release moves the schema (below), and
-   everything merged since the last release beneath it.
+   everything merged since the last release beneath it. Move every spec marked `merged` in
+   `docs/specs/README.md`, and its spec's header, to `released`.
 7. Run `tests/test_chart_versions.py`. The script refuses to commit if it fails, and leaves the
    edits in the tree for you to read.
-8. Open the PR, merge it. `publish.yml` sees the version change and publishes both the immutable tag
+8. Open the PR, merge it. `publish.yml` sees the version change and publishes both the sha tag
    and the `:<appVersion>` alias.
 
-The script refuses a dirty tree, a version that does not advance, a bump that leaves a lower
-component non-zero, and a release branch that already exists; it commits to `release/app-X.Y.Z`
-with you as the only author and never touches `main` (`local-development/prepare-release.py#WHAT IT REFUSES`).
-All the edits land in one PR, or CI is red. That is the coupling working, not friction.
+The script refuses a dirty tree, a checkout other than `main` (unless `--no-commit`), a version that
+does not advance, a bump that leaves a lower component non-zero, and a release branch that already
+exists; it commits to `release/app-X.Y.Z` with you as the only author and never touches `main`
+(`local-development/prepare-release.py#WHAT IT REFUSES`). All the edits land in one PR, or CI is red
+(the chart `version` aside, step 4). That is the coupling working, not friction.
 
 **The schema line (#300).** An application release whose image migrates the database says so, directly under
 the reason:
@@ -363,23 +373,31 @@ cd local-development
 ```
 
 Commit the template change first; the script refuses a dirty tree, so the release commit contains
-only the release. It bumps `Chart.yaml` `version`, writes the history line, and turns `## Unreleased` into
-`## Chart A.B.C — application X.Y.Z — date`. Open the PR, merge. No image is built — `charts/**`
+only the release. It bumps `Chart.yaml` `version`, writes the history line, turns `## Unreleased` into
+`## Chart A.B.C — application X.Y.Z — date`, and moves `merged` specs to `released`. Open the PR, merge. No image is built — `charts/**`
 is deliberately absent from `publish.yml`'s path filter — and `helm.yaml` retags the existing image
 under the new chart version.
 
 ### Neither
 
 A docs-only or tooling PR outside `publish.yml`'s image-input paths, with no chart content change,
-needs neither version bump. An image-changing issue takes the next MINOR in its PR; on its branch,
-`./prepare-release.py --app X.Y.Z "Issue summary" --no-commit` prepares the matching version fields
-and release notes for review alongside the change.
+needs neither version bump. An image-changing issue takes the next MINOR in its PR. On its branch,
+`./prepare-release.py --app X.Y.Z "Issue summary" --no-commit` makes every edit of an application
+release in the tree and commits nothing: the three version fields, the chart's PATCH and both
+`Chart.yaml` history lines, `## Unreleased` turned into `## Application X.Y.Z — chart A.B.C — date`
+with the summary as its first bullet, and every `merged` spec moved to `released`. An issue PR
+without a migration keeps the version fields, the chart version and the two history lines; it restores
+`## Unreleased`, with the summary as its first bullet and the bullets already there after it, and
+undoes only the script's `merged` → `released` moves, keeping any status change the issue made itself
+(as `06431584` for #598, which keeps its own P1 `specified` → `merged`, `4eee95e4` for #616 and
+`bfbd6c28` for #619 did).
 
 **A migration is never "neither".** A merge that adds a `_MIGRATIONS` entry (`local-development/gsd/store.py`)
 without an application release leaves the chart's default image one schema behind `main`, and that image
 refuses readiness on any database `main`'s code has migrated. `tests/test_migration_needs_app_release.py`
 fails such a PR in CI (#298). Release the application in the same PR: on its branch, run
-`./prepare-release.py --app X.Y.Z "..." --no-commit` and commit the edits. Commit the bump after the
+`./prepare-release.py --app X.Y.Z "..." --no-commit` and commit the edits, keeping the application heading
+the schema line sits under, the bullets collected under it and the script's `merged` → `released` moves. Commit the bump after the
 migration: until the merge, the test takes the bump commit for the release.
 
 ---
@@ -390,7 +408,7 @@ The script CI calls is the same one you run by hand, which is the point:
 
 ```sh
 cd local-development
-./build-and-push-external.sh                  # immutable sha tag only
+./build-and-push-external.sh                  # sha tag only
 ./build-and-push-external.sh --release-tags    # ALSO the appVersion and chartVersion aliases
 ./build-and-push-report.sh --release-tags      # the report image, same flag: a release is two images
 ```
@@ -422,17 +440,17 @@ uses it.
 | chart release run is red at "Label the image this chart version deploys" with `<image>:<appVersion> is application X, not <appVersion> (#410)` | the tag exists but names another build: `publish.yml` has not moved the alias yet on the release merge, or the tag is a chart-version label on an old image (`:0.39.0` was application 0.24.0). Nothing was copied and no chart was published | wait for `publish.yml` on the release merge to finish green, then re-run the release. Never retag or delete the old tag by hand: a cluster, a mirror or a Helm release may pin it |
 | chart release run is red at "Label the image this chart version deploys" with `<image>:<chartVersion> is application <chartVersion>'s own alias` | the chart's version equals an application version that already has its alias, and the copy would overwrite it. Nothing was copied | bump `version` in `charts/group-sync-dashboard/Chart.yaml`, in a pull request, to a version no application release has used |
 | promote run says `whose images publish.yml has not finished`, `immutable image … is not ready` or the version alias `does not yet name` it, and promotes nothing | main's exact image is still publishing | nothing to do: its green completion, or a later chart/environment push, promotes main. If publish is red, fix it; `release` stays on the last promotion |
-| promote run says a same-version image change reached `main` | two PRs chose the same next application version, so the immutable image and `:<appVersion>` alias differ | cut the next MINOR or MAJOR and let `publish.yml` finish green; never retag by hand |
+| promote run says a same-version image change reached `main` | two PRs chose the same next application version, so the sha-tagged image and `:<appVersion>` alias differ | cut the next MINOR or MAJOR and let `publish.yml` finish green; never retag by hand |
 | promote run says `immutable image … is not ready` after a publish run started by hand (Run workflow), and nothing promotes `main` | the image-input commit's own publish run did not push its images, and the hand run built a later commit that changed no image input: that image is tagged with the later commit's sha, while promote reads the tag of the last image-input commit | re-run the failed publish run of the image-input commit (Re-run jobs), so its own `<appVersion>-<sha10>` exists; its green completion promotes `main` |
 | promote run is red with `is application X, not <appVersion>` or `carries no signature from publish.yml on main` | the tag names another build, or the digest was not signed by `publish.yml` on `main`. Nothing was written to `release` | wait for `publish.yml` to finish green, then Run workflow on promote. Never edit `release` by hand |
 | promote run is red with `origin has no release branch` or `RELEASE_DEPLOY_KEY is not set` | the operator's one-time steps are not done | "Promotion to the lab", steps 1 to 5 |
 | promote run is red with `is not a later commit` | a Run workflow named a commit older than the one `release` holds | check `rollback` to deploy it on purpose |
 | `release-crc.sh --argocd release` says `origin/release has no promotion.yaml` | no promotion has run yet | run promote (step 5 above) |
-| `helm search repo` shows the old chart after a merge | `Chart.yaml` `version` was not bumped, so chart-releaser skipped it | bump it. `ci.yml`'s version-bump check exists to stop this reaching main |
-| a new pod runs different bits than its neighbour | somebody republished an alias between the two container creations | pin `image.tag` to the sha form |
+| `helm search repo` shows the old chart after a merge | `Chart.yaml` `version` was not bumped, so chart-releaser skipped it | bump it. `ci.yml`'s version-bump check stops this when another chart file changed; an `appVersion`-only `Chart.yaml` edit passes it (step 4) |
+| a new pod runs different bits than its neighbour | somebody republished a tag between the two container creations: an alias, or a sha tag on a rebuild | pin `image.digest` |
 | `ImagePullBackOff` on a fresh install | the `:<appVersion>` alias does not exist for the chart's declared appVersion — for the dashboard image, or (report pod only) for the report image | the app release was never published, or half of it was. Check `publish.yml`, then use `--release-tags` on both scripts |
 | the first publish of a NEW image name (the report image was the first, 0.18.0) is red at its push, or green and then every fresh install pulls `unauthorized` for that image | quay.io creates a repository on push only if the pushing account may create one in the namespace, and creates it **private**; the chart pulls anonymously | create the repository in the quay.io UI **public**, grant the robot account write on it, then publish. Measured 2026-09-11: `group-sync-dashboard-report` did not exist before 0.18.0's first publish |
-| the publish run is red at "Copy each digest to :latest, and read it back" | the registry refused the copy (the `::error::` names the image, and says that any `moved   :` line above it stands), `:latest` resolved to another digest afterwards (the `::error::` names both digests), or the read-back could not be made (the `::error::` names the image and the digest it was copied from) | the immutable tags, the aliases and the signatures are already published; at most the dashboard's `:latest` has moved ahead of the report's. Re-run the failed `latest` job; it moves both images again |
+| the publish run is red at "Copy each digest to :latest, and read it back" | the registry refused the copy (the `::error::` names the image, and says that any `moved   :` line above it stands), `:latest` resolved to another digest afterwards (the `::error::` names both digests), or the read-back could not be made (the `::error::` names the image and the digest it was copied from) | the sha tags, the aliases and the signatures are already published; at most the dashboard's `:latest` has moved ahead of the report's. Re-run the failed `latest` job; it moves both images again |
 | `:latest` names an older build than the newest green publish on `main` | an older run's `latest` job was re-run after a newer run had moved the tag: a re-run copies its own run's digests | re-run the `latest` job of the newest green publish run on `main` |
 
 **The historical failures are worth knowing, because two of them reported success.** #34 published a

@@ -2,7 +2,9 @@
 
 `/api` and `/api/redoc` are rendered by Swagger UI and ReDoc. Those are third-party
 JavaScript, and this repository keeps a copy of them in
-`local-development/gsd/static/vendor/`, committed to git.
+`local-development/gsd/static/vendor/`, committed to git. The same directory, script and lock also
+carry the UI's typefaces and the PDF report's DejaVu Sans (the `ASSETS` array in `vendor-assets.sh`),
+so `--upgrade` moves those too.
 
 This page is how you refresh that copy. Budget five minutes; most of it is a rebuild.
 
@@ -42,15 +44,15 @@ control:
 * **the build host having a route out.** A locked-down or air-gapped builder has none.
 
 Each of those fails at the worst possible moment — while you are shipping — and none of them
-is your bug to fix. Vendoring inverts it: the repository holds everything the build needs, so
-a build works from a checkout alone, offline, years later. The cost is ~2.5MB in git and this
-five-minute procedure.
+is your bug to fix. Vendoring inverts it for these files: the repository holds them, so
+the build needs no npm, years later. The rest of the build still pulls its base images and
+package repositories. The cost is about 2.8 MB in git for
+the two API-docs packages (4.4 MB with the fonts) and this five-minute procedure.
 
 The same reasoning applies at runtime, which is why the files exist in the first place.
 FastAPI's stock docs handlers load their JavaScript from `cdn.jsdelivr.net`, and Swagger's
 default favicon comes from `fastapi.tiangolo.com`. On a cluster with no route to the internet
-— which is what this chart targets, pulling oauth-proxy from the internal registry and
-injecting a trusted CA bundle — those pages render blank. Serving them from a CDN also had an
+— which is what this chart targets, injecting a trusted CA bundle — those pages render blank. Serving them from a CDN also had an
 authenticated admin's browser talking to two third parties on every visit.
 
 ## Why the script talks to npm and not to the CDN
@@ -74,8 +76,9 @@ So the script never asks a CDN. It goes to the publisher:
 2. download the release tarball, recompute sha512, compare against that digest
 3. only then extract the file and record its sha256
 
-Every network path in the script runs through one function that performs step 2, so no mode
-can skip it. A tarball that fails is refused rather than vendored.
+Every download of asset bytes (`--update`, `--upgrade`) runs through one function,
+`fetch_and_verify_tarball`, that performs step 2, so neither can skip it; `--outdated` only asks
+npm for the `latest` version. A tarball that fails is refused rather than vendored.
 
 **Residual trust, stated plainly:** the npm registry itself, and TLS to it. That is a smaller
 and more accountable surface than a CDN edge, but it is not zero. If you need better, mirror
@@ -133,7 +136,7 @@ the minified diffs are not.
 cd local-development
 ./build-and-push-external.sh --update-values
 cd .. && helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
-  -n group-sync-dashboard --set ingress.host=<host>
+  -n group-sync-dashboard
 ```
 
 Then open `/api` and `/api/redoc` and confirm both still render. A major version of either
@@ -143,7 +146,7 @@ wrong" — that check is your eyes.
 To confirm nothing reaches for a CDN, from inside the cluster:
 
 ```bash
-POD=$(oc get pods -n group-sync-dashboard -o name | head -1)
+POD=$(oc get pods -n group-sync-dashboard -l app.kubernetes.io/name=group-sync-dashboard -o name | head -1)
 oc exec -n group-sync-dashboard $POD -c dashboard -- \
   sh -c 'ls /install/lib/python3.14/site-packages/gsd/static/vendor/'
 ```
