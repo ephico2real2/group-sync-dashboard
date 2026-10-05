@@ -29,7 +29,7 @@ group membership, so it ships authenticated and you turn the proxy *off* deliber
 
 The KPI page's two doors (**Open in Grafana**, **Observe → Dashboards**) and the shipped Grafana board
 are on by default and work with nothing set, given four things that are not this chart's to create.
-Each names who provides it; `docs/DESIGN_grafana_and_observe.md` is the design.
+Each names who provides it; `docs/design/DESIGN_grafana_and_observe.md` is the design.
 
 | Prerequisite | Who | How you know |
 |---|---|---|
@@ -43,7 +43,7 @@ Each names who provides it; `docs/DESIGN_grafana_and_observe.md` is the design.
 ### Declaring a cluster
 
 Every accepted `clusters[]` combination, and **where each refusal fires**, is in
-[`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md). It is measured rather than described —
+[`charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`](docs/CLUSTER_STANZA.md). It is measured rather than described —
 each row is the outcome of rendering the chart and of loading the same stanza in the pod's loader,
 held by `local-development/tests/test_cluster_stanza_matrix.py`.
 
@@ -58,8 +58,8 @@ A worked production file using these combinations:
 **What happens to the credential afterwards** — which account bootstraps and which token polls, what
 `auth_failed` / `forbidden` / `unreachable` mean, and how an administrator recovers a cluster whose
 credential has gone bad — is in
-[`CLUSTER_CREDENTIALS.md`](CLUSTER_CREDENTIALS.md), beside this file. The repair itself, step by step (Refresh,
-then Rejoin, then the manual fallback), is [`RUNBOOK.md`](RUNBOOK.md).
+[`CLUSTER_CREDENTIALS.md`](docs/CLUSTER_CREDENTIALS.md), beside this file. The repair itself, step by step (Refresh,
+then Rejoin, then the manual fallback), is [`RUNBOOK.md`](docs/RUNBOOK.md).
 
 **Silencing a legitimate grant** that the dashboard reports as unmanaged: the label and the annotation to put
 on the binding, and what the platform rule silences without either, are in
@@ -234,7 +234,7 @@ itself never grows credentials for object storage.
 database as it was to `pre-upgrade/` beside it before it upgrades the schema, whether `config.backup` is on
 or off, and does not start without that copy. The copies of the newest three upgrades are kept, each about
 the size of the database, so they count against `persistence.size`; `config.backup.keep` does not apply to
-them ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
+them ([runbook §6](docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
 
 ### Deleting reports and database copies — `housekeeping`
 
@@ -254,9 +254,9 @@ class in `destination.pvc.storageClass` for that. A cluster with no default Stor
 Pending, and its bind Job fails after 600 s, so the rollout reports a failure until
 `destination.pvc.storageClass` names a class. The copy is hashed, opened and integrity-checked before it
 counts, and the Job fails loudly otherwise. At one replica with the `pvc` destination the
-same run also ships the newest pre-upgrade copy ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies))
+same run also ships the newest pre-upgrade copy ([runbook §6](docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies))
 to `/offsite/pre-upgrade`, keeping three. Restore and verification:
-[`docs/RUNBOOK_backup_restore.md`](../../docs/RUNBOOK_backup_restore.md).
+[`charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`](docs/RUNBOOK_backup_restore.md).
 
 | Key | Default | Notes |
 |---|---|---|
@@ -377,7 +377,7 @@ Grant the wide view through your normal RBAC process, never a chart value:
 
 ### Reporting — the report service
 
-A second pod on its own image renders eleven evidence reports (docs/DESIGN_reporting_service.md) —
+A second pod on its own image renders eleven evidence reports (docs/design/DESIGN_reporting_service.md) —
 the namespace access report, an access matrix, privileged access, binding findings, groups, users,
 login activity, dormant access, GroupSync health, a compliance snapshot and an access-certification
 pack — as self-contained HTML and PDF/A, from a **read-only copy** of the dashboard's database that
@@ -542,7 +542,7 @@ fire, because its gauge comes from the stopped process and a missing series retu
 `reporting.enabled`, `GroupSyncDashboardReportSnapshotStale` (warning) fires once the report service's
 newest copy is older than four snapshot intervals, for `for.reportSnapshot` (about 50 minutes at the
 defaults). The TTL is the bound. The procedure is the runbook's
-[§4](../../docs/RUNBOOK_backup_restore.md#4-restore).
+[§4](docs/RUNBOOK_backup_restore.md#4-restore).
 
 ### Networking
 
@@ -579,13 +579,13 @@ defaults). The TTL is the bound. The procedure is the runbook's
 | `loginCapture.auditLog.ignoreIdentityPatterns` | `["ou=TrustedApplications"]` | audit-log source: identities that are not people (matched case-insensitively against the Identity's `providerUserName` and its decoded name suffix — an LDAP bind service account); every decision of theirs is dropped |
 | `rbac.users` | `true` | adds `get`/`list` on `users`. The User objects are the **source of the Users tab**: OpenShift creates one at first login, so the tab counts people who have logged in, with group membership as an attribute. Also supplies `fullName` for every member surface. Switchable off; the poll still succeeds, but the Users tab then has no source and says so by name rather than showing an empty list |
 | `rbac.identities` | `false` | adds `get`/`list` on `identities.user.openshift.io` — one Identity per (provider, id), created by OpenShift at the first successful login for `mappingMethod: claim`/`add` (by an administrator beforehand for `lookup`), so its creation time is the first login where the User's is approximate; the page labels it `identity`, never "exact". Also the app's read switch (`identitiesReadEnabled`). Requires `rbac.users`; the chart refuses the pair otherwise. Off by default: a grant the chart does not otherwise need |
-| `rbacAuditors.enabled` | `true` | **ON by default** (the chart's on-by-default rule). Renders a read-only auditor ClusterRole and a ClusterRoleBinding per configured group, so members can run reports and review users/groups/bindings in OpenShift directly — no workload access, no Usage tab. The binding is **inert until the named group has members**; a populated group then reaches the **wide report tier** (the role grants the report gate's read SAR — a deliberate default grant to that named group, never cluster-admin). Set `false` to render none of it. See [auditor-group troubleshooting](../../docs/TROUBLESHOOTING_auditor_groups.md) |
+| `rbacAuditors.enabled` | `true` | **ON by default** (the chart's on-by-default rule). Renders a read-only auditor ClusterRole and a ClusterRoleBinding per configured group, so members can run reports and review users/groups/bindings in OpenShift directly — no workload access, no Usage tab. The binding is **inert until the named group has members**; a populated group then reaches the **wide report tier** (the role grants the report gate's read SAR — a deliberate default grant to that named group, never cluster-admin). Set `false` to render none of it. See [auditor-group troubleshooting](docs/TROUBLESHOOTING_auditor_groups.md) |
 | `rbacAuditors.createClusterRole` | `true` | render the chart's own least-privilege read-only audit role (get/list on users, groups, roles, rolebindings, clusterroles, clusterrolebindings). Mutually exclusive with `existingClusterRole` |
 | `rbacAuditors.existingClusterRole` | `""` | bind a ClusterRole you made elsewhere instead of the chart's; the chart then renders only the Binding. Must cover the `visibility.adminSar` gate. Requires `createClusterRole=false` |
-| `rbacAuditors.groups` | `[{name: app-ocp-rbac-groupsync-ns-auditor}]` | the groups to bind, each `{name, createLocal}`. The default names the estate's auditor group, bind-only (`createLocal` omitted), so enabling with no override binds it — supply your own list to change it. Bound by name, so a synced group and a local group work the same. `createLocal: true` also creates a local `Group` object; leave it off for a group the group-sync operator owns (the chart refuses `createLocal: true` when the Group already exists under another owner). See [auditor-group troubleshooting](../../docs/TROUBLESHOOTING_auditor_groups.md) for collision symptoms and recovery |
+| `rbacAuditors.groups` | `[{name: app-ocp-rbac-groupsync-ns-auditor}]` | the groups to bind, each `{name, createLocal}`. The default names the estate's auditor group, bind-only (`createLocal` omitted), so enabling with no override binds it — supply your own list to change it. Bound by name, so a synced group and a local group work the same. `createLocal: true` also creates a local `Group` object; leave it off for a group the group-sync operator owns (the chart refuses `createLocal: true` when the Group already exists under another owner). See [auditor-group troubleshooting](docs/TROUBLESHOOTING_auditor_groups.md) for collision symptoms and recovery |
 | `rbac.namespaces` | `false` | adds `get`/`list` on `namespaces` (core group). Lets the report service's namespace report attest **absence** — "this namespace exists and has no grants" — instead of "none observed". Off by default: extra RBAC |
 | `kyverno.enabled` | `true` | the Kyverno policy module (#165, #170): grants `list` on the policy reports (`wgpolicyk8s.io`, `openreports.io`) and the five CEL policy kinds (`policies.kyverno.io`, with their namespaced twins) and turns the poller's read on. Auto-detected per cluster — no policy-report API group is "not installed", said on the page, never zero results. Read-only: no `/status`, no write verb, never the deprecated `kyverno.io` family (the API says it will be removed in a future release; its results are counted so the page can say they exist) |
-| `clusterConfig.secrets.enabled` | `true` | clusters declared as labelled Secrets in the release namespace (#230, `docs/specs/SPEC_S1_cluster_secrets.md`): a Role with `get`, `list`, `watch` on `secrets` and `configmaps` there, and the poller's discovery on `discoveryIntervalSeconds` — a Secret labelled `groupsync-dashboard.io/secret-type: cluster` carrying `name`, `server`, `config` (JSON: `bearerToken` or `oauth{username,password}`, `tlsClientConfig{caData,insecure}`) and the D2 options is polled like a `clusters[]` entry; the host is always `clusters[0]` and a Secret naming it is refused; a Secret that does not parse is a finding on `GET /api/clusterconfigs`, one that vanishes disables its cluster and keeps its history. ConfigMaps labelled `groupsync-dashboard.io/config-type: onboard` or `sideload` carry credential-free values-shaped stanzas in `data.clusters.yaml` (SPEC_S5, #293); the #284 lookup generates their Secrets. Conflicts load neither; generated credentials are pruned repeatedly after confirmed removal, behind the writes switch. See [the cluster stanza guide](../../docs/CLUSTER_STANZA.md) for prerequisites and recovery, and the [Argo CD / Flux onboarding examples](../../examples/cluster-onboarding/) for adding clusters through GitOps. The [manual Secret example](../../examples/cluster-secret/) explains why a `saTokenLookup` Secret must not be self-healed. `false` — no Role, no discovery, the `clusters[]` list alone. See [polling and discovery](../../docs/polling-and-discovery.md) for cadence, cleanup and refresh behaviour |
+| `clusterConfig.secrets.enabled` | `true` | clusters declared as labelled Secrets in the release namespace (#230, `docs/specs/SPEC_S1_cluster_secrets.md`): a Role with `get`, `list`, `watch` on `secrets` and `configmaps` there, and the poller's discovery on `discoveryIntervalSeconds` — a Secret labelled `groupsync-dashboard.io/secret-type: cluster` carrying `name`, `server`, `config` (JSON: `bearerToken` or `oauth{username,password}`, `tlsClientConfig{caData,insecure}`) and the D2 options is polled like a `clusters[]` entry; the host is always `clusters[0]` and a Secret naming it is refused; a Secret that does not parse is a finding on `GET /api/clusterconfigs`, one that vanishes disables its cluster and keeps its history. ConfigMaps labelled `groupsync-dashboard.io/config-type: onboard` or `sideload` carry credential-free values-shaped stanzas in `data.clusters.yaml` (SPEC_S5, #293); the #284 lookup generates their Secrets. Conflicts load neither; generated credentials are pruned repeatedly after confirmed removal, behind the writes switch. See [the cluster stanza guide](docs/CLUSTER_STANZA.md) for prerequisites and recovery, and the [Argo CD / Flux onboarding examples](../../examples/cluster-onboarding/) for adding clusters through GitOps. The [manual Secret example](../../examples/cluster-secret/) explains why a `saTokenLookup` Secret must not be self-healed. `false` — no Role, no discovery, the `clusters[]` list alone. See [polling and discovery](../../docs/design/polling-and-discovery.md) for cadence, cleanup and refresh behaviour |
 | `clusterConfig.fleetAccount.ping.enabled` | `true` | the daily ping (#285, `docs/specs/SPEC_S4c_credential_lifecycle.md` §3.4): once per fleet account per interval, on the leader, the dashboard logs in as the account on ONE cluster the lookup retrieved (in rotation by name), reads the poller ServiceAccount's token Secret there and stores nothing. The instant it last succeeded is kept on the account's Lease (`gsd-fleet-<sha256(username)[:16]>`) and served on `GET /api/clusterconfigs`, the tab and `gsd_fleet_account_last_ok_timestamp_seconds`. One bind per interval for the whole fleet, never one per cluster; a refused or locked password stops it, said once, until the password changes |
 | `clusterConfig.fleetAccount.ping.intervalSeconds` | `86400` | how often the ping confirms each account: daily. It rides `discoveryIntervalSeconds`, so it never runs more often than discovery; a shorter interval multiplies the bind rate at a directory that is counting |
 | `clusterConfig.secrets.writes.enabled` | `false` | the Cluster Configurations tab's writes (#230 S2, `docs/specs/SPEC_S2_cluster_configurations_tab.md`): `create`, `update`, `delete` join the `-cluster-secrets` Role so an administrator can add a cluster from the tab (the same labelled Secret a GitOps process would write, `gsd-cluster-<name>`, annotated `groupsync-dashboard.io/managed-by: ui`), rotate its bearer token in place, or delete it (the cluster retires, its history kept). The app writes only in its own namespace, only Secrets carrying the label (checked by the app — RBAC cannot scope a verb by label), only for a reader the cluster-admin tier admits (`visibility.clusterAdminSar`, #322 — never the wide tier the auditor passes) with a proxy-verified identity, one audit log line per write naming the person, the verb and the Secret; the credential never reaches a response, a log line, the database or `/metrics`. **Off by default**, a stated exception to the on-by-default rule: a write path on Secrets widens the dashboard's read-only posture (its only write anywhere is its own leader Lease), so it stays off until the operator turns it on — the default is pending the operator's A/B call of 2026-09-20; B flips it and removes the exception. Off, no write route is registered (a POST is a `405`) and the tab is read-only, its form still producing the Secret's YAML for a GitOps process to apply |
@@ -664,7 +664,7 @@ the controller chart cannot grant access on another cluster.
 
 New audit events cannot report LDAP result codes or AD sub-codes, including a locked-account
 cause. Existing pod-log rows, their causes and their API/UI fields remain readable; configured
-retention still applies. See `docs/AUDIT_LOG_CAPTURE.md` and `docs/LOGIN_CAPTURE_QUICKCHECK.md`.
+retention still applies. See `docs/guides/AUDIT_LOG_CAPTURE.md` and `docs/guides/LOGIN_CAPTURE_QUICKCHECK.md`.
 
 Every rule in the ClusterRole is a read (`get`, `list`); `rolebindings`/`clusterrolebindings`
 render only when `rbac.bindings`, and `users` only when `rbac.users`. The dashboard's Leases — the
@@ -957,7 +957,7 @@ Upgrading with `mode: annotate` still set runs as `log` and warns once at startu
 deliberately does not fall back to `off`, which would silently take the findings away from a
 cluster that had asked for them.
 
-Full design, invariants and the live-cluster evidence: [`docs/unmanaged-audit-design.md`](../../docs/unmanaged-audit-design.md).
+Full design, invariants and the live-cluster evidence: [`docs/design/unmanaged-audit-design.md`](../../docs/design/unmanaged-audit-design.md).
 
 ## Scaling
 
@@ -989,7 +989,7 @@ of one pod's database, and also the copies of pods that no longer exist and thos
 (written at one replica, or by a release before #391): a rollout renames every pod, and nothing deletes
 a departed pod's copies, as nothing deletes its `/data/<pod name>/gsd.db`. `backup.offsite` still ships
 the single newest copy, which is one replica's. At one replica the name stays `gsd-<UTC stamp>Z.db` and
-`keep` bounds the whole directory ([runbook](../../docs/RUNBOOK_backup_restore.md)).
+`keep` bounds the whole directory ([runbook](docs/RUNBOOK_backup_restore.md)).
 
 Four combinations are refused at template time rather than deployed broken:
 
@@ -1173,7 +1173,7 @@ the OAuth server served its login page for that request, and the same request wi
 
 The full reasoning, the platform precedent (Red Hat's own Jenkins template uses the same
 reference form) and every source are in
-[`docs/DESIGN_route_exposure.md`](../../docs/DESIGN_route_exposure.md).
+[`docs/design/DESIGN_route_exposure.md`](../../docs/design/DESIGN_route_exposure.md).
 
 `argocd.enabled` is on by default (since 0.8.0). It adds annotations for two problems that
 each cost you something real if unhandled.

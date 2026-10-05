@@ -238,7 +238,7 @@ backup.offsite.enabled=true requires config.backup.enabled=true. The CronJob shi
 {{- else if and .Values.persistence.existingClaim (not .Values.persistence.accessMode) -}}
 backup.offsite.enabled=true with persistence.existingClaim requires persistence.accessMode set to that claim's access mode: helm cannot read the live claim, and an emptied accessMode derives ReadWriteOncePod or ReadWriteMany from replicaCount, which may not be what the claim was created with. ReadWriteOncePod is refused either way.
 {{- else if eq (include "gsd.accessMode" .) "ReadWriteOncePod" -}}
-backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md covers moving the data to a new one.
+backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md covers moving the data to a new one.
 {{- end -}}
 {{- end -}}
 
@@ -429,7 +429,7 @@ list
 # every viewer (RBAC matching is exact and lowercase). The DEFAULT differs — a write verb, `update
 # clusterrolebindings`, because no read check separates cluster-admin from cluster-reader, and the
 # Usage dataset is the one thing on the cluster that cannot be reproduced with oc. See
-# docs/SPEC_usage_admin_tier.md. The dashboard never writes; a SubjectAccessReview only asks.
+# docs/design/SPEC_usage_admin_tier.md. The dashboard never writes; a SubjectAccessReview only asks.
 
 {{- define "gsd.usageVisibilitySarApiGroup" -}}
 {{- $sar := ((.Values.visibility | default dict).usageAdminSar) | default dict -}}
@@ -588,7 +588,7 @@ INFO
 {{- else -}}
 {{- $l := upper (trim (toString $raw)) -}}
 {{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
-{{- fail (printf "logLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter). Login capture uses the audit log at default OAuth verbosity; see docs/LOGIN_CAPTURE_QUICKCHECK.md." (toString $raw)) -}}
+{{- fail (printf "logLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter). Login capture uses the audit log at default OAuth verbosity; see docs/guides/LOGIN_CAPTURE_QUICKCHECK.md." (toString $raw)) -}}
 {{- end -}}
 {{- $l -}}
 {{- end -}}
@@ -880,14 +880,14 @@ false
 {{- fail "reporting.enabled=true requires persistence.enabled=true. The report pod reads a VACUUM INTO copy the dashboard writes under /data/report on the data claim; an emptyDir cannot be mounted by a second pod. Set reporting.enabled=false for an ephemeral install." -}}
 {{- end -}}
 {{- if gt (int .Values.replicaCount) 1 -}}
-{{- fail "reporting.enabled=true requires replicaCount 1. Above one replica each pod holds its own database and history (templates/deployment.yaml, PER-POD database file), so a report would be built from an arbitrary replica's copy. docs/reference-architecture.md explains why scaling is not the answer; set reporting.enabled=false if you must scale." -}}
+{{- fail "reporting.enabled=true requires replicaCount 1. Above one replica each pod holds its own database and history (templates/deployment.yaml, PER-POD database file), so a report would be built from an arbitrary replica's copy. docs/guides/reference-architecture.md explains why scaling is not the answer; set reporting.enabled=false if you must scale." -}}
 {{- end -}}
 {{- if not .Values.rbac.bindings -}}
 {{- fail "reporting.enabled=true requires rbac.bindings=true: nine of the eleven reports are the RBAC binding surface, which the dashboard does not read without that grant." -}}
 {{- end -}}
 {{- $mode := include "gsd.accessMode" . -}}
 {{- if ne $mode "ReadWriteMany" -}}
-{{- fail (printf "reporting.enabled=true requires persistence.accessMode=ReadWriteMany; got %s. ReadWriteOncePod admits one pod only. ReadWriteOnce is refused too: the two pods restart independently, inter-pod affinity is ignored once a pod is scheduled, so replacing only the dashboard can leave the report pod holding the single-node claim on the old node while the new dashboard pod lands on another and cannot attach it. Use ReadWriteMany (the default) or set reporting.enabled=false. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md §5 covers moving the data." $mode) -}}
+{{- fail (printf "reporting.enabled=true requires persistence.accessMode=ReadWriteMany; got %s. ReadWriteOncePod admits one pod only. ReadWriteOnce is refused too: the two pods restart independently, inter-pod affinity is ignored once a pod is scheduled, so replacing only the dashboard can leave the report pod holding the single-node claim on the old node while the new dashboard pod lands on another and cannot attach it. Use ReadWriteMany (the default) or set reporting.enabled=false. accessModes are immutable on an existing claim — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §5 covers moving the data." $mode) -}}
 {{- end -}}
 {{- $snap := (.Values.reporting | default dict).snapshot | default dict -}}
 {{- if lt (int ($snap.intervalSeconds | default 300)) 60 -}}
@@ -897,7 +897,7 @@ false
 {{- if or (lt (int ($t.ttlSeconds | default 300)) 30) (gt (int ($t.ttlSeconds | default 300)) 3600) -}}
 {{- fail (printf "reporting.ticket.ttlSeconds must be between 30 and 3600; got %v" $t.ttlSeconds) -}}
 {{- end -}}
-{{- /* Namespace-selection guards (docs/DESIGN_reporting_auditors_and_ns_selector.md §3, round 1 N1):
+{{- /* Namespace-selection guards (docs/design/DESIGN_reporting_auditors_and_ns_selector.md §3, round 1 N1):
    capture rides the optional rbac.namespaces grant, and the selector must name a captured key, or it
    would be silently empty. `| default` on every hop so a commented-out stanza never panics. */ -}}
 {{- $nsMeta := (.Values.reporting | default dict).namespaceMetadata | default dict -}}

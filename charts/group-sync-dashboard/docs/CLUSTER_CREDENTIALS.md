@@ -4,7 +4,7 @@
 
 A release-namespace ConfigMap labelled `groupsync-dashboard.io/config-type: onboard` or `sideload`
 contains `data.clusters.yaml`, whose `clusters:` list is values-shaped and uses `saTokenLookup: true`.
-The manifest is in `docs/CLUSTER_STANZA.md`. The #284 lookup reads the remote token and the existing
+The manifest is in `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`. The #284 lookup reads the remote token and the existing
 writer creates `gsd-cluster-<name>` with `groupsync-dashboard.io/secret-type: cluster`. Nobody supplies
 that token in the ConfigMap. Fleet account/password settings and the remote grants are unchanged.
 
@@ -47,7 +47,7 @@ replica. Since #481 the same record is also kept beside the database, in `fleet-
 password again and pings no second time that day, and deleting the Lease no longer clears its entry (clear it as
 [`RUNBOOK.md`](RUNBOOK.md) section 7 says). With `persistence.enabled: false` the copy lasts only as long as the pod.
 
-Companion to [`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md), which covers *what a stanza may
+Companion to [`charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`](CLUSTER_STANZA.md), which covers *what a stanza may
 say*. This covers *what happens to the credential afterwards* — who holds it, what fails, and how an
 administrator recovers a cluster whose credential has gone bad.
 
@@ -150,7 +150,7 @@ so the *entire* JSON must be supplied, not just the token.
 | `oc`, `kubectl`, or GitOps | **up to one discovery interval** (`discoveryIntervalSeconds`, 300s default) |
 
 Measured on the reference cluster: 8m30s for a newly created Secret, and 3m42s / 4m08s for a rotation
-— all via `oc`. Detail in [`docs/polling-and-discovery.md`](../../docs/polling-and-discovery.md).
+— all via `oc`. Detail in [`docs/design/polling-and-discovery.md`](../../../docs/design/polling-and-discovery.md).
 
 ## 5. The recovery flow — Refresh, then Rejoin
 
@@ -274,7 +274,7 @@ lifetime and an `OAuthClient` can override it; on the reference lab the default 
    revoke them.** Each sign-in creates an object whose client is the release's ServiceAccount: 131 of 189,
    the largest group, on the lab at 2026-09-27T08:52:23Z. Their tokens carry the scopes `user:info` and
    `user:check-access`, which permit no delete. A sign-out that revoked them was built, deployed and measured
-   returning 403 (`docs/DESIGN_session_and_signout.md#Token revocation is refused by the token's own scope`).
+   returning 403 (`docs/design/DESIGN_session_and_signout.md#Token revocation is refused by the token's own scope`).
    Widening the scope to `user:full` would fix that by handing the dashboard a token that can act as the user
    anywhere on the cluster, so the chart does not. Sign-out clears the proxy's cookie and does not delete the
    object.
@@ -284,7 +284,7 @@ lifetime and an `OAuthClient` can override it; on the reference lab the default 
    ([`TokenConfig`](https://github.com/openshift/api/blob/master/config/v1/types_oauth.go),
    [`OAuthClient`](https://github.com/openshift/api/blob/master/oauth/v1/types.go)). They are cluster-wide
    policy, so a namespaced chart does not set them
-   (`docs/DESIGN_session_and_signout.md#Cluster token policy is not ours to set`), and the dashboard never
+   (`docs/design/DESIGN_session_and_signout.md#Cluster token policy is not ours to set`), and the dashboard never
    does. An inactivity timeout limits whether a token can still be used; it is not a quota on how many objects
    exist, and changing it does not lower the timeout of tokens already issued. The dashboard runs no sweep of
    its own. Removing old objects, or shortening their lifetime, is the cluster owner's decision.

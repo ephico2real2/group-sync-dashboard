@@ -48,7 +48,7 @@ pass, both reviewers). */}}
 {{- fail "backup.offsite.destination.type=s3 requires backup.offsite.destination.s3.existingSecret: the chart never embeds object-storage credentials. Create a Secret with AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and S3_BUCKET (optionally S3_ENDPOINT, S3_PREFIX, AWS_DEFAULT_REGION, AWS_CA_BUNDLE) and name it here." }}
 {{- end }}
 {{- if not $o.destination.s3.image.repository }}
-{{- fail "backup.offsite.destination.type=s3 requires an image with an S3 CLI in backup.offsite.destination.s3.image.repository (and .tag). The dashboard image deliberately ships no aws, mc or rclone (docs/DESIGN_hardened_image.md §10). The default command is written for the AWS CLI; set backup.offsite.destination.s3.command for another tool." }}
+{{- fail "backup.offsite.destination.type=s3 requires an image with an S3 CLI in backup.offsite.destination.s3.image.repository (and .tag). The dashboard image deliberately ships no aws, mc or rclone (docs/design/DESIGN_hardened_image.md §10). The default command is written for the AWS CLI; set backup.offsite.destination.s3.command for another tool." }}
 {{- end }}
 {{- end }}
 ---

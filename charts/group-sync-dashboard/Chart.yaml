@@ -63,7 +63,7 @@ type: application
 # Pin deliberately if you need byte-identical rollbacks:
 #   --set image.tag=0.7.0-db8a90510f
 # values.yaml under `image` carries the full reasoning, and
-# docs/DESIGN_decouple_chart_and_app_release.md carries the review that settled it.
+# docs/design/DESIGN_decouple_chart_and_app_release.md carries the review that settled it.
 # 0.6.0, MINOR because it adds a value rather than changing one. `image.digest` gives consumers an
 # immutable pin — a tag is a name the registry owner can repoint, a digest is the content itself —
 # and it wins over `image.tag`. Nothing changes for a release that does not set it: the default is
@@ -98,7 +98,7 @@ type: application
 # is byte-identical to 0.7.1 apart from the chart-version label.
 # CHART 0.9.0 (2026-09-03), MINOR: appVersion moves to application 0.9.0 (below), and the meaning of
 # the `rbac.users` grant changes even though no template output does. The User objects are now the
-# SOURCE of the Users tab rather than a decoration of it (docs/DESIGN_users_tab_logins.md), so an
+# SOURCE of the Users tab rather than a decoration of it (docs/design/DESIGN_users_tab_logins.md), so an
 # operator who turns the grant off loses that tab's rows — the tab says so by name — instead of
 # losing display names. Rendered objects are byte-identical to 0.8.0 apart from the version labels.
 # CHART 0.9.1 (2026-09-03), PATCH: appVersion moves to application 0.10.0 (below); no template or
@@ -115,7 +115,7 @@ type: application
 # <fullname>-curlrc mounted at /etc/curl and named by CURL_HOME gives curl the injected bundle as
 # cacert (when trustedCA.injected is on) and OpenSSL's hashed directory as capath, and a new
 # value, trustedCA.existingConfigMap.subjectHash, mounts the manual CA a second time into that
-# hashed directory (docs/DESIGN_hardened_image.md). Rendered objects otherwise unchanged.
+# hashed directory (docs/design/DESIGN_hardened_image.md). Rendered objects otherwise unchanged.
 # CHART 0.11.0 (2026-09-05), MINOR: appVersion moves to application 0.12.0 (below), and one new module,
 # default-on. `config.alerts.groupCountCliff` (default true) adds five ConfigMap keys, a render guard on
 # its thresholds (`gsd.groupCountCliff`), a `for.groupCountCliff` interval and a twelfth PrometheusRule
@@ -373,7 +373,10 @@ type: application
 # snapshot's (#592, #607, #593; SPEC_F7). No template, default or RBAC change.
 # CHART 0.70.3 (2026-10-04), PATCH: appVersion moves to application 5.2.0 (below); The lab deploys
 # only what promote.yml read back (#598).
-version: 0.70.3
+# CHART 0.70.4 (2026-10-05), PATCH: appVersion moves to application 5.3.0 (below); Docs reorganised:
+# guides, design, reviews, research and history folders; the chart's install and operate guides ship
+# in the chart's docs/.
+version: 0.70.4
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -520,7 +523,9 @@ version: 0.70.3
 # 5.0.0 (2026-10-04). Epic F: reports, honest seals, more formats, diffs and delivery (#386). MAJOR.
 # 5.1.0 (2026-10-04). A report's windows, cutoffs and overdue states end at the snapshot's stamp, not the generation time (#592); compliance-snapshot and login-activity keep the last poll's and the last read's instants out of their sealed sections (#607); the Reports form starts with only HTML ticked (#593). MINOR.
 # 5.2.0 (2026-10-04). The lab deploys only what promote.yml read back (#598). MINOR.
-appVersion: "5.2.0"
+# 5.3.0 (2026-10-05). Docs reorganised: guides, design, reviews, research and history folders; the
+# chart's install and operate guides ship in the chart's docs/. MINOR.
+appVersion: "5.3.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
