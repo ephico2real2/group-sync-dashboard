@@ -105,9 +105,9 @@ Line by line:
 | `flowchart LR` | a flowchart, laid out left to right (`TB` is top to bottom; `LR` reads better for pipelines, `TB` for hierarchies) |
 | `ext["anything on the pod network"]` | a node with id `ext` and a quoted label. The id is what you refer to later; the label is what the reader sees. Quote labels that contain spaces, colons, parentheses or pipes |
 | `-. "no route in" .-x` | a dotted edge with a label and a cross at the end: "this connection is refused" |
-| `-->\|":8443"\|` | a solid arrow with a label in pipes; quote the label because it contains a colon |
+| `-->\|":8443"\|` | a solid arrow with a label in pipes; the label is quoted, which is always safe (a bare colon also renders) |
 | `proxy["oauth-proxy"] --> app["dashboard"]` | declaring a node inline with an edge is fine, and it can be declared once and reused by id |
-| `<br/>` | a line break inside a label — the one piece of HTML the renderer keeps |
+| `<br/>` | a line break inside a label — the one piece of HTML these diagrams use (the renderer also keeps simple tags such as `<b>`, and drops unknown ones, Part 4) |
 
 The shapes that mean something at a glance, all from the official syntax:
 
@@ -116,8 +116,8 @@ id[rectangle]   id(rounded)   id([stadium])   id[[subroutine]]   id[(database)]
 id((circle))    id{decision}  id{{hexagon}}   id[/parallelogram/]
 ```
 
-Boundaries are drawn with `subgraph … end`. The deployment topology in section 8 uses one per
-Kubernetes object so the reader sees what lives inside the pod, the namespace and the cluster:
+Boundaries are drawn with `subgraph … end`. The deployment topology in section 8 uses one for the
+namespace so the reader sees what lives inside it; this sketch draws a pod the same way:
 
 ```mermaid
 flowchart TB
@@ -135,7 +135,7 @@ point at it by id.
 
 ### 3.2 Sequence diagram
 
-The first lines of the poll-flow diagram from section 3, which shows a loop, a branch, a note
+Lines from the poll-flow diagram in section 3, shortened, which show a loop, a branch, a note
 and a highlighted region:
 
 ```mermaid
@@ -209,15 +209,15 @@ about ownership, not columns.
 ## Part 4 — The five things that break a render, from experience
 
 Each of these either did break a diagram in this repository or was one edit away from doing so.
-`tests/test_docs_diagrams.py` checks for them in half a second.
+`tests/test_docs_diagrams.py` checks for the first three in half a second.
 
 | Construct | What happens | Do this instead |
 |---|---|---|
 | a bare `;` in a note or message: `Note over T: stand by; re-check` | `;` ends a statement in Mermaid, so the note ended at the semicolon and everything after it was a parse error. **This one shipped**, and was found by a person looking at the page. | an em dash or a comma; inside a quoted flowchart label `;` is harmless |
 | anything that looks like an HTML tag in a label: `token <why>` | labels pass through as HTML, so `<why>` is an unknown tag and vanishes without an error. The diagram renders with the word missing | `{why}` or a quoted label; `<br/>` is the intended exception |
-| an unclosed quote: `ext["anything on the pod network]` | the rest of the diagram becomes one label | balance every `"`; the test counts them |
-| the word `end` in lowercase inside a flowchart node label | it closes a subgraph that was never opened | `End`, `END`, or any other word |
-| a label with `:`, `(`, `)` or `\|` and no quotes | the parser reads them as syntax | quote the label: `id["a: b (c)"]` |
+| an unclosed quote: `ext["anything on the pod network]` | the label runs on to the next `"`, and the diagram fails to parse | balance every `"`; the test counts them |
+| the word `end` in lowercase as a flowchart node: `a --> end` | the parser takes it for the `end` that closes a subgraph, and the diagram fails to parse (inside a bracketed label, `a[the end]`, mermaid 11 renders it) | `End`, `END`, or any other word |
+| a label with `(`, `)` or `\|` and no quotes | the parser reads them as syntax (a bare `:` renders) | quote the label: `id["a: b (c)"]` |
 
 Two more that do not break a render but do break a reader: a diagram with no sentence beside it
 saying what to look at, and a diagram that drifted from the code because its labels paraphrased
@@ -230,8 +230,9 @@ instead of naming.
 ### 5.1 The fast check — `tests/test_docs_diagrams.py`
 
 It finds every ` ```mermaid ` block in every markdown file of the repository and checks the
-constructs from Part 4, one test per block per rule. It runs with the rest of the suite in about
-half a second and fails with the file, the line and the offending text:
+first three constructs from Part 4, and a `style` directive on a subgraph, one test per block per
+rule; one more test checks that every markdown file's code fences are closed. It runs with the
+rest of the suite in about half a second and fails with the file, the line and the offending text:
 
 ```bash
 cd local-development
@@ -291,8 +292,8 @@ done
 ```
 
 If Chromium refuses to start on your machine, the same `--no-sandbox` config CI uses works
-locally: `echo '{ "args": ["--no-sandbox"] }' > /tmp/puppeteer.json` and add
-`-p /tmp/puppeteer.json`.
+locally: `echo '{ "args": ["--no-sandbox", "--disable-setuid-sandbox"] }' > /tmp/puppeteer.json`
+and add `-p /tmp/puppeteer.json`.
 
 To produce image files for a place that cannot render Mermaid, markdown mode rewrites the blocks
 into image links and writes the SVGs beside the output:
