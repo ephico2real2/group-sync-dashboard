@@ -100,3 +100,8 @@ oc delete clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.author
 changes during the lookup. `evidence/walk-labelled-secrets.txt` was a one-off
 `oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster` (its first line), not a
 `capture.sh` kind.
+
+## The walk document, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git. The text above is left as
+recorded. `walk.html` is no longer in the tree; it remains in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-28_gitops-404-walk).

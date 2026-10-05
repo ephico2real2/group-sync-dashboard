@@ -105,3 +105,8 @@ Issue #467 was about the discovery line only, and this report changes nothing.
 - `scripts/secrets.sh`, `scripts/grant.yaml`: the two temporary changes.
 - `evidence/`: every capture, its command line first and the instant it ran.
 - `screenshots/`: 25 element screenshots. The fleet account's name is masked in each.
+
+## The walk document, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git. The text above is left as
+recorded. `walk.html` is no longer in the tree; it remains in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-28_ui-1160-walk).

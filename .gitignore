@@ -79,3 +79,4 @@ skills-lock.json
 reports/*/doc/
 reports/*/e2e-walk*.html
 reports/*/e2e-walk*.pdf
+reports/*/walk.html

@@ -215,3 +215,8 @@ reports/2026-09-29_logins-449-lag/scripts/run.sh    # trap, before, Secret, logi
 
 `scripts/run.sh` stops at the row or at six audit reads of the entry. The reads use `scripts/read.sh`, the captures
 use `scripts/capture.sh`, and the writes are `scripts/lab.sh` (`secret`, `login`, `logout`, `delete`).
+
+## The walk document, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git. The text above is left as
+recorded. `walk.html` is no longer in the tree; it remains in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-29_logins-449-lag).
