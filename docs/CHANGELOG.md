@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The chart's install and operate guides checked against the code and the lab (chart 0.70.5).** Eleven stale
+  statements corrected in `HELM_DOWNLOAD_AND_INSTALL.md`, `RUNBOOK.md`, `CLUSTER_STANZA.md`, `CLUSTER_CREDENTIALS.md`
+  and `TROUBLESHOOTING_auditor_groups.md`, and the air-gapped install names every image the chart deploys, not only
+  the dashboard's; the claims and their evidence are in
+  `docs/reviews/DOCS_AUDIT_2026-10-05_b1_chart_operate.md`. No template, value, appVersion or RBAC change.
+
 - **Docs reorganised into guides, design, reviews, research and history folders; the chart's install and operate
   guides ship in the chart's `docs/` (application 5.3.0, chart 0.70.4).** Only paths changed. The application
   moves because comments and messages under `local-development/gsd/`, the Containerfiles and

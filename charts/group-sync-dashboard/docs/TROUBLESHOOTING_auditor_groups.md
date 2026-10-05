@@ -44,10 +44,9 @@ would actually occur. The account running Helm therefore needs `get` on `groups.
 cannot see the group; there `createLocal: false` is a discipline, not something the chart can enforce.
 
 **Note on release state.** A guard failure aborts at **render time**, before anything is applied, so the
-running release is unchanged — but Helm still records a **failed revision**. `helm status` will read
-`failed`; the deployed objects are still the previous good revision. Recover with a clean
-`helm upgrade … --set rbacAuditors.groups[0].createLocal=false` (it supersedes the failed revision) or
-`helm rollback group-sync-dashboard`.
+running release is unchanged — and Helm records no revision for it: it creates the new revision only
+after the render succeeds. `helm status` still reads `deployed` at the previous revision. Recover with a
+clean `helm upgrade … --set rbacAuditors.groups[0].createLocal=false`.
 
 ## Symptom 2 — the whole `app-ocp-rbac-*` group family stopped syncing
 
@@ -72,8 +71,9 @@ oc logs -n group-sync-operator deploy/group-sync-operator-controller-manager -c 
 
 ```sh
 oc delete group app-ocp-rbac-groupsync-ns-auditor      # the local, non-synced object
-# then trigger a cycle (patch .spec so the operator reconciles), or wait for the schedule:
-setup-local-ldap-testing/60-force-groupsync.sh app-ocp-rbac-group-groupsync group-sync-operator
+# then trigger a cycle (patch .spec so the operator reconciles), or wait for the schedule; the script
+# is in the group-sync-operator-helm-chart repository, not this one:
+group-sync-operator-helm-chart/setup-local-ldap-testing/60-force-groupsync.sh app-ocp-rbac-group-groupsync group-sync-operator
 ```
 
 `lastSyncSuccessTime` advances and the family syncs again; the operator recreates the auditor group,

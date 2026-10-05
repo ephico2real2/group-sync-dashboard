@@ -174,8 +174,9 @@ writes off, has no Refresh**. The route is `POST /api/clusterconfigs/{name}/refr
 > *retrieval* would be an on-demand bind, which is the thing to avoid.
 
 **Rejoin (#316, `docs/specs/SPEC_D4_cluster_rejoin.md`).** When Refresh reports `auth_failed`, or `pending` for a
-cluster whose token was never fetched, the card offers **Rejoin…** on a Secret-sourced cluster or a `saTokenLookup`
-stanza. An administrator types **their own** username and password for that cluster, *at that moment*. The dashboard
+cluster whose token was never fetched, the card offers **Rejoin…** on a Secret-sourced cluster or a values
+`saTokenLookup` stanza, never on a ConfigMap-declared one (its Secret is generated from the stanza). An
+administrator types **their own** username and password for that cluster, *at that moment*. The dashboard
 logs in to the remote once as that person (`gsd/rejoin.py#RejoinLogin`), asks the remote whether that person may
 `update clusterrolebindings` there (D8, one `SelfSubjectAccessReview` with the login's own token), reads the poller's
 token Secret, signs the login out, and writes `gsd-cluster-<name>` with `token-source: rejoin` and the person's name

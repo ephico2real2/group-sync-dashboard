@@ -376,7 +376,9 @@ type: application
 # CHART 0.70.4 (2026-10-05), PATCH: appVersion moves to application 5.3.0 (below); Docs reorganised:
 # guides, design, reviews, research and history folders; the chart's install and operate guides ship
 # in the chart's docs/.
-version: 0.70.4
+# CHART 0.70.5 (2026-10-05), PATCH: the chart's install and operate guides corrected against the code and
+# the lab (docs audit, batch 1). No template, value, appVersion or RBAC change.
+version: 0.70.5
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
