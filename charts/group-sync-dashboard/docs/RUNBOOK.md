@@ -106,7 +106,8 @@ oc logs -n $NS deploy/$REL -c dashboard --since=15m | grep -E "cluster-rejoin(ed
 ~~~
 
 Your login is in the remote's audit log under your name. When login capture reads that cluster, the Logins tab lists
-it as a `cli` login there; `kubeadmin`'s logins are never listed.
+it as a `cli` login there; `kube:admin`'s logins are never listed, and an HTPasswd `kubeadmin` (as on CRC) is
+listed with the break-glass label.
 
 ## 4. When Rejoin is not the answer
 

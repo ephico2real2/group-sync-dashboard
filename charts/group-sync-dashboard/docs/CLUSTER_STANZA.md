@@ -171,7 +171,7 @@ A remote that states neither `visibility` nor `identity` — rows 2 to 8 and 12 
 
 ## 5. Refusals — measured, and WHERE each one fires
 
-This is the part worth reading twice. Seventeen refusals fail `helm template`, so a bad stanza never
+This is the part worth reading twice. Twenty-one refusals fail `helm template`, so a bad stanza never
 reaches a cluster. **Four do not** — they render cleanly and the pod refuses them at startup, which
 after a green upgrade looks like an outage rather than a config error.
 

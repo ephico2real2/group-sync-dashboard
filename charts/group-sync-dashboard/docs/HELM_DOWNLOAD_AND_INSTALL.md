@@ -39,9 +39,8 @@ group-sync-dashboard/group-sync-dashboard  0.4.2          0.7.0        Read-only
 
 **Two version numbers, and they mean different things.** `CHART VERSION` tracks the templates and
 their defaults; `APP VERSION` is the dashboard release the chart deploys. `--versions` matters
-because without it `helm search` shows only the newest, and the chart version moves on every image
-build — see `charts/group-sync-dashboard/Chart.yaml`, which explains why the patch component is
-automated.
+because without it `helm search` shows only the newest, and the chart version moves on every chart
+change — see `charts/group-sync-dashboard/Chart.yaml`, which explains why it is bumped by hand.
 
 `helm repo update` is not optional. The local cache is a snapshot; skip the update and `helm pull`
 will happily fetch a version that was current last week.
@@ -147,7 +146,7 @@ if you are reading one of those, the tag is not empty and names the commit direc
 ## 4. Render it — and the one command that fails on purpose
 
 ```sh
-helm template gsd ./charts/group-sync-dashboard
+helm template gsd ./charts/group-sync-dashboard --set route.enabled=false --set ingress.enabled=true
 ```
 
 ```
@@ -221,8 +220,8 @@ for pod", you named the wrong one.
 
 ## 6. Air-gapped: move the chart and the image separately
 
-The chart is one file. The image it pins is not in it — `values.yaml` references
-`quay.io/ephico2real/group-sync-dashboard:<appVersion>-<sha>`, and a cluster with no route to Quay
+The chart is one file. The images it deploys are not in it — an empty `image.tag` deploys
+`quay.io/ephico2real/group-sync-dashboard:<appVersion>`, and a cluster with no route to Quay
 needs that mirrored independently.
 
 ```sh
@@ -238,6 +237,16 @@ helm template gsd ./group-sync-dashboard | grep -m1 -oE 'quay\.io/[^"]*'
 
 skopeo copy docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 \
             docker://registry.internal.example.com/group-sync-dashboard:0.7.0
+```
+
+**The dashboard's is not the only image.** A default render names four: the dashboard's, the report
+service's `quay.io/ephico2real/group-sync-dashboard-report` (`reporting.image.repository`, same tag),
+the OAuth proxy (`oauthProxy.image`) and the Secrets hook's `ose-cli` (`secretsMint.image.repository`),
+the last two from `registry.redhat.io`. Mirror each one the cluster cannot pull, and point its key at
+the mirror. List them from the render:
+
+```sh
+helm template gsd ./group-sync-dashboard | grep -oE 'image: [^ ]+' | sort -u
 ```
 
 **Mirror the sha form instead if you want the pin.** `:0.7.0` is an alias that moves when the
@@ -277,20 +286,19 @@ skopeo inspect --no-tags docker://registry.internal.example.com/group-sync-dashb
 `image.digest` wins over `image.tag`, and a malformed one fails the render rather than turning into an
 `ImagePullBackOff` on the disconnected side, where debugging is most expensive.
 
-A plain pipe, not `grep <(tar ...)`. Process substitution here gave grep no output and left tar with
-a broken pipe — measured while writing this page, which is the only reason it says so.
-
 ```sh
 # On the disconnected side, after copying the .tgz across
 tar -xzf group-sync-dashboard-0.4.4.tgz
 helm upgrade --install group-sync-dashboard ./group-sync-dashboard \
   -n group-sync-dashboard --create-namespace \
   -f my-values.yaml \
-  --set image.repository=registry.internal.example.com/group-sync-dashboard
+  --set image.repository=registry.internal.example.com/group-sync-dashboard \
+  --set reporting.image.repository=registry.internal.example.com/group-sync-dashboard-report
 ```
 
-Override `image.repository` only, never `image.tag` — the tag is the chart's statement about which
-build it deploys, and rewriting it decouples the chart from the image it was published with.
+Override the repositories, and leave `image.tag` empty unless you mirrored the sha form above — an
+empty tag is the chart's statement that it deploys its own `appVersion`, so the mirror must carry
+that tag.
 
 ---
 
@@ -408,7 +416,8 @@ Loaded 1 attestation from GitHub API
 
 There is no GPG signature and `helm verify` is not supported — deliberately; the reasoning is in
 `DESIGN_supply_chain.md`. Charts published before this attestation existed (0.16.0 and earlier) have
-none, and `gh` reports `no attestations found` for them; 0.17.0 is the first attested chart.
+none, and `gh` fails for them (`no attestations found`; gh 2.102.0 prints `HTTP 404: Not Found`);
+0.17.0 is the first attested chart.
 
 **Forks do not sign under this workflow.** The `publish` job is skipped unless `github.repository`
 is `ephico2real2/group-sync-dashboard`; a fork that edits that guard and publishes signed images
