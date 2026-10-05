@@ -27,7 +27,7 @@ The repository has no `values.schema.json`; value types and defaults were read f
 | `CLUSTER_STANZA.md` | 16 | 1 | 1 | 0 |
 | `CLUSTER_CREDENTIALS.md` | 24 | 1 | 4 | 0 |
 | `UNMANAGED_GRANT_EXCLUSIONS.md` | 15 | 0 | 1 | 0 |
-| `TROUBLESHOOTING_auditor_groups.md` | 11 | 2 | 1 | 0 |
+| `TROUBLESHOOTING_auditor_groups.md` | 12 | 3 | 1 | 0 |
 
 ## `HELM_DOWNLOAD_AND_INSTALL.md`
 
@@ -200,7 +200,8 @@ the statements about how the chart behaves were measured.
 | the design and research paths | CORRECT | `docs/design/DESIGN_reporting_auditors_and_ns_selector.md` and `docs/research/FINDINGS_auditor_group_ldap_sync_interaction.md` exist |
 | the guard's error text | CORRECT | `charts/group-sync-dashboard/templates/rbac-auditors.yaml` line 75 |
 | the guard uses `lookup` of the Group | CORRECT | `charts/group-sync-dashboard/templates/rbac-auditors.yaml` line 65 |
-| "Helm still records a **failed revision**; `helm status` will read `failed`" | FIXED | from the Helm source, not from a cluster (that needs a failing upgrade, which is a write). Helm v3.14.0 `pkg/action/upgrade.go` lines 156-159 and 262-264 return the render error from `prepareUpgrade`; `Releases.Create` is only at line 357, in `performUpgrade`. Helm v4.3.0 is the same: render error at lines 302-304, `Releases.Create` at line 409. Now: no revision is recorded, `helm status` still reads `deployed`, and the rollback alternative is gone |
+| "Helm still records a **failed revision**; `helm status` will read `failed`" | FIXED | from the Helm source, not from a cluster (that needs a failing upgrade, which is a write). Helm v3.14.0 `pkg/action/upgrade.go` lines 156-159 and 262-264 return the render error from `prepareUpgrade`; `Releases.Create` is only at line 357, in `performUpgrade`. Helm v4.3.0 is the same: render error at lines 302-304, `Releases.Create` at line 409. Now: no revision is recorded, `helm status` still reads `deployed`, and the rollback alternative is gone. **Found by Codex's review:** that holds for an upgrade only; a failed first install leaves no release at all (Helm v4.3.0 `pkg/action/install.go`: render at line 378, `Releases.Create` at line 465), so the note now covers both |
+| the guard fires only on a real install/upgrade, never on `helm install --dry-run` | FIXED | **Found by Codex's review.** A server-side dry run runs `lookup`: `helm install --help` (v4.3.0) says `--dry-run=server` simulates on the server, requiring cluster connectivity, and `pkg/action/install.go` line 378 passes `interactWithServer(i.DryRunStrategy)` to the render. `HELM_DOWNLOAD_AND_INSTALL.md` §4 already said so. Now: client dry run and `helm template` see nothing; server dry run and a real install/upgrade run the guard |
 | the GroupSync `app-ocp-rbac-group-groupsync` in `group-sync-operator` has `lastSyncSuccessTime` | CORRECT | lab: `2026-10-05T07:30:00Z` |
 | `deploy/group-sync-operator-controller-manager -c manager` | CORRECT | lab: containers `kube-rbac-proxy` and `manager` |
 | the log strings `Failed to Complete Sync` and `did not match sync host` | CORRECT | in the group-sync-operator source (`internal/controller/groupsync_controller.go` line 120; `pkg/provider/ldap/helpers/groupsyncer.go` lines 161-165) |

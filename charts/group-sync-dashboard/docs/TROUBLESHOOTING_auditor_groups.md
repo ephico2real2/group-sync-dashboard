@@ -37,16 +37,18 @@ rbacAuditors:
       createLocal: false        # the directory owns the Group; the chart only binds it
 ```
 
-**Note on the guard.** It uses Helm `lookup`, which returns nothing during `helm template` and
-`helm install --dry-run` — so it fires only on a **real** install/upgrade, which is when the collision
-would actually occur. The account running Helm therefore needs `get` on `groups.user.openshift.io`
+**Note on the guard.** It uses Helm `lookup`, which returns nothing during `helm template` and a
+client-side dry run (`helm install --dry-run=client`). A server-side dry run (`--dry-run=server`)
+connects to the cluster, so it runs the guard without persisting a release; so does a real
+install/upgrade. The account running Helm therefore needs `get` on `groups.user.openshift.io`
 (cluster-admin already has it). In a pure GitOps render that never talks to the cluster, the guard
 cannot see the group; there `createLocal: false` is a discipline, not something the chart can enforce.
 
-**Note on release state.** A guard failure aborts at **render time**, before anything is applied, so the
-running release is unchanged — and Helm records no revision for it: it creates the new revision only
-after the render succeeds. `helm status` still reads `deployed` at the previous revision. Recover with a
-clean `helm upgrade … --set rbacAuditors.groups[0].createLocal=false`.
+**Note on release state.** A guard failure aborts at **render time**, before anything is applied or the
+attempted revision is recorded. After a failed upgrade the running release is unchanged, and
+`helm status` still reads `deployed` at the previous revision. After a failed first install no release
+exists, so `helm status` reports that the release is not found. Recover by re-running the same command
+with `--set rbacAuditors.groups[0].createLocal=false`.
 
 ## Symptom 2 — the whole `app-ocp-rbac-*` group family stopped syncing
 
