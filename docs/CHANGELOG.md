@@ -10,6 +10,10 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Dependabot: `anchore/sbom-action` 0.24.2 to 0.24.3 in `.github/workflows/publish.yml` (#619; application 5.4.0,
+  chart 0.70.7).** The workflow is an image input, so the application takes a MINOR; the image's contents are
+  unchanged apart from its version. The pin is the commit the `v0.24.3` tag points to (`66cbf4bc`).
+
 - **The chart README and the backup/restore runbook checked against the code and the lab (chart 0.70.6).** Twenty-three
   stale statements corrected. In the README: the SubjectAccessReviews the dashboard creates, the plain-Kubernetes switches, the KPI threshold refusal, the report
   defaults, Rejoin, the dashboard's writes, the unmanaged-grant summary and its default, `argocd.enabled`, the
