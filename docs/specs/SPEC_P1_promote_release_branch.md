@@ -249,6 +249,8 @@ Line citations into the code at `6421cff7` are file:line in plain text inside ta
       the setup, upkeep, and a glossary. RELEASING points to it (Block R18).
     - **It is written with indented code samples,** because a fenced sample inside a block's fence would end the
       block early in `apply-spec-blocks.py`.
+    - **Found by CI** on `c87dd349` (both Python legs): `test_docs_index` requires each `docs/` page to be linked from
+      `docs/README.md`. Block R19 adds the link.
 
 Open questions for the operator:
 
@@ -2784,4 +2786,18 @@ Which commands were run against the repository on that day:
 ```markdown
 **The operator's one-time steps** (in this order, before the first promotion). The runbook with each command, its
 check, the record of the setup on 2026-10-05, key rotation and undoing it is `docs/RELEASE_BRANCH_SETUP.md`:
+```
+
+### Block R19 — `docs/README.md`: link the runbook in the docs index
+
+`tests/test_docs_index.py` requires every page in `docs/` to be linked from `docs/README.md`. Found by CI on `c87dd349`.
+
+<!-- block: docs/README.md | edit -->
+```markdown
+- [RELEASING.md](RELEASING.md) — application and chart release procedures and version ownership.
+```
+
+```markdown
+- [RELEASING.md](RELEASING.md) — application and chart release procedures and version ownership.
+- [RELEASE_BRANCH_SETUP.md](RELEASE_BRANCH_SETUP.md) — the `release` branch's one-time GitHub setup (deploy key, environment, branch, ruleset), its checks and upkeep.
 ```
