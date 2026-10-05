@@ -88,7 +88,7 @@ SubjectAccessReview — `visibility.usageAdminSar`, default `update clusterroleb
 `cluster-reader` fails and `cluster-admin` passes — allows this reader. The two tiers are independent
 and cached separately: a client will see `cluster-reader` come back `scope: all` on `/groups` and
 `scope: self` on `/api/dashboard/activity` in the same session. The dashboard still writes nothing; a
-SubjectAccessReview only asks whether a subject could. See docs/SPEC_usage_admin_tier.md.
+SubjectAccessReview only asks whether a subject could. See docs/design/SPEC_usage_admin_tier.md.
 
 `GET /api/whoami` reports the same decision as a nested object rather than top-level fields:
 `"visibility": {"scope": "self", "enabled": true, "clusters": {...}, "cluster_admin": false}`.
@@ -121,7 +121,7 @@ rows, 21 naming an admin role): obtainable through the dashboard and not with `o
 escalation. Neither has a `/metrics` analogue that would make gating theatre (`operator-configs`
 in particular is genuinely private), so the criterion above puts them *behind* the tier. This
 reverses an earlier ruling that served all four at both tiers; see
-`docs/SPEC_per_user_visibility.md` (Q3) and `docs/REQUIREMENTS_per_user_visibility.md` (§6 Q3).
+`docs/design/SPEC_per_user_visibility.md` (Q3) and `docs/design/REQUIREMENTS_per_user_visibility.md` (§6 Q3).
 
 `/api/clusters` stays reachable at every tier — the cluster selector reads it on every tab —
 and every count on it is a public `/metrics` figure except the `operator_configs` summary,
@@ -602,7 +602,7 @@ marks it.
 Everyone who has logged in to the cluster: one row per OpenShift `User` object, which the cluster
 creates at a person's first login through an identity provider and never before — so the row is
 the fact of a login, and the headline count is how many people have used the cluster. Group
-membership is an attribute of a row, not the reason it exists (`docs/DESIGN_users_tab_logins.md`).
+membership is an attribute of a row, not the reason it exists (`docs/design/DESIGN_users_tab_logins.md`).
 **Bounded and paged.**
 
 | parameter | default | meaning |
@@ -759,7 +759,7 @@ Since 0.13.0: `retention` for `membership_event`, the same shape as on `/events`
 
 Query: `namespace` (optional — the empty string selects ClusterRoleBindings; omit for every
 scope), `limit` (1–1000, default 100). Which (binding, subject) rows appeared or disappeared,
-newest first — the bindings' membership-changes (`docs/DESIGN_binding_events.md`).
+newest first — the bindings' membership-changes (`docs/design/DESIGN_binding_events.md`).
 
 The only record of a binding change: the current-state tables are replaced every refresh, so a
 RoleBinding created and deleted between two refreshes never existed as far as
@@ -895,7 +895,7 @@ nothing is wrong.
 
 The three "group does not exist" tiers all share that symptom and are separated by what can be
 *proved* about the cause, which is why there are three rather than one.
-[`docs/reference-architecture.md`](../docs/reference-architecture.md) has the evaluation order,
+[`docs/guides/reference-architecture.md`](../docs/guides/reference-architecture.md) has the evaluation order,
 the reasoning, and a worked example from the reference cluster.
 
 Classification tests **provenance before the `system:` prefix**. The reverse order silently
@@ -1274,7 +1274,7 @@ all, living only in this dashboard's database.
 reader passes `visibility.usageAdminSar` — a separate SubjectAccessReview, default
 `update clusterrolebindings`, that `cluster-admin` passes and the auditor `cluster-reader` does not.
 Passing the wide `visibility.adminSar` does NOT widen this view; the two tiers are independent and
-cached separately. See docs/SPEC_usage_admin_tier.md.
+cached separately. See docs/design/SPEC_usage_admin_tier.md.
 
 **`summary` describes the whole set, not the page.** It used to be computed in the browser from
 `activity`, which the API caps — measured against 1,092 stored rows, the UI reported 167 days
@@ -1448,10 +1448,10 @@ exactly like the data it describes. A document naming every endpoint and field i
 cluster's RBAC surface.
 
 Both renderers are served from bundles committed to this repository, so they work on a cluster
-with no route to the internet — see [`../docs/updating-vendored-assets.md`](../docs/updating-vendored-assets.md).
+with no route to the internet — see [`../docs/guides/updating-vendored-assets.md`](../docs/guides/updating-vendored-assets.md).
 
 Rules a new endpoint must satisfy, each enforced by a test:
-[`../docs/api-contract.md`](../docs/api-contract.md).
+[`../docs/guides/api-contract.md`](../docs/guides/api-contract.md).
 
 ## Trying it
 

@@ -508,13 +508,13 @@ everything else put back to `521c2bb0`; then the whole of §7 applied), with
     after: the whole suite, pytest -q tests/
     7459 passed, 27 skipped, 5 xfailed, 2 warnings in 588.75s (0:09:48)
 
-    $ markdownlint-cli2 docs/RUNBOOK_backup_restore.md
+    $ markdownlint-cli2 charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md
     Summary: 6 issues in 1 file          # before and after: the same six (MD004 at the pictures' list, MD040 x3), none new
 
     $ BASE=521c2bb0 python3 local-development/check-app-version-bump.py      # on a commit of the applied tree
     no image content changed (publish.yml paths, excluding version fields); no bump needed
 
-Lines added and removed (`git diff --numstat 521c2bb0`): `docs/CHANGELOG.md` +16 −0, `docs/RUNBOOK_backup_restore.md`
+Lines added and removed (`git diff --numstat 521c2bb0`): `docs/CHANGELOG.md` +16 −0, `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`
 +161 −18, `docs/specs/SPEC_E7_schema_line_and_runbook.md` +3 −1, `local-development/prepare-release.py` +2 −1,
 `local-development/tests/test_prepare_release.py` +8 −1, `local-development/tests/test_restore_db.py` +2 −1,
 `local-development/tests/test_runbook_backup_restore.py` +190 −2. In this spec's own commit:
@@ -561,11 +561,11 @@ the §5 walk; Orchestrator's notes, 11). New runbook code blocks use four backti
 (`local-development/apply-spec-blocks.py#FENCE` ends a block's fence at the first line of exactly three; SPEC_E7's
 Orchestrator's notes, 6).
 
-### Block 1 — docs/RUNBOOK_backup_restore.md: §0 step 1 prints the `/metrics` read
+### Block 1 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §0 step 1 prints the `/metrics` read
 
 T533-3 (§3.3).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -590,11 +590,11 @@ New text:
    file:
 ```
 
-### Block 2 — docs/RUNBOOK_backup_restore.md: §0 step 3 refers to that read
+### Block 2 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §0 step 3 refers to that read
 
 T533-3 (§3.3).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -613,11 +613,11 @@ New text:
    default).
 ```
 
-### Block 3 — docs/RUNBOOK_backup_restore.md: §1 prints each table's highest id
+### Block 3 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §1 prints each table's highest id
 
 T533-2 (§3.2).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -636,11 +636,11 @@ for t in ("membership_event", "sync_event", "login_event"):
 ' /data/backup/gsd-20260904T061500.123456Z.db
 ```
 
-### Block 4 — docs/RUNBOOK_backup_restore.md: §1 says what the highest ids are for
+### Block 4 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §1 says what the highest ids are for
 
 T533-2 (§3.2).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -657,11 +657,11 @@ and row counts that are plausible for the age of the copy. Keep the three highes
 counts the restored file up to them.
 ```
 
-### Block 5 — docs/RUNBOOK_backup_restore.md: §4 names its one exception, and the risks under Argo CD
+### Block 5 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4 names its one exception, and the risks under Argo CD
 
 T533-5 (§3.4); the operator's amendments (Orchestrator's notes, 1).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -695,13 +695,13 @@ into recovery mode by hand, restores with the same script and gives the release 
 >   The way out is §4d step 7: pause, then end the running operation.
 ```
 
-### Block 6 — docs/RUNBOOK_backup_restore.md: §4 step 5 states the delay, #532's known limitation
+### Block 6 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4 step 5 states the delay, #532's known limitation
 
 T533-5 (§3.4). The step names no Argo CD: steps 1 to 5 are the values-file path, where
 `local-development/tests/test_chart_recovery_mode.py#test_the_only_documented_path_is_the_values_file` lets a sentence
 name Argo CD only to say what it reverts (SPEC_E2's rule); the risks box above it names it.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -719,11 +719,11 @@ New text:
    recovery pod keeps running until then (#532, a known limitation of this release, and the risks box above).
 ```
 
-### Block 7 — docs/RUNBOOK_backup_restore.md: §4a's helper runs the dashboard container alone, and why
+### Block 7 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4a's helper runs the dashboard container alone, and why
 
 T533-1 (§3.1).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -742,11 +742,11 @@ container of its pod, so it does not return (the #300 walk waited 5 min 13 s; wi
 3 s, exit 0, its pod removed). A body that fails makes the command fail:
 ```
 
-### Block 8 — docs/RUNBOOK_backup_restore.md: §4a's command
+### Block 8 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4a's command
 
 T533-1 (§3.1).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -760,11 +760,11 @@ New text:
 oc debug -n $NS deploy/$REL --one-container -c dashboard -- sh -c '
 ```
 
-### Block 9 — docs/RUNBOOK_backup_restore.md: §4c counts up to the copy's highest ids
+### Block 9 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4c counts up to the copy's highest ids
 
 T533-2 (§3.2).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -779,11 +779,11 @@ Then the counts, on the live file this time (opened read-only beside the app's o
 highest id in that table, as §1 printed it:
 ```
 
-### Block 10 — docs/RUNBOOK_backup_restore.md: §4c's count
+### Block 10 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4c's count
 
 T533-2 (§3.2).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -806,11 +806,11 @@ for t, top in zip(("membership_event", "sync_event", "login_event"), map(int, sy
 ' <membership-highest-id> <sync-highest-id> <login-highest-id>
 ```
 
-### Block 11 — docs/RUNBOOK_backup_restore.md: §4c says why a whole count does not match
+### Block 11 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4c says why a whole count does not match
 
 T533-2 (§3.2).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -828,11 +828,11 @@ A count below the copy's means rows the copy had are gone; retention pruning the
 below) is the one expected reason. The pod log shows `schema migration N applied` lines
 ```
 
-### Block 12 — docs/RUNBOOK_backup_restore.md: §4d, the break glass under Argo CD
+### Block 12 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4d, the break glass under Argo CD
 
 T533-6, T533-7 (§3.5); measured in §2.10.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1390,11 +1390,11 @@ New text:
 ```
 
 
-### Block 22 — docs/RUNBOOK_backup_restore.md: §4c, the leader read straight after a rollout
+### Block 22 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4c, the leader read straight after a rollout
 
 T533-2 (Orchestrator's notes, 11, W3).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 

@@ -761,7 +761,7 @@ After `--apply` every changed file is identical (`cmp`) to the implemented copy.
 | browser suite | `pytest tests/test_ui.py -q -p no:cacheprovider --browser chromium` | `657 passed` in 233.84 s; on `6d532178` the suite collects 651 |
 | Python 3.11 | `ast.parse(source, feature_version=(3, 11))` on `store.py`, `kpi/system.py`, `api.py` and the three test modules | all parse; CI's 3.11 job was not run here. T306-16's audit events exist on 3.11 (§2.7) |
 | render check | the card in every state at 375, 768 and 1280 px, light and dark, with no zone (UTC), `America/New_York` and `Asia/Kolkata`, screenshotted from the browser harness on the revised block 8, the state drawn checked against the state set | 90 renders, the page's `scrollWidth == clientWidth` and the card's `scrollWidth <= clientWidth` in all 90; looked at: the healthy card at 375 px light in Kolkata time (the zone label wraps under the time, never sideways) and the failing card at 1280 px dark in New York time |
-| markdown | `markdownlint-cli2` on `docs/CHANGELOG.md`, `docs/RUNBOOK_backup_restore.md`, `docs/design/README.md`, `local-development/API.md`, and the specs index | the same findings before and after, per file and rule (CHANGELOG MD012 ×1; runbook MD004 ×3, MD040 ×3; API.md MD004 ×2, MD012 ×1, MD018 ×1), all on main already; the index README: 0 |
+| markdown | `markdownlint-cli2` on `docs/CHANGELOG.md`, `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`, `docs/design/README.md`, `local-development/API.md`, and the specs index | the same findings before and after, per file and rule (CHANGELOG MD012 ×1; runbook MD004 ×3, MD040 ×3; API.md MD004 ×2, MD012 ×1, MD018 ×1), all on main already; the index README: 0 |
 | the order against SPEC_E4 | E4's 32 blocks checked and applied on `6d532178` + this spec; this spec's 24 checked and applied on `6d532178` + E4 | both check out, and the two trees differ only in the order of the two CHANGELOG entries (`git ls-files -s` diffed); on `6d532178` + E4 + E6, `1 failed, 1893 passed, 22 skipped` (E4's T391-8), and with note 9's five edits, `1896 passed, 22 skipped` (Orchestrator's notes, 9) |
 | chart and RBAC | no block touches `charts/` | nothing to render; the RBAC diff is the implementing pull request's (§5 step 5) |
 
@@ -816,7 +816,7 @@ with the screenshots:
 | `local-development/tests/test_metrics.py` | 31 | 0 |
 | `local-development/tests/test_ui.py` | 153 | 2 |
 | `local-development/API.md` | 29 | 1 |
-| `docs/RUNBOOK_backup_restore.md` | 6 | 0 |
+| `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` | 6 | 0 |
 | `docs/design/README.md` | 1 | 1 |
 | `docs/CHANGELOG.md` | 11 | 0 |
 | total | 580 | 15 |
@@ -1883,11 +1883,11 @@ from these fields, against the payload's `as_of`: stale is a newest copy older t
 
 ```
 
-### Block 22 — docs/RUNBOOK_backup_restore.md: the runbook names the card
+### Block 22 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: the runbook names the card
 
 One paragraph in "What a successful backup looks like".
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 

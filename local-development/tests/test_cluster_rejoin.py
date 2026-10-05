@@ -782,10 +782,10 @@ def test_the_budget_over_the_system(tmp_path, monkeypatch, remote):
 
 def test_the_runbook_sits_beside_the_values_with_seven_sections_and_docs_links_it():
     """Six for Refresh and Rejoin (#316); the seventh clears the fleet account's entry by hand (#481, SPEC_S4f)."""
-    runbook = REPO / "charts/group-sync-dashboard/RUNBOOK.md"
+    runbook = REPO / "charts/group-sync-dashboard/docs/RUNBOOK.md"
     headings = re.findall(r"^## (\d)\. ", runbook.read_text(), re.M)
     assert headings == ["1", "2", "3", "4", "5", "6", "7"], headings
-    assert "../charts/group-sync-dashboard/RUNBOOK.md" in (REPO / "docs/README.md").read_text()
-    assert "(RUNBOOK.md)" in (REPO / "charts/group-sync-dashboard/README.md").read_text()
-    credentials = (REPO / "charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md").read_text()
+    assert "../charts/group-sync-dashboard/docs/RUNBOOK.md" in (REPO / "docs/README.md").read_text()
+    assert "(docs/RUNBOOK.md)" in (REPO / "charts/group-sync-dashboard/README.md").read_text()
+    credentials = (REPO / "charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md").read_text()
     assert "Rejoin **PLANNED**" not in credentials and "(RUNBOOK.md)" in credentials

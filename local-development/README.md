@@ -17,8 +17,8 @@ Run everything below from **this** directory.
 | File | What it is |
 |---|---|
 | `release-crc.sh` | build + push + deploy against **CRC's built-in registry**. Portable nowhere else |
-| `prepare-release.py` | the four version fields, the Chart.yaml history line, the changelog heading, the branch and the commit, from `--app`/`--chart` and a reason; runs the version test first (`../docs/RELEASING.md`) |
-| `restore-db.sh` | list the database copies the recovery pod can restore, and restore one (#302); it streams `restore-db.py` into the pod. `../docs/RUNBOOK_backup_restore.md` section 4 |
+| `prepare-release.py` | the four version fields, the Chart.yaml history line, the changelog heading, the branch and the commit, from `--app`/`--chart` and a reason; runs the version test first (`../docs/guides/RELEASING.md`) |
+| `restore-db.sh` | list the database copies the recovery pod can restore, and restore one (#302); it streams `restore-db.py` into the pod. `../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` section 4 |
 | `clusters.example.yaml` | template for `clusters.yaml`, the local poller config |
 | `clusters.yaml` | your local config. Gitignored |
 | `crc-ca.crt` | CRC's CA, extracted from kubeconfig. Gitignored, regenerable |
@@ -86,7 +86,7 @@ spec, records what is deployed. The typical loop: iterate with the bare script (
 a local variant), `--argocd` on the pushed head before the PR is called ready, `--argocd main`
 after a merge once the app release is cut. During development the lab tracks `main`, and a release merge can still
 reach it before its image is pushed (`ErrImagePull` until it is). `--argocd release` deploys only what `promote.yml`
-read back, pinned by digest, and `--argocd main` switches back (#598; `docs/RELEASING.md`, "Promotion to the
+read back, pinned by digest, and `--argocd main` switches back (#598; `docs/guides/RELEASING.md`, "Promotion to the
 lab"). `./argocd-wait.sh` is the waiter the Argo modes use: it
 accepts Synced/Healthy/Succeeded only once the status was computed for the current spec
 (`status.sync.comparedTo.source`) and for the expected commit, and names the failed hook or
@@ -119,8 +119,8 @@ coreutils with `dnf` and copies them in with the libraries they need, so `oc exe
 the stamp check in the release scripts work. Two copies sit beside it, both built by nothing:
 `Containerfile.annotated`, the same instructions with the full reasoning and every measurement
 beside each step (a test holds the two identical), and `Containerfile.ubi`, the previous UBI9
-recipe. `docs/DESIGN_hardened_image.md` has the design and the measurements;
-`docs/image-vulnerability-scan.md` has the scan.
+recipe. `docs/design/DESIGN_hardened_image.md` has the design and the measurements;
+`docs/guides/image-vulnerability-scan.md` has the scan.
 
 What is in the pod's shell: `sh`, `bash`, `curl`, `jq`, `cat`, `ls`, `base64`, `mkdir`, `chgrp`,
 `chmod`, `rm`. What is not: `head`, `wc`, `grep`, `id`, `pip`, `rpm`, `dnf`. A command that needs
@@ -148,8 +148,8 @@ Refreshing them is a five-minute job every couple of months:
 ./vendor-assets.sh               # re-check, offline
 ```
 
-Full procedure and the reasoning: [`docs/updating-vendored-assets.md`](../docs/updating-vendored-assets.md).
-Rules for adding an endpoint: [`docs/api-contract.md`](../docs/api-contract.md).
+Full procedure and the reasoning: [`docs/guides/updating-vendored-assets.md`](../docs/guides/updating-vendored-assets.md).
+Rules for adding an endpoint: [`docs/guides/api-contract.md`](../docs/guides/api-contract.md).
 
 ## Reading the API from outside the cluster
 
@@ -164,7 +164,7 @@ and the calling account must hold cluster-wide RBAC read (`cluster-reader` or eq
 because `/api` reports the cluster's whole binding surface, not just group membership.
 
 curl and Postman recipes, and the two Postman defaults that break the flow:
-[`docs/api-access.md`](../docs/api-access.md).
+[`docs/guides/api-access.md`](../docs/guides/api-access.md).
 
 ## Plain YAML, for reading and testing
 

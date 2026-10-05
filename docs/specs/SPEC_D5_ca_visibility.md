@@ -458,7 +458,7 @@ verify failure keeps the raw error and adds the fix under it. Warnings use the e
   title, the way `shared-api-url` already does.
 - The form's Test result paints the same certificate lines.
 
-Docs the implementing PR updates (in the blocks): `docs/DESIGN_cluster_connection_flows.md` §2,
+Docs the implementing PR updates (in the blocks): `docs/design/DESIGN_cluster_connection_flows.md` §2,
 `charts/group-sync-dashboard/README.md` (the threshold and the pin), `local-development/API.md`.
 
 ## 6. Implementation blocks
@@ -1124,7 +1124,7 @@ def _ca_expiry_days(raw: dict) -> int:
 | `trustedCA.expiryWarningDays` | `30` | days before `notAfter` at which a `ca-expiring` warning is emitted |
 ```
 
-<!-- block: docs/DESIGN_cluster_connection_flows.md | after: a cluster already running `insecure` cannot be failing verification at all. -->
+<!-- block: docs/design/DESIGN_cluster_connection_flows.md | after: a cluster already running `insecure` cannot be failing verification at all. -->
 ```markdown
 
 The page half of that sentence is #244 (`docs/specs/SPEC_D5_ca_visibility.md`). `action` and `store`

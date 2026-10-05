@@ -8,7 +8,7 @@
 | Version on release | app 1.0.0, chart 0.59.0 |
 | Issue | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) |
 | Status | released |
-| Source | OB1's design specification of 2026-09-22, written before any code from the business owner's brief, the issue and its eight comments (the fixed-margin correction, the 401 ambiguity, the retraction on the one-year fuse, the inherited replica requirement), `docs/specs/SPEC_S4_token_retrieval.md` §3.1, §6 and §9, `docs/specs/SPEC_S4b_sa_token_lookup.md` (orchestrator's notes R2-5 and R3-2, §6), the review record `docs/REVIEW_S4b.md` ("What is NOT held"), the upstream sources cited in §2, and the reference cluster measured read-only on 2026-09-22. Brought to main `f82a065` on 2026-09-26 by OB3 (#285, the implementer's brief): the reference cluster re-measured read-only, the body corrected where it had stopped being true (Orchestrator's notes), and §8's implementation blocks cut from a copy of `f82a065` with the design implemented and applied back to a clean clone for the proof in §8.1. Rewritten on round 1 of the spec review (PR #419, 2026-09-27: Grok and Codex Astra; OB2's rulings D1–D4) by OB3: the rulings and the accepted findings written into the body and the notes, §8 re-cut and re-measured. Rewritten on round 2 (PR #419: Grok and Codex Astra; the orchestrator's decisions on the PR) by OB3: C5, F1, F2 and F3 written into the body and the notes, §8 re-cut from main `e975410` and re-measured |
+| Source | OB1's design specification of 2026-09-22, written before any code from the business owner's brief, the issue and its eight comments (the fixed-margin correction, the 401 ambiguity, the retraction on the one-year fuse, the inherited replica requirement), `docs/specs/SPEC_S4_token_retrieval.md` §3.1, §6 and §9, `docs/specs/SPEC_S4b_sa_token_lookup.md` (orchestrator's notes R2-5 and R3-2, §6), the review record `docs/reviews/REVIEW_S4b.md` ("What is NOT held"), the upstream sources cited in §2, and the reference cluster measured read-only on 2026-09-22. Brought to main `f82a065` on 2026-09-26 by OB3 (#285, the implementer's brief): the reference cluster re-measured read-only, the body corrected where it had stopped being true (Orchestrator's notes), and §8's implementation blocks cut from a copy of `f82a065` with the design implemented and applied back to a clean clone for the proof in §8.1. Rewritten on round 1 of the spec review (PR #419, 2026-09-27: Grok and Codex Astra; OB2's rulings D1–D4) by OB3: the rulings and the accepted findings written into the body and the notes, §8 re-cut and re-measured. Rewritten on round 2 (PR #419: Grok and Codex Astra; the orchestrator's decisions on the PR) by OB3: C5, F1, F2 and F3 written into the body and the notes, §8 re-cut from main `e975410` and re-measured |
 
 ## How to read this spec
 
@@ -18,7 +18,7 @@ the state machine, the exact log fields and values keys — and every non-obviou
 citation or the measurement it rests on. **Every safety claim is written as a budget with its scope**
 ("at most N per (key) per process / per replica / across restarts"), never "ever": the review of
 #295 measured that a per-call guarantee is unfalsifiable at the scale that matters and an unscoped one
-is false (`docs/REVIEW_S4b.md`, "What is NOT held"). Where a fact could not be measured it is labelled
+is false (`docs/reviews/REVIEW_S4b.md`, "What is NOT held"). Where a fact could not be measured it is labelled
 as such in §5 with what would settle it, and nothing there is filled with an estimate.
 
 **The constraint that overrides everything in this document:** the fleet account is the LDAP account
@@ -398,7 +398,7 @@ Decisions taken at review, recorded first and then applied:
   instants are also kept beside the database, and an absent Lease is read from that copy and put back: a deletion costs
   +0 with persistence on at one replica. Independent per-pod copies above one replica may be stale and can allow
   +1 after a deletion (SPEC_S4f §3.9). §5 Q7's clear still re-arms, +1, and the runbook entry Q7 asked for is
-  `charts/group-sync-dashboard/RUNBOOK.md` section 7. SPEC_S4f §4 restates B2's and B3's budgets over the system,
+  `charts/group-sync-dashboard/docs/RUNBOOK.md` section 7. SPEC_S4f §4 restates B2's and B3's budgets over the system,
   scope by scope, with the rows it leaves: persistence off, an etcd restore, a reinstall into another namespace, and a
   clear by hand followed by a `crc start`. The body below is unchanged.
 
@@ -1315,7 +1315,7 @@ and the release presents the password only as an account the configuration names
    walk-only Secret in the release namespace — never `ldap-oauth-bind-secret`. A `saTokenLookup` stanza,
    `walk-lookup`, points at `https://api.crc.testing:6443` with `ldapConnectionBootstrap: developer`. For the walk,
    `developer` is bound to the estate's `group-sync-dashboard-cluster-poller-token-reader` Role in
-   `group-sync-operator` (S4b's rehearsal, `docs/VALIDATION_satokenlookup.md`). The ping runs at most once per
+   `group-sync-operator` (S4b's rehearsal, `docs/research/VALIDATION_satokenlookup.md`). The ping runs at most once per
    discovery cadence, so set `intervalSeconds` to 300.
 
    **The lab check, read-only: run it now, before the walk Secret exists, and again immediately before steps 3 and
@@ -1521,11 +1521,11 @@ anything else names it, and nothing presents the password as an account the conf
   (`appVersion` is not touched: the application code rides Epic C's release).
 - `charts/group-sync-dashboard/README.md` — the two values rows; the conditional-rules paragraph
   (§3.8). The log-level ladder is not changed (Orchestrator's notes).
-- `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` — the refusal on the Lease, the daily ping as the
-  fleet account's one later use, and the `userSelfLogin` row; `docs/polling-and-discovery.md` — which modes
-  bind; `docs/DESIGN_cluster_connection_flows.md` — the ping's and self-login's lines;
+- `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md` — the refusal on the Lease, the daily ping as the
+  fleet account's one later use, and the `userSelfLogin` row; `docs/design/polling-and-discovery.md` — which modes
+  bind; `docs/design/DESIGN_cluster_connection_flows.md` — the ping's and self-login's lines;
   `local-development/API.md` — the `fleet` and `session` blocks.
-- `docs/CLUSTER_STANZA.md` — the `userSelfLogin: true` row of the credential-kind table (from *no —
+- `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md` — the `userSelfLogin: true` row of the credential-kind table (from *no —
   pending*) and case 7 (`remote + userSelfLogin`, from *listed, pending, not polled*) to *polled on its
   own session; renewed a fixed margin before expiry*; `local-development/tests/test_cluster_stanza_matrix.py`
   is what fails when the document stops being true.
@@ -4293,7 +4293,7 @@ version: 0.59.0
 ```markdown
 | `rbac.namespaces` | `false` | adds `get`/`list` on `namespaces` (core group). Lets the report service's namespace report attest **absence** — "this namespace exists and has no grants" — instead of "none observed". Off by default: extra RBAC |
 | `kyverno.enabled` | `true` | the Kyverno policy module (#165, #170): grants `list` on the policy reports (`wgpolicyk8s.io`, `openreports.io`) and the five CEL policy kinds (`policies.kyverno.io`, with their namespaced twins) and turns the poller's read on. Auto-detected per cluster — no policy-report API group is "not installed", said on the page, never zero results. Read-only: no `/status`, no write verb, never the deprecated `kyverno.io` family (the API says it will be removed in a future release; its results are counted so the page can say they exist) |
-| `clusterConfig.secrets.enabled` | `true` | clusters declared as labelled Secrets in the release namespace (#230, `docs/specs/SPEC_S1_cluster_secrets.md`): a Role with `get`, `list`, `watch` on `secrets` and `configmaps` there, and the poller's discovery on `discoveryIntervalSeconds` — a Secret labelled `groupsync-dashboard.io/secret-type: cluster` carrying `name`, `server`, `config` (JSON: `bearerToken` or `oauth{username,password}`, `tlsClientConfig{caData,insecure}`) and the D2 options is polled like a `clusters[]` entry; the host is always `clusters[0]` and a Secret naming it is refused; a Secret that does not parse is a finding on `GET /api/clusterconfigs`, one that vanishes disables its cluster and keeps its history. ConfigMaps labelled `groupsync-dashboard.io/config-type: onboard` or `sideload` carry credential-free values-shaped stanzas in `data.clusters.yaml` (SPEC_S5, #293); the #284 lookup generates their Secrets. Conflicts load neither; generated credentials are pruned repeatedly after confirmed removal, behind the writes switch. See [the cluster stanza guide](../../docs/CLUSTER_STANZA.md) for prerequisites and recovery, and the [Argo CD / Flux onboarding examples](../../examples/cluster-onboarding/) for adding clusters through GitOps. The [manual Secret example](../../examples/cluster-secret/) explains why a `saTokenLookup` Secret must not be self-healed. `false` — no Role, no discovery, the `clusters[]` list alone. See [polling and discovery](../../docs/polling-and-discovery.md) for cadence, cleanup and refresh behaviour |
+| `clusterConfig.secrets.enabled` | `true` | clusters declared as labelled Secrets in the release namespace (#230, `docs/specs/SPEC_S1_cluster_secrets.md`): a Role with `get`, `list`, `watch` on `secrets` and `configmaps` there, and the poller's discovery on `discoveryIntervalSeconds` — a Secret labelled `groupsync-dashboard.io/secret-type: cluster` carrying `name`, `server`, `config` (JSON: `bearerToken` or `oauth{username,password}`, `tlsClientConfig{caData,insecure}`) and the D2 options is polled like a `clusters[]` entry; the host is always `clusters[0]` and a Secret naming it is refused; a Secret that does not parse is a finding on `GET /api/clusterconfigs`, one that vanishes disables its cluster and keeps its history. ConfigMaps labelled `groupsync-dashboard.io/config-type: onboard` or `sideload` carry credential-free values-shaped stanzas in `data.clusters.yaml` (SPEC_S5, #293); the #284 lookup generates their Secrets. Conflicts load neither; generated credentials are pruned repeatedly after confirmed removal, behind the writes switch. See [the cluster stanza guide](docs/CLUSTER_STANZA.md) for prerequisites and recovery, and the [Argo CD / Flux onboarding examples](../../examples/cluster-onboarding) for adding clusters through GitOps. The [manual Secret example](../../examples/cluster-secret) explains why a `saTokenLookup` Secret must not be self-healed. `false` — no Role, no discovery, the `clusters[]` list alone. See [polling and discovery](../../docs/design/polling-and-discovery.md) for cadence, cleanup and refresh behaviour |
 | `clusterConfig.secrets.writes.enabled` | `false` | the Cluster Configurations tab's writes (#230 S2, `docs/specs/SPEC_S2_cluster_configurations_tab.md`): `create`, `update`, `delete` join the `-cluster-secrets` Role so an administrator can add a cluster from the tab (the same labelled Secret a GitOps process would write, `gsd-cluster-<name>`, annotated `groupsync-dashboard.io/managed-by: ui`), rotate its bearer token in place, or delete it (the cluster retires, its history kept). The app writes only in its own namespace, only Secrets carrying the label (checked by the app — RBAC cannot scope a verb by label), only for a reader the cluster-admin tier admits (`visibility.clusterAdminSar`, #322 — never the wide tier the auditor passes) with a proxy-verified identity, one audit log line per write naming the person, the verb and the Secret; the credential never reaches a response, a log line, the database or `/metrics`. **Off by default**, a stated exception to the on-by-default rule: a write path on Secrets widens the dashboard's read-only posture (its only write anywhere is its own leader Lease), so it stays off until the operator turns it on — the default is pending the operator's A/B call of 2026-09-20; B flips it and removes the exception. Off, no write route is registered (a POST is a `405`) and the tab is read-only, its form still producing the Secret's YAML for a GitOps process to apply |
 | `kyverno.metricsUrl` | `""` | the metrics endpoints the dashboard pod can reach, comma-separated, for the report breakers (`kyverno_breaker_total` / `kyverno_breaker_drops`, summed): reports a breaker dropped are results the page cannot show. Three circuits, one per controller, each on its own endpoint — in-cluster on the host cluster: `http://kyverno-svc-metrics.kyverno.svc:8000/metrics`, `http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics`, `http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics`. Empty leaves the truncation state unknown, said on the page. One GET per endpoint per poll, for the host cluster only — a remote cluster's breaker is unmeasured |
 | `kyverno.eventsRetentionDays` | `90` | the appeared/cleared history of problem results, pruned like the other event tables (`0` keeps forever). A policy report carries no history — it dies with its resource — so this table is the only memory of a finding |
@@ -4302,7 +4302,7 @@ version: 0.59.0
 ```markdown
 | `rbac.namespaces` | `false` | adds `get`/`list` on `namespaces` (core group). Lets the report service's namespace report attest **absence** — "this namespace exists and has no grants" — instead of "none observed". Off by default: extra RBAC |
 | `kyverno.enabled` | `true` | the Kyverno policy module (#165, #170): grants `list` on the policy reports (`wgpolicyk8s.io`, `openreports.io`) and the five CEL policy kinds (`policies.kyverno.io`, with their namespaced twins) and turns the poller's read on. Auto-detected per cluster — no policy-report API group is "not installed", said on the page, never zero results. Read-only: no `/status`, no write verb, never the deprecated `kyverno.io` family (the API says it will be removed in a future release; its results are counted so the page can say they exist) |
-| `clusterConfig.secrets.enabled` | `true` | clusters declared as labelled Secrets in the release namespace (#230, `docs/specs/SPEC_S1_cluster_secrets.md`): a Role with `get`, `list`, `watch` on `secrets` and `configmaps` there, and the poller's discovery on `discoveryIntervalSeconds` — a Secret labelled `groupsync-dashboard.io/secret-type: cluster` carrying `name`, `server`, `config` (JSON: `bearerToken` or `oauth{username,password}`, `tlsClientConfig{caData,insecure}`) and the D2 options is polled like a `clusters[]` entry; the host is always `clusters[0]` and a Secret naming it is refused; a Secret that does not parse is a finding on `GET /api/clusterconfigs`, one that vanishes disables its cluster and keeps its history. ConfigMaps labelled `groupsync-dashboard.io/config-type: onboard` or `sideload` carry credential-free values-shaped stanzas in `data.clusters.yaml` (SPEC_S5, #293); the #284 lookup generates their Secrets. Conflicts load neither; generated credentials are pruned repeatedly after confirmed removal, behind the writes switch. See [the cluster stanza guide](../../docs/CLUSTER_STANZA.md) for prerequisites and recovery, and the [Argo CD / Flux onboarding examples](../../examples/cluster-onboarding/) for adding clusters through GitOps. The [manual Secret example](../../examples/cluster-secret/) explains why a `saTokenLookup` Secret must not be self-healed. `false` — no Role, no discovery, the `clusters[]` list alone. See [polling and discovery](../../docs/polling-and-discovery.md) for cadence, cleanup and refresh behaviour |
+| `clusterConfig.secrets.enabled` | `true` | clusters declared as labelled Secrets in the release namespace (#230, `docs/specs/SPEC_S1_cluster_secrets.md`): a Role with `get`, `list`, `watch` on `secrets` and `configmaps` there, and the poller's discovery on `discoveryIntervalSeconds` — a Secret labelled `groupsync-dashboard.io/secret-type: cluster` carrying `name`, `server`, `config` (JSON: `bearerToken` or `oauth{username,password}`, `tlsClientConfig{caData,insecure}`) and the D2 options is polled like a `clusters[]` entry; the host is always `clusters[0]` and a Secret naming it is refused; a Secret that does not parse is a finding on `GET /api/clusterconfigs`, one that vanishes disables its cluster and keeps its history. ConfigMaps labelled `groupsync-dashboard.io/config-type: onboard` or `sideload` carry credential-free values-shaped stanzas in `data.clusters.yaml` (SPEC_S5, #293); the #284 lookup generates their Secrets. Conflicts load neither; generated credentials are pruned repeatedly after confirmed removal, behind the writes switch. See [the cluster stanza guide](docs/CLUSTER_STANZA.md) for prerequisites and recovery, and the [Argo CD / Flux onboarding examples](../../examples/cluster-onboarding) for adding clusters through GitOps. The [manual Secret example](../../examples/cluster-secret) explains why a `saTokenLookup` Secret must not be self-healed. `false` — no Role, no discovery, the `clusters[]` list alone. See [polling and discovery](../../docs/design/polling-and-discovery.md) for cadence, cleanup and refresh behaviour |
 | `clusterConfig.fleetAccount.ping.enabled` | `true` | the daily ping (#285, `docs/specs/SPEC_S4c_credential_lifecycle.md` §3.4): once per fleet account per interval, on the leader, the dashboard logs in as the account on ONE cluster the lookup retrieved (in rotation by name), reads the poller ServiceAccount's token Secret there and stores nothing. The instant it last succeeded is kept on the account's Lease (`gsd-fleet-<sha256(username)[:16]>`) and served on `GET /api/clusterconfigs`, the tab and `gsd_fleet_account_last_ok_timestamp_seconds`. One bind per interval for the whole fleet, never one per cluster; a refused or locked password stops it, said once, until the password changes |
 | `clusterConfig.fleetAccount.ping.intervalSeconds` | `86400` | how often the ping confirms each account: daily. It rides `discoveryIntervalSeconds`, so it never runs more often than discovery; a shorter interval multiplies the bind rate at a directory that is counting |
 | `clusterConfig.secrets.writes.enabled` | `false` | the Cluster Configurations tab's writes (#230 S2, `docs/specs/SPEC_S2_cluster_configurations_tab.md`): `create`, `update`, `delete` join the `-cluster-secrets` Role so an administrator can add a cluster from the tab (the same labelled Secret a GitOps process would write, `gsd-cluster-<name>`, annotated `groupsync-dashboard.io/managed-by: ui`), rotate its bearer token in place, or delete it (the cluster retires, its history kept). The app writes only in its own namespace, only Secrets carrying the label (checked by the app — RBAC cannot scope a verb by label), only for a reader the cluster-admin tier admits (`visibility.clusterAdminSar`, #322 — never the wide tier the auditor passes) with a proxy-verified identity, one audit log line per write naming the person, the verb and the Secret; the credential never reaches a response, a log line, the database or `/metrics`. **Off by default**, a stated exception to the on-by-default rule: a write path on Secrets widens the dashboard's read-only posture (its only write anywhere is its own leader Lease), so it stays off until the operator turns it on — the default is pending the operator's A/B call of 2026-09-20; B flips it and removes the exception. Off, no write route is registered (a POST is a `405`) and the tab is read-only, its form still producing the Secret's YAML for a GitOps process to apply |
@@ -4312,7 +4312,7 @@ version: 0.59.0
 
 <!-- block: charts/group-sync-dashboard/README.md | edit -->
 ```markdown
-retention still applies. See `docs/AUDIT_LOG_CAPTURE.md` and `docs/LOGIN_CAPTURE_QUICKCHECK.md`.
+retention still applies. See `docs/guides/AUDIT_LOG_CAPTURE.md` and `docs/guides/LOGIN_CAPTURE_QUICKCHECK.md`.
 
 Three rules in the ClusterRole are conditional. `coordination.k8s.io/leases`
 (`get`, `create`, `update`) renders only when `leaderElection.enabled`,
@@ -4326,7 +4326,7 @@ A `patch` on rolebindings/clusterrolebindings used to render here when
 ```
 
 ```markdown
-retention still applies. See `docs/AUDIT_LOG_CAPTURE.md` and `docs/LOGIN_CAPTURE_QUICKCHECK.md`.
+retention still applies. See `docs/guides/AUDIT_LOG_CAPTURE.md` and `docs/guides/LOGIN_CAPTURE_QUICKCHECK.md`.
 
 Three rules in the ClusterRole are conditional. `coordination.k8s.io/leases`
 (`get`, `create`, `update`) renders when `leaderElection.enabled` or a fleet account is in use
@@ -4341,7 +4341,7 @@ A `patch` on rolebindings/clusterrolebindings used to render here when
 `config.unmanagedAudit.mode` was `annotate`. The mode and the grant are both gone; see
 ```
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
 Since #315, every bound login failure gates that account and password on every target in this
 process, for values, Secret and ConfigMap triggers alike. Successful ConfigMap sessions still spend only
@@ -4349,7 +4349,7 @@ their own target's budget; successful values/Secret logins are not globally one-
 exact configured username string: use one spelling for one directory identity. A restart or another
 replica starts with an empty gate; durable, replica-shared protection remains #285's work. Keep one replica.
 
-Companion to [`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md), which covers *what a stanza may
+Companion to [`charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`](CLUSTER_STANZA.md), which covers *what a stanza may
 say*. This covers *what happens to the credential afterwards* — who holds it, what fails, and how an
 ```
 
@@ -4363,11 +4363,11 @@ there before the password is sent; a session clears it and a refusal replaces it
 another replica reads it and does not send the password again; a success is still not recorded there. Keep one
 replica.
 
-Companion to [`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md), which covers *what a stanza may
+Companion to [`charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`](CLUSTER_STANZA.md), which covers *what a stanza may
 say*. This covers *what happens to the credential afterwards* — who holds it, what fails, and how an
 ```
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
 | | the fleet LDAP account | the retrieved ServiceAccount token |
 |---|---|---|
@@ -4403,7 +4403,7 @@ account still works, and stores nothing — confirming is not renewing.
 renewal means re-authenticating — which would turn a once-per-onboarding bind into a recurring one
 ```
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
 |---|---|---|
 | static bearer token | the token, written by whoever created the Secret | the token |
@@ -4424,7 +4424,7 @@ A retrieval-written Secret is recognisable by its annotations, which a hand-writ
 A retrieval-written Secret is recognisable by its annotations, which a hand-written one lacks:
 ```
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 ```markdown
 use one spelling per identity. The ConfigMap trigger also marks a successful session (before the token
 read), for that target only (#293). A gated password is not sent again in this process, including
@@ -4450,7 +4450,7 @@ edits need neither. Do not delete an output as
 a way to remove the declaration; the source is the record. Turning discovery off suspends all cleanup;
 ```
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 ```markdown
 | `tokenFile` = the SA path | `in-cluster` | yes |
 | `tokenEnv` or `tokenFile` | `file` | yes |
@@ -4484,7 +4484,7 @@ says why.
 
 ```
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 ```markdown
 | 4 | remote + `tokenEnv` + `caBundleFile` | polled, pinned CA |
 | 5 | remote + `tokenEnv` + `insecureSkipVerify` | polled, verification off |
@@ -4505,7 +4505,7 @@ says why.
 | 10 | remote + `visibility: hidden` | polled, never served through `/api` |
 ```
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 ```markdown
 | `saTokenLookup` without `clusterConfig.secrets.writes.enabled` | **refused** | starts; the tab reports `fleet-write-disabled` (a Secret-declared mode reaches this half) |
 | `saTokenLookup` without `clusterConfig.secrets.enabled` | **refused** | starts; the cluster stays pending |
@@ -4525,7 +4525,7 @@ The chart's guard covers the connection-mode and host rules; the remaining four 
 alone, because `templates/configmap.yaml` passes `clusters` through with `toYaml` and the pod is
 ```
 
-<!-- block: docs/polling-and-discovery.md | edit -->
+<!-- block: docs/design/polling-and-discovery.md | edit -->
 ```markdown
 `POST /api/clusters/{name}/refresh` — and a control in the UI that calls it. **Neither exists
 today.** When it is built, the constraint that governs it is not performance but safety.
@@ -4555,7 +4555,7 @@ So a refresh on a `saTokenLookup` cluster *is a bind*, and it must honour
 `gsd/fleetlookup.py#CredentialGate` — returning a gated credential's standing refusal **without
 ```
 
-<!-- block: docs/DESIGN_cluster_connection_flows.md | edit -->
+<!-- block: docs/design/DESIGN_cluster_connection_flows.md | edit -->
 ```markdown
                                           outcome=<finding>` line — attempt=n/5,
                                           retry_in=, gave_up=true — and a standing

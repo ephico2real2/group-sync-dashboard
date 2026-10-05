@@ -1036,9 +1036,9 @@ __version__ = "4.5.0"
 ```
 
 
-### Block 20 — `docs/DESIGN_reporting_selectors_snapshots_and_windows.md`: §5 names the mechanism
+### Block 20 — `docs/design/DESIGN_reporting_selectors_snapshots_and_windows.md`: §5 names the mechanism
 
-<!-- block: docs/DESIGN_reporting_selectors_snapshots_and_windows.md | edit -->
+<!-- block: docs/design/DESIGN_reporting_selectors_snapshots_and_windows.md | edit -->
 
 ```markdown
 stop nightly evidence. A trigger-side pre-check is diagnostic only (same predicate); the server is the

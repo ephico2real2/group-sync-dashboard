@@ -973,7 +973,7 @@ The offsite mount is not walked: the lab has no offsite CronJob, and #304's walk
 | `charts/group-sync-dashboard/values.yaml` | 42 | 0 |
 | `charts/group-sync-dashboard/Chart.yaml` | 5 | 1 |
 | `charts/group-sync-dashboard/README.md` | 34 | 0 |
-| `docs/RUNBOOK_backup_restore.md` | 56 | 3 |
+| `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` | 56 | 3 |
 | `docs/CHANGELOG.md` | 18 | 0 |
 | `local-development/tests/test_recovery_mode.py` (new) | 237 | 0 |
 | `local-development/tests/test_chart_recovery_mode.py` (new) | 283 | 0 |
@@ -1498,7 +1498,7 @@ New text:
 # ---------------------------------------------------------------------------
 # Recovery mode (#303) — the pod with the data volume mounted and the app stopped
 # ---------------------------------------------------------------------------
-# For a restore or a rollback (docs/RUNBOOK_backup_restore.md section 4). recovery.enabled=true
+# For a restore or a rollback (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4). recovery.enabled=true
 # runs the chart's recovery script (scripts/recovery_mode.py, shipped in a ConfigMap) in the
 # dashboard container instead of uvicorn, on the same pod spec and the same /data volume: no process opens
 # gsd.db, so you can replace it from `oc exec`, and a dropped session does not end the pod. The
@@ -1610,7 +1610,7 @@ fire, because its gauge comes from the stopped process and a missing series retu
 `reporting.enabled`, `GroupSyncDashboardReportSnapshotStale` (warning) fires once the report service's
 newest copy is older than four snapshot intervals, for `for.reportSnapshot` (about 50 minutes at the
 defaults). The TTL is the bound. The procedure is the runbook's
-[§4](../../docs/RUNBOOK_backup_restore.md#4-restore).
+[§4](../../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md#4-restore).
 
 ```
 
@@ -1640,11 +1640,11 @@ that reuses an older chart's values, which renders with that chart's defaults, s
 ## Uninstall
 ```
 
-### Block 14 — docs/RUNBOOK_backup_restore.md: the runbook: §4, recovery mode as the primary path
+### Block 14 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: the runbook: §4, recovery mode as the primary path
 
 The five steps through the release's values file, the time left checked before a restore, what alerts, one labelled development line; the `oc scale` path kept as the fallback (§3.9).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1710,11 +1710,11 @@ runs (`helm list -n $NS`) and the release's complete values file, now carrying `
 oc scale -n $NS deploy/$REL --replicas=0
 ```
 
-### Block 15 — docs/RUNBOOK_backup_restore.md: the runbook: §4a in recovery mode
+### Block 15 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: the runbook: §4a in recovery mode
 
 The same body through `oc exec` into the recovery pod.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1734,11 +1734,11 @@ Otherwise, a helper pod with the data claim, from the Deployment's own template:
 
 ```
 
-### Block 16 — docs/RUNBOOK_backup_restore.md: the runbook: §4b in recovery mode
+### Block 16 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: the runbook: §4b in recovery mode
 
 The offsite claim is already mounted at `/offsite`.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1760,11 +1760,11 @@ data claim). There is no `sleep`; Python idles instead:
 
 ```
 
-### Block 17 — docs/RUNBOOK_backup_restore.md: the runbook: §4c in recovery mode
+### Block 17 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: the runbook: §4c in recovery mode
 
 Turning it off replaces the `oc scale`.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -2301,7 +2301,7 @@ def _between(text: str, start: str, end: str) -> str:
 
 
 def test_t303_19_the_docs_name_the_switch_and_say_what_alerts():
-    for doc in (CHART / "values.yaml", CHART / "README.md", REPO / "docs" / "RUNBOOK_backup_restore.md"):
+    for doc in (CHART / "values.yaml", CHART / "README.md", REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md"):
         text = doc.read_text()
         assert "recovery.enabled" in text and "recovery.ttl" in text, doc
     comment = re.sub(r"\s*\n#\s*", " ", _values_comment())
@@ -2310,9 +2310,9 @@ def test_t303_19_the_docs_name_the_switch_and_say_what_alerts():
     assert "GroupSyncDashboardReportSnapshotStale" in comment and "The TTL is the bound" in comment
     # what the TTL ends (measured: an exec'd process is killed when PID 1 exits) and what restarts it
     assert "every process in the container stops" in comment and "evicted" in comment and "0/1" in comment
-    runbook = (REPO / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     assert "Check the time left first" in runbook and "every process in the container stops" in runbook
-    for doc in (CHART / "README.md", REPO / "docs" / "RUNBOOK_backup_restore.md", CHART / "values.yaml"):
+    for doc in (CHART / "README.md", REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md", CHART / "values.yaml"):
         assert not re.search(r"NotPolling[^.]*(fires|covers)[^.]*recovery", doc.read_text()), doc
 
 
@@ -2322,7 +2322,7 @@ def test_the_only_documented_path_is_the_values_file():
     in the operator's path; Argo CD is named only to say why a hand edit is reverted, and a plain `helm upgrade
     -f` only on the runbook's line for development and troubleshooting."""
     readme = (CHART / "README.md").read_text()
-    runbook = _between((REPO / "docs" / "RUNBOOK_backup_restore.md").read_text(),
+    runbook = _between((REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text(),
                        "**Recovery mode is the primary path", "**Without recovery mode**")
     assert runbook.count("**Development and troubleshooting only:**") == 1, "the plain Helm form has one labelled line"
     operator_path, development = runbook.split("**Development and troubleshooting only:**")
@@ -2348,7 +2348,7 @@ def test_the_docs_warn_against_a_pipeline_that_rolls_a_failed_rollout_back():
     which the app runs with its liveness probe) turns recovery mode off on its own and starts the app on a
     file that may be half restored. The three operator texts say so, in words that keep the operator path
     free of a command line."""
-    runbook = _between((REPO / "docs" / "RUNBOOK_backup_restore.md").read_text(),
+    runbook = _between((REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text(),
                        "**Recovery mode is the primary path", "**Development and troubleshooting only:**")
     texts = {"values comment": re.sub(r"\s*\n#\s*", " ", _values_comment()),
              "README section": _between((CHART / "README.md").read_text(), "### Recovery mode", "\n#"),

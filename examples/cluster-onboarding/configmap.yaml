@@ -1,7 +1,7 @@
 # Credential-free cluster onboarding: the dashboard logs in as clusterConfig.fleetAccount, reads the
 # remote poller token and writes gsd-cluster-<name> itself. That write needs
 # clusterConfig.secrets.writes.enabled, which is off by default; the prerequisites are in
-# docs/CLUSTER_STANZA.md. Deleting this map prunes the generated Secret; recorded history stays.
+# charts/group-sync-dashboard/docs/CLUSTER_STANZA.md. Deleting this map prunes the generated Secret; recorded history stays.
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -23,11 +23,13 @@ def _targets() -> set[Path]:
 
 def test_every_page_outside_development_conventions_is_linked() -> None:
     targets = _targets()
+    pages = [
+        page for page in DOCS.glob("*.md")
+        if page.name != "README.md" and not page.name.startswith(DEVELOPMENT_PREFIXES)
+    ]
+    pages.extend((DOCS / "guides").rglob("*.md"))
     missing = sorted(
-        page.name for page in DOCS.glob("*.md")
-        if page.name != "README.md"
-        and not page.name.startswith(DEVELOPMENT_PREFIXES)
-        and page.resolve() not in targets
+        str(page.relative_to(DOCS)) for page in pages if page.resolve() not in targets
     )
     assert not missing, f"pages with no link in docs/README.md: {missing}"
 

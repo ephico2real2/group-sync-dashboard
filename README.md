@@ -108,7 +108,7 @@ not that the cluster has none, where an administrator sees 62.
 ![Groups, narrowed to one reader's own memberships](docs/screenshots/self/02-groups.png)
 
 Who counts as an administrator is a SubjectAccessReview the operator chooses, not a list of
-names — see [`docs/ACCESS_CONTROL.md`](docs/ACCESS_CONTROL.md).
+names — see [`docs/guides/ACCESS_CONTROL.md`](docs/guides/ACCESS_CONTROL.md).
 
 <sub>Regenerate with
 [`local-development/capture-screenshots.py`](local-development/capture-screenshots.py), which
@@ -123,7 +123,7 @@ the same deployment — the administrator's into `docs/screenshots/`, an ordinar
 |---|---|
 | [Documentation index](docs/README.md) | operator guides first, followed by development guides and records |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | what each application and chart release changed, newest first |
-| [`docs/reference-architecture.md`](docs/reference-architecture.md) | **start here to operate or extend it** — components, poll and request flow, data model, concurrency, security, and the reason behind each deliberate constraint |
+| [`docs/guides/reference-architecture.md`](docs/guides/reference-architecture.md) | **start here to operate or extend it** — components, poll and request flow, data model, concurrency, security, and the reason behind each deliberate constraint |
 | [`docs/reports/`](docs/reports/README.md) | the eleven standard reports — what each shows, its parameters, and how to schedule them by cadence across clusters |
 | [`charts/group-sync-dashboard/`](charts/group-sync-dashboard/README.md) | the Helm chart — how you deploy it, and every value |
 | [`local-development/`](local-development/README.md) | the application, tests and build tooling |
@@ -133,23 +133,23 @@ Reading it from outside the cluster, and extending it:
 
 | Document | What |
 |---|---|
-| [`docs/api-access.md`](docs/api-access.md) | calling `/api` with `curl` or Postman — the token exchange, and the two Postman defaults that break it |
-| [`docs/api-contract.md`](docs/api-contract.md) | the seven rules a new endpoint must satisfy, each enforced by a test — and how to cite code from a document |
-| [`docs/updating-vendored-assets.md`](docs/updating-vendored-assets.md) | refreshing the Swagger/ReDoc bundles and the fonts, and why they live in git |
+| [`docs/guides/api-access.md`](docs/guides/api-access.md) | calling `/api` with `curl` or Postman — the token exchange, and the two Postman defaults that break it |
+| [`docs/guides/api-contract.md`](docs/guides/api-contract.md) | the seven rules a new endpoint must satisfy, each enforced by a test — and how to cite code from a document |
+| [`docs/guides/updating-vendored-assets.md`](docs/guides/updating-vendored-assets.md) | refreshing the Swagger/ReDoc bundles and the fonts, and why they live in git |
 
 Design notes, for the decisions that are not obvious from the code:
 
 | Document | What |
 |---|---|
-| [`docs/storage-coupling.md`](docs/storage-coupling.md) | why SQLite, the storage seam, and what a second backend would have to satisfy |
-| [`docs/unmanaged-audit-design.md`](docs/unmanaged-audit-design.md) | unmanaged-grant discovery, its invariants, and the live-cluster measurement that removed the write path |
-| [`docs/DESIGN_session_and_signout.md`](docs/DESIGN_session_and_signout.md) | the 4-hour session cap and the sign-out button — and the four measurements that made the design this small, including why there is no `-cookie-refresh` and why sign-out cannot revoke the token |
-| [`docs/image-vulnerability-scan.md`](docs/image-vulnerability-scan.md) | the CVE position, what is reachable, and what a rebuild cannot fix |
-| [`docs/DESIGN_supply_chain.md`](docs/DESIGN_supply_chain.md) | the image signature, SBOM and provenance, the chart attestation, and why none of it has a key |
-| [`docs/TUTORIAL_ca_trust_hashed_directory.md`](docs/TUTORIAL_ca_trust_hashed_directory.md) | tutorial: how OpenSSL's hashed CA directory works, and the injected, hand-made, cert-manager and Kyverno ways to trust a CA in a pod — every step run on CRC |
-| [`docs/TUTORIAL_mermaid_diagrams.md`](docs/TUTORIAL_mermaid_diagrams.md) | tutorial: how the diagrams are derived from code, written in Mermaid, checked in half a second and rendered in CI — with two built from scratch |
-| [`docs/DESIGN_reporting_service.md`](docs/DESIGN_reporting_service.md) | the report service: eleven access-review reports as HTML and PDF/A from a separate pod, its data path, its tickets |
-| [`docs/namespace-report-design.md`](docs/namespace-report-design.md) | superseded — per-namespace and access-review reports as HTML/PDF from a separate report service; the definitive answer on `--openshift-sar` |
+| [`docs/design/storage-coupling.md`](docs/design/storage-coupling.md) | why SQLite, the storage seam, and what a second backend would have to satisfy |
+| [`docs/design/unmanaged-audit-design.md`](docs/design/unmanaged-audit-design.md) | unmanaged-grant discovery, its invariants, and the live-cluster measurement that removed the write path |
+| [`docs/design/DESIGN_session_and_signout.md`](docs/design/DESIGN_session_and_signout.md) | the 4-hour session cap and the sign-out button — and the four measurements that made the design this small, including why there is no `-cookie-refresh` and why sign-out cannot revoke the token |
+| [`docs/guides/image-vulnerability-scan.md`](docs/guides/image-vulnerability-scan.md) | the CVE position, what is reachable, and what a rebuild cannot fix |
+| [`docs/design/DESIGN_supply_chain.md`](docs/design/DESIGN_supply_chain.md) | the image signature, SBOM and provenance, the chart attestation, and why none of it has a key |
+| [`docs/guides/TUTORIAL_ca_trust_hashed_directory.md`](docs/guides/TUTORIAL_ca_trust_hashed_directory.md) | tutorial: how OpenSSL's hashed CA directory works, and the injected, hand-made, cert-manager and Kyverno ways to trust a CA in a pod — every step run on CRC |
+| [`docs/guides/TUTORIAL_mermaid_diagrams.md`](docs/guides/TUTORIAL_mermaid_diagrams.md) | tutorial: how the diagrams are derived from code, written in Mermaid, checked in half a second and rendered in CI — with two built from scratch |
+| [`docs/design/DESIGN_reporting_service.md`](docs/design/DESIGN_reporting_service.md) | the report service: eleven access-review reports as HTML and PDF/A from a separate pod, its data path, its tickets |
+| [`docs/design/namespace-report-design.md`](docs/design/namespace-report-design.md) | superseded — per-namespace and access-review reports as HTML/PDF from a separate report service; the definitive answer on `--openshift-sar` |
 | [`docs/specs/README.md`](docs/specs/README.md) | **the feature programme** — thirteen modules specified with their complete code before any is implemented, one GitHub issue and milestone each, released strictly one at a time; the index, the version ladder and the definition of done |
 
 ## Install
@@ -216,7 +216,7 @@ who you want looking.
 The **API** is gated properly. `oauthProxy.apiTokenAccess.enabled` lets a bearer token read
 `/api`, and the delegated review demands `list clusterrolebindings` cluster-wide — the honest
 floor for that data. Verified: an identity without it gets `403` where it would otherwise have
-read every binding on the cluster. See [`docs/api-access.md`](docs/api-access.md).
+read every binding on the cluster. See [`docs/guides/api-access.md`](docs/guides/api-access.md).
 
 Turning the proxy on also switches the Route (or Ingress) to `reencrypt`, binds the app to `127.0.0.1`
 so the proxy cannot be bypassed from inside the cluster, and moves the probes behind
@@ -323,8 +323,8 @@ every merge to `main` that changes an image input, and writes nothing back to th
 the immutable `<version>-<sha>` tag every time, the `:<version>` alias only when a human moved
 `version` in `pyproject.toml`. On `main`, the pushed digest is then signed and attested — keyless,
 under GitHub's OIDC identity — and its SBOM kept as an artifact and attached to the image. How an
-operator checks all of that: [`docs/HELM_DOWNLOAD_AND_INSTALL.md`](docs/HELM_DOWNLOAD_AND_INSTALL.md);
-the release model: [`docs/RELEASING.md`](docs/RELEASING.md).
+operator checks all of that: [`charts/group-sync-dashboard/docs/HELM_DOWNLOAD_AND_INSTALL.md`](charts/group-sync-dashboard/docs/HELM_DOWNLOAD_AND_INSTALL.md);
+the release model: [`docs/guides/RELEASING.md`](docs/guides/RELEASING.md).
 
 Configure once, under **Settings → Secrets and variables → Actions**:
 
@@ -507,12 +507,12 @@ to another. A cluster that cannot be reached appears in the report as `UNREACHAB
 than silently missing.
 
 Requires `oauthProxy.apiTokenAccess.enabled` and a calling account with cluster-wide RBAC
-read. Recipes for `curl` and Postman: [`docs/api-access.md`](docs/api-access.md).
+read. Recipes for `curl` and Postman: [`docs/guides/api-access.md`](docs/guides/api-access.md).
 
 ## Not built yet
 
 Effective-permission expansion and log-scrape enrichment.
 
 Per-cluster authorization for the multi-cluster case shipped in 0.19.0 as `clusters[].visibility` /
-`clusters[].identity` (`docs/ACCESS_CONTROL.md` §11); deploying per cluster and aggregating through
+`clusters[].identity` (`docs/guides/ACCESS_CONTROL.md` §11); deploying per cluster and aggregating through
 the API, as above, still removes the identity question rather than answering it.

@@ -27,7 +27,7 @@ succeeds, so a schedule denser than the app's backups is harmless. Every failure
 BackupError and exits 1 with the reason on stderr — the CronJob's status is the only signal the
 chart's alert can see.
 
-No tar, no gzip, no aws: the image has none (docs/DESIGN_hardened_image.md §10) and a shell copy
+No tar, no gzip, no aws: the image has none (docs/design/DESIGN_hardened_image.md §10) and a shell copy
 could not verify what it copied. S3 is deliberately NOT implemented here — see values.yaml under
 backup.offsite.destination.s3 for why a write-only credential and a lifecycle rule beat a pruner.
 

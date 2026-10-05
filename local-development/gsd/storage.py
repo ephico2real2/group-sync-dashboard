@@ -40,7 +40,7 @@ SQLite being single-writer is the premise of the *deployment*: one replica, lead
 election, three Helm guards, ``Recreate``, the RWX/RWOP argument, the WAL-on-NFS alert.
 None of that is in this contract and none of it is fixed by implementing it. Swapping the
 engine is a contained job; deleting the deployment scaffolding it forced is the larger one.
-See ``docs/storage-coupling.md``.
+See ``docs/design/storage-coupling.md``.
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ class StorageBackend(Protocol):
     def replace_group_state(
         self, cluster_id: str, rows: list[dict], observed_at: str
     ) -> None: ...
-    # The self-tier predicates (docs/SPEC_per_user_visibility.md). Every `user_name`
+    # The self-tier predicates (docs/design/SPEC_per_user_visibility.md). Every `user_name`
     # argument on a read below is the PRIVACY SCOPE, not a convenience filter — handlers
     # pass the proxy-authenticated viewer, and the backend must filter in its query so a
     # row limit can never silently starve the viewer's own rows.
@@ -253,7 +253,7 @@ class StorageBackend(Protocol):
     def user_full_name(self, cluster_id: str, user_name: str) -> str | None: ...
 
     # Login capture. The write side is called only from the capture loop on the poll thread; the read
-    # side only from API handlers. See docs/DESIGN_login_capture.md for why the watermark and the
+    # side only from API handlers. See docs/design/DESIGN_login_capture.md for why the watermark and the
     # status are two different things.
     def record_login_events(self, cluster_id: str, events: list[dict]) -> int: ...
     def set_login_watermark(

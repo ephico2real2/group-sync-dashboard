@@ -166,7 +166,7 @@ def test_check_cannot_open_the_live_database_during_a_restore(tmp_path: Path) ->
 
 
 def test_runbook_explains_how_to_recover_a_kept_live_set() -> None:
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     section = runbook.split("**Undo a restore.**", 1)[1].split("\n\n", 1)[0]
     assert all(word in section for word in ("gsd.db", "-wal", "-shm", "-journal", "integrity_check", ".tmp"))
     assert runbook.count("rm -f /data/gsd.db-wal /data/gsd.db-shm /data/gsd.db-journal") >= 2

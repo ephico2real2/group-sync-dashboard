@@ -367,7 +367,7 @@ exec {real_git} "$@"
 
 def test_a_dispatch_rebuild_at_a_commit_that_changed_no_image_input_promotes_nothing(lab) -> None:
     """Review of #614 (OB2): publish.yml run by hand at such a tip tags that tip's sha; promote needs the
-    image-input commit's own tag (docs/RELEASING.md, its troubleshooting row)."""
+    image-input commit's own tag (docs/guides/RELEASING.md, its troubleshooting row)."""
     image = _main_at(lab, APP)
     tip = _commit(lab["repo"], "a template", {"charts/group-sync-dashboard/templates/x.yaml": "kind: Secret\n"})
     registry = _released()

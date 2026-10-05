@@ -207,7 +207,7 @@ exit code: 1
 refusing.StorePreUpgradeCopyFailed: schema 19 -> 20: the pre-upgrade copy was not written (probe)
 ```
 
-That is how #305's refusal reaches `oc logs --previous --tail=1` (`docs/RUNBOOK_backup_restore.md#4c. Bring it back and verify`).
+That is how #305's refusal reaches `oc logs --previous --tail=1` (`charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md#4c. Bring it back and verify`).
 
 **Kubernetes** (kubernetes/website at `a746bbd`, 2026-09-26). Pod lifecycle: "After containers in a Pod exit, the
 kubelet restarts them with an exponential backoff delay (10s, 20s, 40s, …), that is capped at 300 seconds (5
@@ -397,7 +397,7 @@ names the move, the database, the directory, the reason and the ways out:
 
     schema 19 -> 20: the pre-upgrade copy of /data/gsd.db could not be written to /data/pre-upgrade, so the database
     was not migrated: free space 40.0 MiB, database 120.0 MiB. Free space on the volume or make the directory
-    writable, then restart; or deploy the image that understands schema 19 (docs/RUNBOOK_backup_restore.md §6)
+    writable, then restart; or deploy the image that understands schema 19 (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §6)
 
 A refused attempt deletes its `.tmp`, its sidecar and its copy (§2.1: a partial file keeps the space it failed for).
 The success line is inside the same handler, so a failure to read the copy's size for it is the same refusal
@@ -433,7 +433,7 @@ The copy is written; nothing else changes (§3.1).
 
 The chart moves by a PATCH, 0.58.3 to 0.58.4, because the values comment and the README are chart content and CI
 refuses a chart change without a new version (`.github/workflows/ci.yml`, "Chart changes bump the chart version").
-The application, `gsd/__init__.py` and `appVersion` stay at 0.36.0: `docs/RELEASING.md` moves them when a release is
+The application, `gsd/__init__.py` and `appVersion` stay at 0.36.0: `docs/guides/RELEASING.md` moves them when a release is
 cut (`prepare-release.py --app`), a chart change that adds no template or value does not force them, and this change
 adds no migration, so #298's `tests/test_migration_needs_app_release.py` passes without them. The application
 behaviour ships with the Epic B release, `prepare-release.py --app 0.37.0`, which also carries #305 and #298.
@@ -668,7 +668,7 @@ Lines added and removed by §7, from `git diff --numstat` on the applied copy (�
 |---|---|---|
 | `local-development/gsd/store.py` | 118 (85 code, 23 comment or docstring, 10 blank) | 3 |
 | `local-development/tests/test_pre_upgrade_copy.py` (new) | 346 | 0 |
-| `docs/RUNBOOK_backup_restore.md` | 55 | 3 |
+| `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` | 55 | 3 |
 | `docs/CHANGELOG.md` | 16 | 0 |
 | `charts/group-sync-dashboard/values.yaml` | 7 | 0 |
 | `charts/group-sync-dashboard/README.md` | 6 | 0 |
@@ -798,7 +798,7 @@ def _pre_upgrade_copy(conn: sqlite3.Connection, db_path: str, version: int) -> N
         return StorePreUpgradeCopyFailed(
             f"{move}: the pre-upgrade copy of {db_path} could not be written to {directory}, so the database was "
             f"not migrated: {reason}. Free space on the volume or make the directory writable, then restart; or "
-            f"deploy the image that understands schema {version} (docs/RUNBOOK_backup_restore.md §6)")
+            f"deploy the image that understands schema {version} (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §6)")
 
     try:
         directory.mkdir(parents=True, exist_ok=True)
@@ -882,7 +882,7 @@ Old text:
             self._conn.close()
             raise StoreSchemaTooNew(
                 f"database schema {version} is newer than this dashboard understands ({KNOWN_SCHEMA_VERSION}); "
-                f"restore a backup at or below schema {KNOWN_SCHEMA_VERSION} (docs/RUNBOOK_backup_restore.md §4), "
+                f"restore a backup at or below schema {KNOWN_SCHEMA_VERSION} (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4), "
                 f"or deploy the image that understands {version}")
         self._conn.row_factory = sqlite3.Row
 ```
@@ -895,7 +895,7 @@ New text:
             self._conn.close()
             raise StoreSchemaTooNew(
                 f"database schema {version} is newer than this dashboard understands ({KNOWN_SCHEMA_VERSION}); "
-                f"restore a backup at or below schema {KNOWN_SCHEMA_VERSION} (docs/RUNBOOK_backup_restore.md §4), "
+                f"restore a backup at or below schema {KNOWN_SCHEMA_VERSION} (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4), "
                 f"or deploy the image that understands {version}")
         # Older and not fresh: this open is about to migrate, so the copy comes first, or nothing does (#301).
         if version < KNOWN_SCHEMA_VERSION and not fresh:
@@ -1277,11 +1277,11 @@ def test_a_pod_name_containing_the_target_does_not_stand_in_for_the_copy(tmp_pat
     assert _facts(taken[0])["user_version"] == KNOWN_SCHEMA_VERSION - 1
 ```
 
-### Block 6 — docs/RUNBOOK_backup_restore.md: the runbook names three copies
+### Block 6 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: the runbook names three copies
 
 The intro lists what exists; the pre-upgrade copy is the third.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1310,11 +1310,11 @@ cluster cannot replay them (`gsd/store.py#Store.backup`). Three copies exist:
   backups are disabled (§6).
 ```
 
-### Block 7 — docs/RUNBOOK_backup_restore.md: §4c: a restored older copy meets the pre-upgrade copy before it migrates
+### Block 7 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4c: a restored older copy meets the pre-upgrade copy before it migrates
 
 A copy restored under a newer image upgrades at its next start, after the line about the pre-upgrade copy.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1332,11 +1332,11 @@ copy that start wrote, or the one an earlier start of the same upgrade wrote; th
 rebuilds every cache table.
 ```
 
-### Block 8 — docs/RUNBOOK_backup_restore.md: §6, the new section
+### Block 8 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §6, the new section
 
 Where the copies are and how they are kept (the Definition of Done), once per upgrade, what the refusal looks like, and how to use a copy. Inline code only: a fence inside a block would end the block (§4.3).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1421,7 +1421,7 @@ New text:
   # upgrades the schema: /data/pre-upgrade when there is one replica, /data/$POD_NAME/pre-upgrade when
   # replicaCount is greater than 1, with backups on or off. It does not start if the copy cannot be
   # written. The copies of the newest three upgrades are kept, each about the size of the database, so
-  # they count against persistence.size (docs/RUNBOOK_backup_restore.md §6).
+  # they count against persistence.size (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §6).
   backup:
     enabled: true
 ```
@@ -1453,7 +1453,7 @@ itself never grows credentials for object storage.
 database as it was to `pre-upgrade/` beside it before it upgrades the schema, whether `config.backup` is on
 or off, and does not start without that copy. The copies of the newest three upgrades are kept, each about
 the size of the database, so they count against `persistence.size`; `config.backup.keep` does not apply to
-them ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
+them ([runbook §6](../../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
 ```
 
 ### Block 11 — docs/CHANGELOG.md: the CHANGELOG entry
@@ -1490,7 +1490,7 @@ New text:
   `gsd_backup_last_success_timestamp_seconds` and the KPI size line never see it. The copies of the newest
   three upgrades are kept, each about the size of the database, so they count against `persistence.size`. A
   new database, or one already at the image's version, takes no copy. Where the copies are and how to use
-  them: [RUNBOOK_backup_restore.md §6](RUNBOOK_backup_restore.md#6-pre-upgrade-copies).
+  them: [RUNBOOK_backup_restore.md §6](../../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies).
 - **A migration ships with an application release (#298; CI and tests only, no version of its own).** CI
 ```
 

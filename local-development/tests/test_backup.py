@@ -255,7 +255,7 @@ def test_the_docs_say_where_each_replicas_copies_are(tmp_path):
     def words(text: str) -> str:
         return " ".join(text.replace("#", " ").split())
 
-    runbook = words((REPO / "docs" / "RUNBOOK_backup_restore.md").read_text())
+    runbook = words((REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text())
     readme = (REPO / "charts" / "group-sync-dashboard" / "README.md").read_text()
     scaling = words(readme[readme.index("\n## Scaling\n"):readme.index("\n## Storage\n")])
     values = (REPO / "charts" / "group-sync-dashboard" / "values.yaml").read_text()

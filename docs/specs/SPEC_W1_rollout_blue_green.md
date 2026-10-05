@@ -309,7 +309,7 @@ the flag off nothing new renders and the render equals main's apart from the cha
 | f | Disk | its own directory and the four most recently written others | at most four others run at once: the active colour, one old active under `scaleDownDelayRevisionLimit: 1`, a replaced preview, the Deployment's pod before the controller scales it to 0 |
 | g | Promotion | `rollout.autoPromotionEnabled: true` in the values file | §2.2 row 6; note 3 |
 | h | Abort | the previous image in the values file; the active Service already selects blue, green is scaled down; nothing to restore | §2.2 row 8 |
-| i | Undo after promotion | the previous image in the values file; blue's ReplicaSet returns and seeds from the newest copy if its schema is one blue's file has reached, else keeps its own file | the second case equals restoring #301's copy (`docs/RUNBOOK_backup_restore.md`, section 6) without the manual step |
+| i | Undo after promotion | the previous image in the values file; blue's ReplicaSet returns and seeds from the newest copy if its schema is one blue's file has reached, else keeps its own file | the second case equals restoring #301's copy (`charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`, section 6) without the manual step |
 | j | A preview Route | none; green is checked from inside the cluster | §2a, K |
 | k | The RolloutManager | never rendered; the render requires the Rollout API and names the prerequisite | §2.3; §2a, J |
 | l | **Flag on, no controller** | **the Deployment keeps serving**; the Rollout is inert | §2.2 row 10; two tests |
@@ -744,7 +744,7 @@ refusal names the value to set in the release's values file, the only path a rel
 {{- fail "rollout.enabled: true requires persistence.enabled: true: green seeds its database from a copy on the data claim, and an emptyDir has none. Set persistence.enabled: true in this release's values file." -}}
 {{- end -}}
 {{- if ne (include "gsd.accessMode" .) "ReadWriteMany" -}}
-{{- fail (printf "rollout.enabled: true requires persistence.accessMode: ReadWriteMany; got %s. Blue and green run at once on one claim: ReadWriteOncePod admits one pod, and ReadWriteOnce leaves green unable to attach the claim on another node. An existing claim's mode cannot change in place (docs/RUNBOOK_backup_restore.md section 5)." (include "gsd.accessMode" .)) -}}
+{{- fail (printf "rollout.enabled: true requires persistence.accessMode: ReadWriteMany; got %s. Blue and green run at once on one claim: ReadWriteOncePod admits one pod, and ReadWriteOnce leaves green unable to attach the claim on another node. An existing claim's mode cannot change in place (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 5)." (include "gsd.accessMode" .)) -}}
 {{- end -}}
 {{- if not .Values.leaderElection.enabled -}}
 {{- fail "rollout.enabled: true requires leaderElection.enabled: true: blue and green run at once, and only the lease holder may poll and write the copies a new colour starts from. Set leaderElection.enabled: true in this release's values file." -}}
@@ -1261,7 +1261,7 @@ its `colour-seed` decides its database:
 | no migration between blue and green | the newest copy: green's history is kept |
 | green migrated the schema | blue's own file, as it was when blue stopped; the history since stays in green's directory |
 
-The second row is what a restore of the pre-upgrade copy gives today (`docs/RUNBOOK_backup_restore.md`, section 6),
+The second row is what a restore of the pre-upgrade copy gives today (`charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`, section 6),
 done for you. If blue's directory was already pruned (four newer colours ago), blue can only start from green's
 newer copy, which it refuses (`StoreSchemaTooNew`); green keeps serving. Restore green's pre-upgrade copy into blue's
 directory with the runbook's section 6.
@@ -1324,7 +1324,7 @@ With the flag off, the Deployment opens `/data/gsd.db` again, the file it had be
 does not have the history recorded since. While the flag is on no pod opens `/data/gsd.db`, so:
 
 1. Copy the active colour's newest copy (`/data/report/gsd-….db` or `/data/backup/gsd-….db`) into
-   `/data/gsd.db` with `docs/RUNBOOK_backup_restore.md` section 4a; no pod needs to stop first.
+   `/data/gsd.db` with `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` section 4a; no pod needs to stop first.
 2. Set `rollout.enabled: false` in the release's values file and roll it out, **while the controller still runs**.
    The Rollout is deleted, its pods stop, and the controller takes its hash off the active Service, so the Service
    selects the Deployment's pod again.
@@ -1661,17 +1661,17 @@ figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
 
 <!-- block: docs/README.md | edit -->
 ```markdown
-- [TROUBLESHOOTING_auditor_groups.md](TROUBLESHOOTING_auditor_groups.md) — auditor groups, `createLocal` and LDAP GroupSync collisions.
-- [RUNBOOK_backup_restore.md](RUNBOOK_backup_restore.md) — back up and restore the dashboard's history.
-- [RUNBOOK.md](../charts/group-sync-dashboard/RUNBOOK.md) — a remote cluster's connection is broken: find out why, then Refresh and Rejoin; kept beside the chart's values.
+- [TROUBLESHOOTING_auditor_groups.md](../charts/group-sync-dashboard/docs/TROUBLESHOOTING_auditor_groups.md) — auditor groups, `createLocal` and LDAP GroupSync collisions.
+- [RUNBOOK_backup_restore.md](../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md) — back up and restore the dashboard's history.
+- [RUNBOOK.md](../charts/group-sync-dashboard/docs/RUNBOOK.md) — a remote cluster's connection is broken: find out why, then Refresh and Rejoin; kept beside the chart's values.
 
 ```
 
 ```markdown
-- [TROUBLESHOOTING_auditor_groups.md](TROUBLESHOOTING_auditor_groups.md) — auditor groups, `createLocal` and LDAP GroupSync collisions.
-- [RUNBOOK_backup_restore.md](RUNBOOK_backup_restore.md) — back up and restore the dashboard's history.
+- [TROUBLESHOOTING_auditor_groups.md](../charts/group-sync-dashboard/docs/TROUBLESHOOTING_auditor_groups.md) — auditor groups, `createLocal` and LDAP GroupSync collisions.
+- [RUNBOOK_backup_restore.md](../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md) — back up and restore the dashboard's history.
 - [BLUE_GREEN.md](BLUE_GREEN.md) — blue-green releases with Argo Rollouts: turn it on and off, promote, abort, undo.
-- [RUNBOOK.md](../charts/group-sync-dashboard/RUNBOOK.md) — a remote cluster's connection is broken: find out why, then Refresh and Rejoin; kept beside the chart's values.
+- [RUNBOOK.md](../charts/group-sync-dashboard/docs/RUNBOOK.md) — a remote cluster's connection is broken: find out why, then Refresh and Rejoin; kept beside the chart's values.
 
 ```
 

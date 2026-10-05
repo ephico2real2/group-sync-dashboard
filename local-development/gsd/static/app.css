@@ -1068,7 +1068,7 @@ header.top { border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--bo
   text-decoration: underline; cursor: pointer; }
 td.num.warn { color: var(--warn); font-weight: 600; }
 
-/* ---- Export (docs/DESIGN_export.md) ---------------------------------------------------
+/* ---- Export (docs/design/DESIGN_export.md) ---------------------------------------------------
    Two real buttons in the filter bar and a note that states what the file will hold. The note
    wears the truncation edge whenever the page is a cut of a larger set, so "partial" is read
    before the download, not discovered in the spreadsheet. Tokens only: the contrast tables in
@@ -1085,7 +1085,7 @@ td.num.warn { color: var(--warn); font-weight: 600; }
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 
-/* ---- Idle timeout (docs/DESIGN_session_and_signout.md) --------------------------------
+/* ---- Idle timeout (docs/design/DESIGN_session_and_signout.md) --------------------------------
    A dialog over a page-toned wash. Tokens only. Under forced-colors the wash is stripped by the
    platform, so the dialog keeps a real border in the system text colour — the one channel that
    survives there. */

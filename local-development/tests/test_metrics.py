@@ -281,7 +281,7 @@ class TestSqliteMetrics:
         assert not (referenced - declared), f"alerts reference undeclared metrics: {referenced - declared}"
 
     def test_every_alert_kind_a_rule_references_is_one_the_collector_can_emit(self):
-        """The dangling_binding lesson, closed (docs/DESIGN_metrics_refresh.md §5.2).
+        """The dangling_binding lesson, closed (docs/design/DESIGN_metrics_refresh.md §5.2).
 
         The declaration test above holds rules to declared FAMILIES — and still missed the
         gap where gsd_alerts_total was declared while kind="dangling_binding" was a label
@@ -327,7 +327,7 @@ class TestSqliteMetrics:
         assert referenced <= set(kinds), f"rules reference unemittable kinds: {referenced - set(kinds)}"
 
 
-# ── docs/DESIGN_metrics_refresh.md, applied test-first ─────────────────────────────────────
+# ── docs/design/DESIGN_metrics_refresh.md, applied test-first ─────────────────────────────────────
 # Every class below was run against the collector AS IT WAS and failed, before the change it
 # tests existed — the fail-before/pass-after discipline the parity gap above showed we need.
 

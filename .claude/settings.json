@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r \".tool_input.command // \\\"\\\"\" | grep -qE \"git( -c [^ ]+)* commit\" && printf \"%s\" \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"A commit just landed. Per the /changelog skill: once this commit has passed its tests and review, append it to the current session changelog under docs/session-changelogs/ with the measurement behind each line; do not log it before it is validated.\\\"}}\" || true",
+            "command": "jq -r \".tool_input.command // \\\"\\\"\" | grep -qE \"git( -c [^ ]+)* commit\" && printf \"%s\" \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"A commit just landed. Per the /changelog skill: once this commit has passed its tests and review, append it to the current session changelog under docs/history/session-changelogs/ with the measurement behind each line; do not log it before it is validated.\\\"}}\" || true",
             "timeout": 10
           }
         ]

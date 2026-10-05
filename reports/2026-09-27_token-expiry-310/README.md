@@ -21,4 +21,4 @@ This write-up made no lab changes and did not touch `shared-qa`'s state.
 | [Authentication warning](auth-failed.txt) | The complete quoted warning under “Finding 2 — the 401 cannot distinguish expiry from revocation”. The comment does not attach a timestamp or separate run attribution to this warning. The comment wraps the warning onto four lines; the dashboard logs it as one line. |
 | [Findings](findings.txt) | Verbatim excerpts: the introductory setup and poll cadence, Finding 1's explanation and consequence, Finding 2's interpretation, and Finding 3 from “Measured:” onwards. Blank lines separate excerpts. These are the observer's findings, not additional log lines. |
 
-The write-up is [Case G](../../docs/VALIDATION_satokenlookup.md#5e-case-g--a-retrieved-token-expiring).
+The write-up is [Case G](../../docs/research/VALIDATION_satokenlookup.md#5e-case-g--a-retrieved-token-expiring).

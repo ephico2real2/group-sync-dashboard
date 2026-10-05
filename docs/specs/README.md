@@ -215,7 +215,7 @@ implementation order, never by any single body:
 5. **Shared constants.** B2 extends `RETENTION_TABLES`; B4 extends the alert-kind vocabulary and
    the self-tier detail list; D1 adds a login outcome. Each old/new text in a body is re-derived
    from main at implementation time, and a difference is recorded as a deviation.
-6. **Found by the adversarial review of PR #69** (`docs/REVIEW_feature_specs.md`): A3 lands before
+6. **Found by the adversarial review of PR #69** (`docs/reviews/REVIEW_feature_specs.md`): A3 lands before
    A2, so the release-tooling docs describe signing and SBOMs only when A2 adds them; B1's chart
    README old text counts eleven alerts, which B4 makes twelve; and B2's retention is held while
    backups are disabled, so the default window never deletes what has no copy. Each is in the

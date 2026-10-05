@@ -1,7 +1,7 @@
 """Which grants a refresh cycle DISCOVERED, and which it discovered were resolved.
 
 Pure decisions; the poller publishes them. Design and invariants:
-docs/unmanaged-audit-design.md. Everything here is free of I/O so every invariant is a
+docs/design/unmanaged-audit-design.md. Everything here is free of I/O so every invariant is a
 plain unit test. The name `StampPlan` and the `stamp`/`unstamp` fields are the residue of a
 removed write path that labelled these findings — they now mean "found" and "no longer
 found", and are kept because renaming them would touch every test for no behaviour change.

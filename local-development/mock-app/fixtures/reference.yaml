@@ -94,7 +94,7 @@ identities:
 namespaces:
   entries:
     # Two selector dimensions — company.net/mnemonic AND company.net/app-environment — mirroring the
-    # real crc-local convention (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §6), so the
+    # real crc-local convention (docs/design/DESIGN_reporting_selectors_snapshots_and_windows.md §6), so the
     # multi-dimension selector (AND across dimensions, OR within one) is exercisable against the mock.
     # `team` is kept on the first two so the single-label tests still hold.
     - {name: acme-app, phase: Active, creationTimestamp: "2026-01-02T00:00:00Z",

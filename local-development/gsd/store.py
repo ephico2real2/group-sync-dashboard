@@ -147,7 +147,7 @@ CREATE INDEX IF NOT EXISTS group_member_by_user
 -- group_member it would also outlive its truth: that table is diff-and-append so first_seen_at
 -- survives, meaning a name removed upstream would never be cleared.
 --
--- Since the Users tab was re-sourced (docs/DESIGN_users_tab_logins.md) this holds EVERY User
+-- Since the Users tab was re-sourced (docs/design/DESIGN_users_tab_logins.md) this holds EVERY User
 -- object, not only the ones with a name: the row IS the fact that the person has logged in, because
 -- OpenShift creates the object at first login and never before. full_name is therefore nullable —
 -- a User whose provider supplies no name is still a user — and created_at is the first login for a
@@ -728,7 +728,7 @@ def _seed_observation_markers(conn: sqlite3.Connection) -> None:
 # Migrations are ONE-WAY: nothing undoes one, and once one has run an image older than it refuses the database
 # (#305). The way back is the copy taken before it ran, pre-upgrade/pre-upgrade-<stamp>-schema-<from>-to-<to>-<pod>.db
 # beside the database (_pre_upgrade_copy, #301), restored under the older image with local-development/restore-db.sh
-# in recovery mode (#302, #303), or by hand with docs/RUNBOOK_backup_restore.md section 4.
+# in recovery mode (#302, #303), or by hand with charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4.
 _MIGRATIONS: list[tuple[int, str, list[str]]] = [
     (
         1,
@@ -986,7 +986,7 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "reporting: bounded Namespace metadata (labels) the namespace-access report selects on",
         [
             # Only the configured label keys, replaced whole each cycle alongside cluster_namespace
-            # (docs/DESIGN_reporting_auditors_and_ns_selector.md §3.4). A child table, so adding a key
+            # (docs/design/DESIGN_reporting_auditors_and_ns_selector.md §3.4). A child table, so adding a key
             # is a values change with no further migration. ON DELETE CASCADE keeps it consistent if a
             # namespace row is removed; replace_namespaces also clears it explicitly in the same write.
             """CREATE TABLE IF NOT EXISTS cluster_namespace_label (
@@ -1262,7 +1262,7 @@ def _pre_upgrade_copy(conn: sqlite3.Connection, db_path: str, version: int) -> N
         return StorePreUpgradeCopyFailed(
             f"{move}: the pre-upgrade copy of {db_path} could not be written to {directory}, so the database was "
             f"not migrated: {reason}. Free space on the volume or make the directory writable, then restart; or "
-            f"deploy the image that understands schema {version} (docs/RUNBOOK_backup_restore.md §6)")
+            f"deploy the image that understands schema {version} (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §6)")
 
     try:
         directory.mkdir(parents=True, exist_ok=True)
@@ -1366,7 +1366,7 @@ def _harden(conn: sqlite3.Connection) -> None:
     Guarded because sqlite3 may be compiled without the call, in which case the capability
     already does not exist and there is nothing to disable.
 
-    See docs/image-vulnerability-scan.md for the full scan and reachability analysis.
+    See docs/guides/image-vulnerability-scan.md for the full scan and reachability analysis.
     """
     try:
         conn.enable_load_extension(False)
@@ -1437,7 +1437,7 @@ class Store:
             self._conn.close()
             raise StoreSchemaTooNew(
                 f"database schema {version} is newer than this dashboard understands ({KNOWN_SCHEMA_VERSION}); "
-                f"restore a backup at or below schema {KNOWN_SCHEMA_VERSION} (docs/RUNBOOK_backup_restore.md §4; after an upgrade, the pre-upgrade copy in §6), "
+                f"restore a backup at or below schema {KNOWN_SCHEMA_VERSION} (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4; after an upgrade, the pre-upgrade copy in §6), "
                 f"or deploy the image that understands {version}")
         # Older and not fresh: this open is about to migrate, so the copy comes first, or nothing does (#301).
         if version < KNOWN_SCHEMA_VERSION and not fresh:
@@ -1850,7 +1850,7 @@ class Store:
 
         Self tier (`user_name` given): only the namespaces one of the viewer's own `groups` or a
         binding naming the viewer reaches, and the counts are over those paths — "grants
-        affecting them" (docs/ACCESS_CONTROL.md), never other people's. `every` is the caller
+        affecting them" (docs/guides/ACCESS_CONTROL.md), never other people's. `every` is the caller
         saying one of those own paths is cluster-wide: it reaches every namespace, exactly as
         `namespace_reach` answers for the detail, so every row stays (its columns still count what
         is bound IN it) and the envelope names the cluster-wide path as the reason (review of
@@ -2494,14 +2494,14 @@ class Store:
         """Every person who has logged in to the cluster — one row per User object. BOUNDED.
 
         The base table is ocp_user, not group_member: a row IS the fact of a login, because OpenShift
-        creates the User object at first login and never before (docs/DESIGN_users_tab_logins.md).
+        creates the User object at first login and never before (docs/design/DESIGN_users_tab_logins.md).
         Group membership rides along as an attribute — group_count, which may be 0 for someone who
         logged in and holds no synced access, and first_seen_at, the moment the dashboard first saw
         them in any group. A synced member with no User object is not a row here; see
         synced_members_without_user, which the tab reports as one line.
 
         `limit + 1` is fetched deliberately: the caller compares the length against the limit to
-        know it truncated. `offset` pages, per docs/api-contract.md R3 — a cluster's User count is
+        know it truncated. `offset` pages, per docs/guides/api-contract.md R3 — a cluster's User count is
         every person who has ever logged in, so the list grows with the organisation.
 
         `user_name` is the privacy scope — the user_activity() contract. The predicate is on the
@@ -2637,7 +2637,7 @@ class Store:
             # The history stream stays the Group subjects' (binding:Group). User subjects are
             # recorded by replace_user_bindings from the same bindings under binding:User, and a
             # second recording here would double every one of them; ServiceAccount subjects have
-            # no stream (docs/DESIGN_binding_events.md bounds subject_kind at two), a decision
+            # no stream (docs/design/DESIGN_binding_events.md bounds subject_kind at two), a decision
             # SPEC_U1 states rather than widens here.
             changes = self._append_binding_events(
                 conn, cluster_id, "Group", "group_name",
@@ -2911,7 +2911,7 @@ class Store:
     # member count is the Group object's own, from group_state, already joined above. The
     # logged-in count is new: of the group's members (group_member, the same poll that wrote
     # group_state), how many have a User object WITH an identity — the 0.9.0 definition of a
-    # login (docs/DESIGN_users_tab_logins.md); a hand-created account counts as a member and
+    # login (docs/design/DESIGN_users_tab_logins.md); a hand-created account counts as a member and
     # not as a login. Pre-grouped, like the joins in users(), so it is 1:1 with the binding row
     # and cannot multiply it. Opt-in because all_bindings has three callers that want none of
     # this and are hot: the metrics scrape, the poller's audit planning, and /api/clusters.
@@ -3113,7 +3113,7 @@ class Store:
     # Every SQL shape below was run against a scratch WAL database with the real captured log fed
     # through gsd/loginlog.py before being written here. Two of them encode decisions that are easy
     # to undo by accident: the watermark upsert refuses to rewind, and the status upsert
-    # deliberately does NOT touch started_at — docs/DESIGN_login_capture.md explains why the
+    # deliberately does NOT touch started_at — docs/design/DESIGN_login_capture.md explains why the
     # watermark and the status are two different things, which is why the second looks redundant
     # and is not.
 
@@ -3814,7 +3814,7 @@ class Store:
     ) -> int:
         """How many there are in total, so a limited list can say what it truncated.
 
-        Same predicate as the rows above, from the same helper. docs/api-contract.md requires any
+        Same predicate as the rows above, from the same helper. docs/guides/api-contract.md requires any
         handler taking `limit` to report `total` or `truncated`, and a list that silently stops at 50
         reads as "there are 50".
         """

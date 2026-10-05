@@ -1,6 +1,6 @@
 """poll_once and the User read: what each outcome of the list call does to the store.
 
-The Users tab is sourced from this read (docs/DESIGN_users_tab_logins.md), so the poller's handling
+The Users tab is sourced from this read (docs/design/DESIGN_users_tab_logins.md), so the poller's handling
 of it is load-bearing in a way the display-name feature never was. Three outcomes, three different
 truths the store must end up telling:
 

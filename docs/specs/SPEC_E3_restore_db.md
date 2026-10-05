@@ -544,7 +544,7 @@ not refuse it; both are for this read-only measurement only), `list` and then `c
 The wrapper against the lab as it is (`bash local-development/restore-db.sh --list`, from the implemented copy):
 
     refused: pod group-sync-dashboard-7b9485f499-jspfl is not in recovery mode: its dashboard container has no GSD_RECOVERY_MODE=true, so the dashboard may be writing the database.
-      Set recovery.enabled: true and recovery.ttl: 2h in this release's values file and roll it out through the release's deployment pipeline (docs/RUNBOOK_backup_restore.md, section 4). Not with oc set env: recovery mode is the chart's recovery.enabled, and a hand edit of the Deployment is not it.
+      Set recovery.enabled: true and recovery.ttl: 2h in this release's values file and roll it out through the release's deployment pipeline (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 4). Not with oc set env: recovery mode is the chart's recovery.enabled, and a hand edit of the Deployment is not it.
     exit 2
 
 It issued `oc get pods` and no exec.
@@ -1074,7 +1074,7 @@ captures as PNG, and pinned to the merge sha on the issue.
 | `local-development/restore-db.py` (new) | 792 | 0 |
 | `local-development/restore-db.sh` (new) | 104 | 0 |
 | `local-development/gsd/store.py` | 4 | 0 |
-| `docs/RUNBOOK_backup_restore.md` | 57 | 19 |
+| `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` | 57 | 19 |
 | `local-development/README.md` | 1 | 0 |
 | `docs/CHANGELOG.md` | 19 | 0 |
 | `local-development/tests/test_restore_db.py` (new) | 809 | 0 |
@@ -1126,7 +1126,7 @@ not ready for a restore (not in recovery mode, uvicorn running, another operatio
 does not match, integrity_check, a copy or a live set other than the ones the check showed). Nothing is written before every
 check has passed.
 
-docs/specs/SPEC_E3_restore_db.md is the design; docs/RUNBOOK_backup_restore.md, section 4, the manual fallback.
+docs/specs/SPEC_E3_restore_db.md is the design; charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 4, the manual fallback.
 """
 
 from __future__ import annotations
@@ -1226,7 +1226,7 @@ def stamp_epoch(stamp: str) -> float:
 
 def _values_hint(change: str) -> str:
     return (f"  Set {change} in this release's values file and roll it out through the release's deployment "
-            "pipeline (docs/RUNBOOK_backup_restore.md, section 4). Not with oc set env: recovery mode is the chart's "
+            "pipeline (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 4). Not with oc set env: recovery mode is the chart's "
             "recovery.enabled, and a hand edit of the Deployment is not it.")
 
 
@@ -1504,7 +1504,7 @@ def aside_notes(lay: Layout, known: int) -> list[str]:
             notes.append(f"note: {path} was taken before an upgrade to schema {match.group(2)}, which this image does "
                          f"not understand. Before that upgrade is tried again, move it and its {SUM_SUFFIX} out of "
                          f"{lay.pre_upgrade} (to {lay.pre_restore}/, for example), or the new attempt finds it and takes "
-                         "no copy of what this image writes from now on (docs/RUNBOOK_backup_restore.md, section 6). "
+                         "no copy of what this image writes from now on (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 6). "
                          "This script moves nothing.")
     return notes
 
@@ -1548,7 +1548,7 @@ def checked(lay: Layout, rid: str, known: int) -> tuple[Row, str]:
     if row.differ():
         raise Refused(EXIT_COPY, f"{rid} names copies that differ: "
                                  + "; ".join(f"{p} (sha256 {row.digest(p)})" for _, p in row.entries)
-                                 + ". Decide which one is right and restore it by hand (docs/RUNBOOK_backup_restore.md, "
+                                 + ". Decide which one is right and restore it by hand (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, "
                                  "section 4)")
     if row.schema is None:
         raise Refused(EXIT_COPY, f"{row.path} is not a database SQLite can open")
@@ -1756,7 +1756,7 @@ def fold(lay: Layout) -> list[str]:
                 f"SQLite did not fold {' and '.join(held)} into {lay.db} when it closed it: another process has the "
                 "database open (an oc exec session), the file cannot be written, or it is damaged so that SQLite cannot "
                 "write the -wal back into it. Nothing beside it was removed. If nothing holds it and it can be written, "
-                "it is damaged: restore over it by hand (docs/RUNBOOK_backup_restore.md, section 4a)")
+                "it is damaged: restore over it by hand (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 4a)")
     removed = []
     for suffix in SIDE_FILES:
         side = Path(f"{lay.db}{suffix}")
@@ -1835,7 +1835,7 @@ def cmd_restore(lay: Layout, rid: str, known: int, group: int, confirmed: tuple 
     say("restored. Set recovery.enabled: false in this release's values file and roll it out through the release's "
         "deployment pipeline: the app starts on the restored file.")
     if kept:
-        say(f"way back     {kept}/ is the database as it was; docs/RUNBOOK_backup_restore.md section 4, \"Undo a "
+        say(f"way back     {kept}/ is the database as it was; charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4, \"Undo a "
             "restore\", puts it back (fold it first: its rows may be only in its -wal)")
     for line in aside_notes(lay, known):
         say(line)
@@ -1914,7 +1914,7 @@ Finds the release's one pod, refuses outside recovery mode or with too little TT
 # streams restore-db.py into that pod's dashboard container (oc exec -i ... python3.14 /dev/stdin): the work
 # runs under the image the pod runs, the older one a rollback targets included, and nothing has to be shipped
 # in it. --from-version shows what the restore discards and asks before it writes (--yes does not ask).
-# docs/RUNBOOK_backup_restore.md, section 4, is the manual fallback; docs/specs/SPEC_E3_restore_db.md the design.
+# charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 4, is the manual fallback; docs/specs/SPEC_E3_restore_db.md the design.
 #
 # Exit status: 0 done; 1 failed (the output says what changed); 2 refused, the pod is not ready for a
 # restore; 3 refused, the copy; 4 not confirmed; 64 usage.
@@ -2026,15 +2026,15 @@ New text:
 # Migrations are ONE-WAY: nothing undoes one, and once one has run an image older than it refuses the database
 # (#305). The way back is the copy taken before it ran, pre-upgrade/pre-upgrade-<stamp>-schema-<from>-to-<to>-<pod>.db
 # beside the database (_pre_upgrade_copy, #301), restored under the older image with local-development/restore-db.sh
-# in recovery mode (#302, #303), or by hand with docs/RUNBOOK_backup_restore.md section 4.
+# in recovery mode (#302, #303), or by hand with charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4.
 _MIGRATIONS: list[tuple[int, str, list[str]]] = [
 ```
 
-### Block 4 — docs/RUNBOOK_backup_restore.md: §4 points at the script, and says how to undo a restore
+### Block 4 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4 points at the script, and says how to undo a restore
 
 Two paragraphs under the heading; the manual commands below them stay as the fallback (§3.11).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -2072,11 +2072,11 @@ fold can lack every row its `-wal` held.
 The dashboard is the only writer and must be **stopped** first: two processes on one SQLite
 ```
 
-### Block 5 — docs/RUNBOOK_backup_restore.md: §4a keeps the live set, not `gsd.db` alone, and removes all of it
+### Block 5 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4a keeps the live set, not `gsd.db` alone, and removes all of it
 
 The fallback's keep step, corrected (T302-12's finding; §2.1), and its removal of every side file it keeps: a hot `-journal` left beside the copy is rolled back into it (measured, §2.3). The copy is written under a temporary name before anything is removed and renamed after: removed first and written after, a write that failed left `gsd.db` without its `-wal`'s rows, and "Undo a restore" runs these commands (note 20).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -2113,11 +2113,11 @@ python3.14 -c "import os; os.replace(\"/data/gsd.db.restore.tmp\", \"/data/gsd.d
 ls -l /data
 ```
 
-### Block 6 — docs/RUNBOOK_backup_restore.md: §4a says why the set is kept, and that all of it goes
+### Block 6 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4a says why the set is kept, and that all of it goes
 
 One sentence before the side-file paragraph, which names the `-journal` too.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -2141,11 +2141,11 @@ replay a foreign WAL, or roll a foreign hot journal back, into the restored data
 OpenShift runs under: the next pod may get a different UID and reads through the root group
 ```
 
-### Block 7 — docs/RUNBOOK_backup_restore.md: §4b keeps the live set, writes the copy beside gsd.db, then removes and renames
+### Block 7 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4b keeps the live set, writes the copy beside gsd.db, then removes and renames
 
 The off-volume fallback kept nothing before `cat … > /data/gsd.db` and left a `-journal` beside the copy (the reviews of 2026-10-01; §3.11). The same keep as §4a, inside the pod's existing Python, and §4a's order: the copy written under a temporary name before the side files go, then renamed (note 20).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -2191,11 +2191,11 @@ python3.14 -c "import os; os.replace(\"/data/gsd.db.restore.tmp\", \"/data/gsd.d
 '
 ```
 
-### Block 8 — docs/RUNBOOK_backup_restore.md: the S3 path keeps, writes under the temporary name, then removes and renames
+### Block 8 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: the S3 path keeps, writes under the temporary name, then removes and renames
 
 A separate block because a bare fence line sits between §4b's command and this note. The same order as §4a and §4b.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -2231,15 +2231,15 @@ One row.
 Old text:
 
 ```text
-| `prepare-release.py` | the four version fields, the Chart.yaml history line, the changelog heading, the branch and the commit, from `--app`/`--chart` and a reason; runs the version test first (`../docs/RELEASING.md`) |
+| `prepare-release.py` | the four version fields, the Chart.yaml history line, the changelog heading, the branch and the commit, from `--app`/`--chart` and a reason; runs the version test first (`../docs/guides/RELEASING.md`) |
 | `clusters.example.yaml` | template for `clusters.yaml`, the local poller config |
 ```
 
 New text:
 
 ```text
-| `prepare-release.py` | the four version fields, the Chart.yaml history line, the changelog heading, the branch and the commit, from `--app`/`--chart` and a reason; runs the version test first (`../docs/RELEASING.md`) |
-| `restore-db.sh` | list the database copies the recovery pod can restore, and restore one (#302); it streams `restore-db.py` into the pod. `../docs/RUNBOOK_backup_restore.md` section 4 |
+| `prepare-release.py` | the four version fields, the Chart.yaml history line, the changelog heading, the branch and the commit, from `--app`/`--chart` and a reason; runs the version test first (`../docs/guides/RELEASING.md`) |
+| `restore-db.sh` | list the database copies the recovery pod can restore, and restore one (#302); it streams `restore-db.py` into the pod. `../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` section 4 |
 | `clusters.example.yaml` | template for `clusters.yaml`, the local poller config |
 ```
 
@@ -3019,7 +3019,7 @@ def test_the_runbooks_undo_folds_the_kept_set_into_one_whole_file(pod: Pod) -> N
     it first: run as the runbook prints it, the kept gsd.db alone holds all 540."""
     assert pod.run("restore", f"{KNOWN - 1}-{STAMPS[2]}").returncode == 0
     (kept,) = [d for d in pod.pre_restore.iterdir() if d.is_dir()]
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     match = re.search(r"python3\.14 -c '([^']+)' /data/pre-restore/<stamp>/gsd\.db", runbook)
     assert match, "runbook §4 has no command that folds the kept set"
     subprocess.run([sys.executable, "-c", match.group(1), str(kept / "gsd.db")], check=True)
@@ -3040,7 +3040,7 @@ def test_the_runbooks_undo_leaves_the_old_database_whole_when_gsd_db_cannot_be_w
     stopped = pod.run("restore", f"{KNOWN - 1}-{STAMPS[2]}")
     assert stopped.returncode == 1 and "the restore failed at the step fold" in stopped.stderr, stopped.stderr
     (kept,) = [d for d in pod.pre_restore.iterdir() if d.is_dir()]
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     fold = re.search(r"python3\.14 -c '([^']+)' /data/pre-restore/<stamp>/gsd\.db", runbook).group(1)
     subprocess.run([sys.executable, "-c", fold, str(kept / "gsd.db")], check=True)
     lines = runbook.splitlines()
@@ -3075,7 +3075,7 @@ def test_no_manual_path_writes_the_copy_onto_gsd_db_before_its_journals_go() -> 
     """Runbook §4a, §4b and the S3 note write the copy beside gsd.db under a temporary name and rename it after the
     old side files are removed, so a write that fails (a full volume, a gsd.db the pod cannot write) stops before
     anything is removed (confirmation pass of the spec, F1: removed first and written after, gsd.db read 40 of 540)."""
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     section = runbook.split("\n## 4.", 1)[1].split("\n## 5.", 1)[0]
     assert not re.search(r"> /data/gsd\.db['\s]", section), "a manual path writes the copy onto /data/gsd.db itself"
     assert section.count("> /data/gsd.db.restore.tmp") == 3            # §4a, §4b and the S3 note
@@ -3084,7 +3084,7 @@ def test_no_manual_path_writes_the_copy_onto_gsd_db_before_its_journals_go() -> 
 def test_the_runbook_removes_every_journal_it_keeps() -> None:
     """Runbook §4's manual paths keep the live set, -journal included, and must remove all three side files before
     a copy takes the name: a hot -journal left beside it is rolled back into the copy (howtocorrupt §1.4)."""
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     section = runbook.split("\n## 4.", 1)[1].split("\n## 5.", 1)[0]
     removes = re.findall(r"rm -f /data/gsd\.db-wal\s+/data/gsd\.db-shm[^\n`]*", section)
     assert len(removes) == 3 and all("/data/gsd.db-journal" in line for line in removes), removes
@@ -3095,7 +3095,7 @@ def test_the_s3_note_counts_the_lines_it_names() -> None:
     """Runbook §4b's S3 note names three lines to finish with (the ownership line, the rm -f line, the rename):
     the copy is already streamed in under the temporary name, so §4b's `cat /offsite/… > …restore.tmp` line,
     the fourth from the end, must not be run again. The count has to match what it names."""
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     note = runbook.split("For an S3 copy:", 1)[1].split("\n\n", 1)[0]
     assert "finish with the last three lines above" in note, note
     assert "last four lines" not in note
@@ -3451,7 +3451,7 @@ def test_check_cannot_open_the_live_database_during_a_restore(tmp_path: Path) ->
 
 
 def test_runbook_explains_how_to_recover_a_kept_live_set() -> None:
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     section = runbook.split("**Undo a restore.**", 1)[1].split("\n\n", 1)[0]
     assert all(word in section for word in ("gsd.db", "-wal", "-shm", "-journal", "integrity_check", ".tmp"))
     assert runbook.count("rm -f /data/gsd.db-wal /data/gsd.db-shm /data/gsd.db-journal") >= 2

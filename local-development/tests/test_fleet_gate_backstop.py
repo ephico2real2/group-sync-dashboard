@@ -627,7 +627,7 @@ def test_proof_heading_distinguishes_regressions_from_unchanged_controls():
 
 
 def test_runbook_describes_reservation_failures_and_present_lease_saves():
-    runbook = (ROOT / 'charts/group-sync-dashboard/RUNBOOK.md').read_text()
+    runbook = (ROOT / 'charts/group-sync-dashboard/docs/RUNBOOK.md').read_text()
     text = ' '.join(runbook.split('## 7.', 1)[1].split())
     assert "a path already gated need not attempt a reservation or publish another finding" in text
     assert "Saving a present Lease also parses the existing file" in text

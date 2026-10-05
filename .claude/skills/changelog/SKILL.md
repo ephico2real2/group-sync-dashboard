@@ -1,6 +1,6 @@
 ---
 name: changelog
-description: The session change log — one file per working session under docs/session-changelogs/, appended after each commit that has passed its tests and review, in the measured before/after format the operator approved on 2026-09-14. Invoke at session start to open the day's file, after every validated commit to append, and at session end to close with the numbers table.
+description: The session change log — one file per working session under docs/history/session-changelogs/, appended after each commit that has passed its tests and review, in the measured before/after format the operator approved on 2026-09-14. Invoke at session start to open the day's file, after every validated commit to append, and at session end to close with the numbers table.
 ---
 
 # Session change log — what happened, with the measurement behind each line
@@ -13,9 +13,9 @@ claim was measured. The two never merge.
 
 ## Where
 
-`docs/session-changelogs/YYYY-MM-DD_<slug>.md` — one file per session, named by the date the session
+`docs/history/session-changelogs/YYYY-MM-DD_<slug>.md` — one file per session, named by the date the session
 started and a two- or three-word slug of its subject (`2026-09-11_c3-d2-release.md`). A session that
-spans midnight keeps its start date. `docs/session-changelogs/README.md` lists the convention; do not edit it per
+spans midnight keeps its start date. `docs/history/session-changelogs/README.md` lists the convention; do not edit it per
 session.
 
 ## When — three moments, never before validation

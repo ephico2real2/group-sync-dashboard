@@ -148,7 +148,7 @@ def _seed(db_path: str) -> None:
     )
 
     # The User objects — the people who have LOGGED IN, which is what the Users tab lists
-    # (docs/DESIGN_users_tab_logins.md). The real shape, measured on the reference cluster:
+    # (docs/design/DESIGN_users_tab_logins.md). The real shape, measured on the reference cluster:
     #   alice       logged in, named, in a synced group
     #   gatekeeper  logged in, provider supplied no name, in the gate group only
     #   kubeadmin   logged in, in NO synced group — the "logged in, no synced access" row
@@ -1934,7 +1934,7 @@ class TestNamespaces:
         dash.wait_for_timeout(300)
         assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
 
-    # -- the review of #167 (Grok, pass 1 — docs/REVIEW_namespaces.md) ------------------------------
+    # -- the review of #167 (Grok, pass 1 — docs/reviews/REVIEW_namespaces.md) ------------------------------
 
     def test_switching_cluster_abandons_the_namespace(self, dash):
         """The hole already closed for a group and a user: `ns` joined the position without joining the
@@ -2522,7 +2522,7 @@ def _open_cluster(page, opener):
 
 
 class TestOverviewReview:
-    """The review of #172 (docs/REVIEW_overview_relayout.md): one test per accepted finding, each shown
+    """The review of #172 (docs/reviews/REVIEW_overview_relayout.md): one test per accepted finding, each shown
     failing on 759cd7d. Grok read the source; OB1 drove the app at 2/6/14/40 clusters and supplied the
     fixtures and most of these tests; Codex read the contract."""
 
@@ -2986,7 +2986,7 @@ class TestLookup:
         assert dash.locator("#main tr[data-user='alice']").count() == 1
         assert dash.evaluate("() => [view.page, view.group, document.getElementById('f-lookup-search').value]") == ["lookup", None, "alice"]
 
-    # -- the review of #174 (Grok, Codex, OB1 — docs/REVIEW_lookup.md): OB1's thirteen, verbatim, each failing on
+    # -- the review of #174 (Grok, Codex, OB1 — docs/reviews/REVIEW_lookup.md): OB1's thirteen, verbatim, each failing on
     #    76ebaff and on the merged base d489bcc; the fixes are OB1's recipe plus Grok's and Codex's converging findings
 
     # ── F1: IME and whitespace ──
@@ -5006,7 +5006,7 @@ def _open_as(page, base, user):
     return page
 
 
-# ── #239: the declared tabs (docs/ACCESS_CONTROL.md §3, SPEC_G1) ────────────────────────────────────
+# ── #239: the declared tabs (docs/guides/ACCESS_CONTROL.md §3, SPEC_G1) ────────────────────────────────────
 # §3 says, per persona, which tabs the strip draws and which pages are a refusal card. This loads every page as
 # every persona and holds the page to it; tests/test_access_declaration.py holds §3 to the pages index.html can draw.
 
@@ -5151,7 +5151,7 @@ class TestHome:
         """The cluster is a position; switching re-scopes the answer without leaving Home. `prod-east` is
         not the host cluster and the fixture states its identity policy `none` — it does not treat the host's
         username as its own — so Home there is a refusal in its own words, never an API error and never a
-        page that quietly answers for a name nobody vouched for (docs/ACCESS_CONTROL.md §11)."""
+        page that quietly answers for a name nobody vouched for (docs/guides/ACCESS_CONTROL.md §11)."""
         p = _home(page, scoped_server)
         assert "crc-local" in p.locator(".home .answer h1").inner_text()
         p.select_option("#f-cluster", "prod-east")
@@ -6469,7 +6469,7 @@ class TestGroupCountCliffOnTheOverview:
 
 
 class TestExport:
-    """CSV/JSON export of the table on screen (docs/DESIGN_export.md).
+    """CSV/JSON export of the table on screen (docs/design/DESIGN_export.md).
 
     The file is built in the browser from `data`, so what these prove is the correspondence:
     the download holds exactly the rows the table shows, after the filter and sort, says when
@@ -6873,7 +6873,7 @@ def _open_idle(page, base):
 
 
 class TestIdleTimeout:
-    """The countdown dialog and what it enforces (docs/DESIGN_session_and_signout.md)."""
+    """The countdown dialog and what it enforces (docs/design/DESIGN_session_and_signout.md)."""
 
     def test_the_module_off_starts_no_model(self, browser, proxied_server):
         ctx = browser.new_context(extra_http_headers={"X-Forwarded-User": "alice"})

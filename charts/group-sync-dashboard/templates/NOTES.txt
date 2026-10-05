@@ -114,7 +114,7 @@ Restore the old everyone-sees-everything behaviour only as a deliberate choice:
 {{- if gt (len .Values.clusters) 1 }}
 
 Several clusters are configured. The reader was authenticated by this pod's OWN cluster; what
-they see about each of the others is that entry's own policy (docs/ACCESS_CONTROL.md §11):
+they see about each of the others is that entry's own policy (docs/guides/ACCESS_CONTROL.md §11):
 {{- /* The host is the entry declaring `dashboardController: true`, else the first ENABLED entry
        — the rule gsd.validateClusters and load_settings share; it is printed first (review of D2,
        both reviewers; the declared controller added by the review of #251, which measured this

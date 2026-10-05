@@ -156,7 +156,7 @@ def validate_selector_map(value: object, name: str) -> dict[str, list[str]]:
     """A `{label: [values]}` selection for the multi-dimension namespace selector (P2). STRUCTURE
     only — the check that each label is one of the deployment's configured selector labels needs the
     settings and stays in the report's build(). Values within a dimension are OR'd, dimensions are
-    AND'd (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3). An OMITTED dimension is
+    AND'd (docs/design/DESIGN_reporting_selectors_snapshots_and_windows.md §3). An OMITTED dimension is
     unconstrained; a PRESENT dimension with no values is a 422, so a blank multi-select cannot
     silently select nothing and fail every run. Values are stripped, blanks skipped, de-duplicated;
     the aggregate is bounded like the explicit-names path."""

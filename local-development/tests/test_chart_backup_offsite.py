@@ -486,7 +486,7 @@ class TestAlerts:
         volume, and the runbook must say how a refused pre-upgrade copy stops failing every run."""
         description = self._rules()["GroupSyncDashboardOffsiteBackupStale"]["annotations"]["description"]
         assert "pre-upgrade copy is refused" in description and "nothing newer is off it." not in description
-        runbook = (CHART.parents[1] / "docs" / "RUNBOOK_backup_restore.md").read_text().split("## 3.", 1)[0]
+        runbook = (CHART.parents[1] / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text().split("## 3.", 1)[0]
         assert "it is not the copy the store verified" in runbook and "/data/pre-restore/" in runbook
 
     def test_the_two_rules_watch_the_cronjob(self):

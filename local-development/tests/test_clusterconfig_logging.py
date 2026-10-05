@@ -910,7 +910,7 @@ class TestTheFlowsNameWhatTheCodeEmits:
     """
 
     import pathlib as _pathlib
-    DOC = _pathlib.Path(__file__).resolve().parents[2] / "docs/DESIGN_cluster_connection_flows.md"
+    DOC = _pathlib.Path(__file__).resolve().parents[2] / "docs/design/DESIGN_cluster_connection_flows.md"
 
     def _names(self) -> set[str]:
         import re

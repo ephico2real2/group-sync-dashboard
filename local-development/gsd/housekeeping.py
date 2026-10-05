@@ -6,7 +6,7 @@ it. This module holds what both pods share (the request shapes and the set diges
 the database copies on its data volume, in exactly three directories.
 
 THE GUARD. In each directory the newest copy is never deleted from the page: the newest scheduled backup (a
-restore needs a copy, docs/RUNBOOK_backup_restore.md §4), the newest pre-upgrade copy (the only way back across the
+restore needs a copy, charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4), the newest pre-upgrade copy (the only way back across the
 last schema upgrade, §6) and the newest pre-restore set (the way back from the last restore, §4 "Undo a restore").
 
 THE BINDING. A cleanup's confirm carries the digest of the set its preview showed. The set is computed again under
@@ -47,11 +47,11 @@ _STAMP = re.compile(r"(\d{8}T\d{6})(?:\.(\d{6}))?Z")
 #: Why the newest copy of each kind is kept, in the words the page and the 409 say.
 GUARDS = {
     "backup": "the newest scheduled backup is kept, so a restore always has a copy to restore "
-              "(docs/RUNBOOK_backup_restore.md §4)",
+              "(charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4)",
     "pre-upgrade": "the newest pre-upgrade copy is kept: it is the only way back to the image before the last "
-                   "schema upgrade (docs/RUNBOOK_backup_restore.md §6)",
+                   "schema upgrade (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §6)",
     "pre-restore": "the newest pre-restore set is kept: it is the way back from the last restore "
-                   "(docs/RUNBOOK_backup_restore.md §4, \"Undo a restore\")",
+                   "(charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4, \"Undo a restore\")",
 }
 #: A schedule's name as the chart and the report service accept it: a short DNS label.
 _SCHEDULE = r"[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?"

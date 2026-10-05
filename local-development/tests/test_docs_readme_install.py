@@ -21,7 +21,7 @@ def test_install_guide_minimum_cosign_version_matches_signer():
     workflow = (REPO / ".github/workflows/publish.yml").read_text()
     pin = re.search(r"^\s*cosign-release: (v(\d+)\.\d+\.\d+)\s*$", workflow, re.MULTILINE)
     assert pin, "No cosign-release pin found in publish.yml"
-    guide = (REPO / "docs/HELM_DOWNLOAD_AND_INSTALL.md").read_text()
+    guide = (REPO / "charts/group-sync-dashboard/docs/HELM_DOWNLOAD_AND_INSTALL.md").read_text()
     section = guide.split("## 7. Verify what you downloaded\n", 1)[1].split("\n## ", 1)[0]
     assert f"Minimum cosign version: **v{pin[2]}**." in section
     assert f"`cosign-release: {pin[1]}`" in section

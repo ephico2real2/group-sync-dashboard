@@ -1,5 +1,5 @@
 """P2 — the report service's selector-labels env parsing and the trigger's --params-json transport
-(docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3)."""
+(docs/design/DESIGN_reporting_selectors_snapshots_and_windows.md §3)."""
 from __future__ import annotations
 
 import pytest

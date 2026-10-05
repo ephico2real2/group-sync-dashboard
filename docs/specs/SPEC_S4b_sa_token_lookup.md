@@ -2774,7 +2774,7 @@ New text:
 | S4b | [`SPEC_S4b_sa_token_lookup.md`](SPEC_S4b_sa_token_lookup.md) — S4 step B: the ServiceAccount token lookup — read as the fleet account, write as the dashboard; the code of #284 | S — cluster configuration | — | app 0.31.0, chart 0.50.0 | [#284](https://github.com/ephico2real2/group-sync-dashboard/issues/284) | specified |
 ```
 
-**File:** `docs/CLUSTER_STANZA.md` — edit
+**File:** `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md` — edit
 
 Old text:
 
@@ -2788,7 +2788,7 @@ New text:
 | `saTokenLookup: true` | `remote-lookup` | **after the lookup** — the dashboard logs in as the fleet account, reads the poller SA's token on the target and writes `gsd-cluster-<name>`, which then polls (SPEC_S4b); needs `clusterConfig.secrets.writes.enabled` |
 ```
 
-**File:** `docs/CLUSTER_STANZA.md` — edit
+**File:** `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md` — edit
 
 Old text:
 
@@ -2802,7 +2802,7 @@ New text:
 | 6 | remote + `saTokenLookup` | retrieved on the next discovery cycle, then polled through its written Secret; renders only with `clusterConfig.secrets.writes.enabled` |
 ```
 
-**File:** `docs/CLUSTER_STANZA.md` — edit
+**File:** `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md` — edit
 
 Old text:
 
@@ -2820,7 +2820,7 @@ New text:
 | `saTokenLookup` with `visibility: remote-sar` | **refused** | starts; the write would be refused `visibility-invalid` |
 ```
 
-**File:** `docs/DESIGN_cluster_connection_flows.md` — edit
+**File:** `docs/design/DESIGN_cluster_connection_flows.md` — edit
 
 Old text:
 

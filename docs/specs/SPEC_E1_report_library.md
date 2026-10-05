@@ -29,7 +29,7 @@ with the reason, under "Orchestrator's notes".
   report and sit under its first section only; F3 the positioned run's fetch was the one library request outside `guard403`,
   so a 403 painted the API-error panel instead of the refusal card; F4 the manual vocabulary above. Rejected nothing.
 
-- Review of #233 (2026-09-20, Grok, Codex — `docs/REVIEW_report_library.md`): the generate link's id is minted from
+- Review of #233 (2026-09-20, Grok, Codex — `docs/reviews/REVIEW_report_library.md`): the generate link's id is minted from
   the SECTION (`lib-gen-sec-<schedule>`) when the section belongs to a schedule, from the report when it does not —
   a report with two schedules repeated one id. The positioned run is fetched by id (`libraryPositionRun()` →
   `data.libraryRun`, in the fingerprint) and joined to the listing, so a run past the API's first page opens
@@ -343,4 +343,4 @@ Integration blocks (each applied with an exact-match check):
 
 `local-development/API.md` (the runs rows and a paragraph on the fields), `docs/CHANGELOG.md` (Unreleased),
 `docs/design/README.md` (the mock is **Implemented**), the walk `reports/2026-09-20_report-library/`
-with its pictures on #229, `docs/REVIEW_report_library.md` for the three seats.
+with its pictures on #229, `docs/reviews/REVIEW_report_library.md` for the three seats.

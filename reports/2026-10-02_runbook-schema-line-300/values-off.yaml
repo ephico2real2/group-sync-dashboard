@@ -11,7 +11,7 @@
 # is what once made a changed default appear not to work.
 
 # Bearer-token access to /api, for cluster-report.py and any external aggregator.
-# The caller still needs cluster-wide RBAC read; see docs/api-access.md.
+# The caller still needs cluster-wide RBAC read; see docs/guides/api-access.md.
 oauthProxy:
   apiTokenAccess:
     enabled: true
@@ -28,7 +28,7 @@ config:
 logLevel: DEBUG
 
 # Login capture uses the audit log at default OAuth verbosity.
-# Read-only nodes/proxy grant; see docs/LOGIN_CAPTURE_QUICKCHECK.md.
+# Read-only nodes/proxy grant; see docs/guides/LOGIN_CAPTURE_QUICKCHECK.md.
 loginCapture:
   enabled: true
   source: audit-log

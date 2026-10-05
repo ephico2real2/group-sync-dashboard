@@ -62,7 +62,7 @@ def test_configmap_is_accepted_and_is_the_documented_manifest():
     assert stanza == {"name": "ocp-east", "apiUrl": "https://api.ocp-east.example.com:6443",
                       "saTokenLookup": True, "enabled": True}
     # Parse the indented Markdown code blocks, then select the ConfigMap by its YAML kind.
-    lines = (REPO / "docs" / "CLUSTER_STANZA.md").read_text().splitlines(keepends=True)
+    lines = (REPO / "charts" / "group-sync-dashboard" / "docs" / "CLUSTER_STANZA.md").read_text().splitlines(keepends=True)
     blocks = [textwrap.dedent("".join(group)) for indented, group in
               itertools.groupby(lines, key=lambda line: line.startswith("    ")) if indented]
     documents = [yaml.safe_load(block) for block in blocks]

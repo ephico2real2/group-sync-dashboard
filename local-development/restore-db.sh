@@ -13,7 +13,7 @@
 # streams restore-db.py into that pod's dashboard container (oc exec -i ... python3.14 /dev/stdin): the work
 # runs under the image the pod runs, the older one a rollback targets included, and nothing has to be shipped
 # in it. --from-version shows what the restore discards and asks before it writes (--yes does not ask).
-# docs/RUNBOOK_backup_restore.md, section 4, is the manual fallback; docs/specs/SPEC_E3_restore_db.md the design.
+# charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 4, is the manual fallback; docs/specs/SPEC_E3_restore_db.md the design.
 #
 # Exit status: 0 done; 1 failed (the output says what changed); 2 refused, the pod is not ready for a
 # restore; 3 refused, the copy; 4 not confirmed; 64 usage.

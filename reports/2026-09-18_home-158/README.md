@@ -51,7 +51,7 @@ carries both personas with the same code the cluster is running.
       the page adds no motion. Contrast findings on shared tokens are routed to #184, which is where that
       fix belongs.
 - [x] **Adversarial review.** Grok 4.6 and Codex (GPT-5.6, xhigh): seven findings, all applied with
-      fail-before/pass-after tests. Record: `../../docs/REVIEW_home.md`.
+      fail-before/pass-after tests. Record: `../../docs/reviews/REVIEW_home.md`.
 - [x] **CRC verification as an administrator** — `01`, `02`. As a narrowed persona: the seeded pair `03`/`04`
       stands in, per the note above.
 

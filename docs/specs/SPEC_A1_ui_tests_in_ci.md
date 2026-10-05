@@ -50,7 +50,7 @@ Each feature is a module with one switch; the default is a judgment, and the rat
 | A2 SBOM | repository variable `SUPPLY_CHAIN_SBOM` (`publish.yml` `sbom` job) | **ON** | reads the pushed image with the same registry credential the publish job already holds; produces a workflow artifact; no identity, no publication change. |
 | A2 signing + provenance (image and chart) | repository variable `SUPPLY_CHAIN_SIGNING` (`publish.yml` `attest` job, `helm.yaml` chart attestation steps) | **ON** | keyless: GitHub OIDC (`id-token: write`) needs no secret. What it needs instead is stated in the workflow comment: egress to `fulcio.sigstore.dev`, `rekor.sigstore.dev`, `tuf-repo-cdn.sigstore.dev`, and a repository that is not a fork (forks are already skipped by `publish.yml#github.repository ==`). A self-hosted runner without that egress sets it to `false`. Signing changes nothing that is published — it adds referrers beside the image and records in GitHub's store. |
 | A2 interaction | modelled, not left to chance | — | `attest` `needs: [publish, sbom]` with `!cancelled()`; the SBOM is attached only when `needs.sbom.result == 'success'`, and a step says by name when it is not. SBOM off + signing on: image signed, provenance attested, no SBOM attestation. SBOM on + signing off: SBOM artifact only. Chart attestation runs only when chart-releaser will publish a NEW version (`helm.yaml` `steps.plan.outputs.new`), so a skipped version attests nothing and says so. |
-| A3 release script | invocation is the switch; side effects have their own: `--no-commit` (edit only), `--pr` (open the PR, off by default) | **ON** (exists; off = nobody ran it) | a script that edits a working tree and commits to a new branch has no cluster-wide side effect and never touches `main` — the `docs/RELEASING.md#Nothing else couples them` model is preserved. |
+| A3 release script | invocation is the switch; side effects have their own: `--no-commit` (edit only), `--pr` (open the PR, off by default) | **ON** (exists; off = nobody ran it) | a script that edits a working tree and commits to a new branch has no cluster-wide side effect and never touches `main` — the `docs/guides/RELEASING.md#Nothing else couples them` model is preserved. |
 
 No Helm value is added by any feature. A chart value read by nothing is exactly the debt `charts/group-sync-dashboard/README.md#redirectMode` records removing, and `local-development/tests/test_environments_readme.py#test_every_key_in_the_table_still_exists_in_the_chart` would fail a README row with no key behind it. Nothing in A1–A3 runs in a pod. So the chart README values table gains no row, and Chart.yaml is not bumped (no PR touches `charts/`), which keeps `ci.yml#Chart changes bump the chart version` green without a version move.
 
@@ -71,7 +71,7 @@ Repository-wide conventions relied on:
 
 `helm.yaml` today uses `helm/chart-releaser-action@v1.7.0` — a mutable tag, against the rule at `ci.yml#ACTION PINS`. A2 pins it and adds a test so it cannot regress.
 
-Tool pins: Syft `v1.51.1` (the version `docs/image-vulnerability-scan.md#Tools:` measured identifying Hummingbird; latest release on 2026-09-04), cosign `v3.1.3` (latest release; the installer's own default is v3.0.6), playwright `1.62.0` + pytest-playwright `0.8.0` (the pair in the local venv that runs the suite today; pytest-playwright 0.9.0 exists and is not yet exercised locally).
+Tool pins: Syft `v1.51.1` (the version `docs/guides/image-vulnerability-scan.md#Tools:` measured identifying Hummingbird; latest release on 2026-09-04), cosign `v3.1.3` (latest release; the installer's own default is v3.0.6), playwright `1.62.0` + pytest-playwright `0.8.0` (the pair in the local venv that runs the suite today; pytest-playwright 0.9.0 exists and is not yet exercised locally).
 
 Order of PRs: **A1 → A2 → A3.** A1 creates `## Unreleased`; A2 adds the pin test that A1's actions must already satisfy; A3 converts `## Unreleased` and is documented in RELEASING.md on top of A2's diagram.
 
@@ -368,7 +368,7 @@ off — for a fork or a runner that cannot download browsers — and leaves ever
 `Containerfile` builds on the Red Hat Hardened Images: `hi/python:3.14-builder` to resolve the wheel
 ```
 
-#### `docs/RELEASING.md` — edit
+#### `docs/guides/RELEASING.md` — edit
 
 Old:
 ```text

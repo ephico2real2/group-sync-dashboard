@@ -103,7 +103,7 @@ USER 0
 # Two sqlite advisories are in the same position (CVE-2024-0232, CVE-2025-70873): UBI9
 # ships only 3.34.1, so they cannot be patched out. sqlite IS used, so gsd/store.py
 # disables extension loading to cut the surface instead. See
-# docs/image-vulnerability-scan.md.
+# docs/guides/image-vulnerability-scan.md.
 #
 # The update still earns its place: every rebuild of THIS image picks up whatever HAS been
 # fixed since Red Hat last rebuilt the base, rather than waiting on their cadence.

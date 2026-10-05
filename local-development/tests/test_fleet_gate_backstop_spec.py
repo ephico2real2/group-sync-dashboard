@@ -150,9 +150,9 @@ def test_s4c_gets_a_note_and_its_body_stays_verbatim():
 
 def test_the_documents_it_changes_are_blocks():
     paths = {b["path"] for b in blocks()}
-    assert {"docs/specs/SPEC_S4c_credential_lifecycle.md", "charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md",
-            "charts/group-sync-dashboard/RUNBOOK.md", "docs/CHANGELOG.md"} <= paths, paths
-    runbook, = [b for b in blocks() if b["path"] == "charts/group-sync-dashboard/RUNBOOK.md"]
+    assert {"docs/specs/SPEC_S4c_credential_lifecycle.md", "charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md",
+            "charts/group-sync-dashboard/docs/RUNBOOK.md", "docs/CHANGELOG.md"} <= paths, paths
+    runbook, = [b for b in blocks() if b["path"] == "charts/group-sync-dashboard/docs/RUNBOOK.md"]
     assert "## 7. The fleet account is held back: clear its entry by hand" in runbook["fences"][1]
 
 
@@ -180,7 +180,11 @@ def test_implementation_blocks_check_out_against_this_tree():
         elif b["kind"] == "edit":
             assert b["fences"][1] in text, f"block {b['n']}: {b['path']} lacks the New text"
         else:
-            assert b["fences"][0].strip("\n") in text, f"block {b['n']}: {b['path']} lacks the inserted text"
+            inserted = b["fences"][0].strip("\n")
+            if b["path"] == "docs/CHANGELOG.md":
+                # Released history preserves its old paths; the spec names the runbook's current home.
+                inserted = inserted.replace("/docs/RUNBOOK.md", "/RUNBOOK.md")
+            assert inserted in text, f"block {b['n']}: {b['path']} lacks the inserted text"
 
 
 def test_the_undone_clear_is_stated_as_the_spec_measures_it():
@@ -188,7 +192,7 @@ def test_the_undone_clear_is_stated_as_the_spec_measures_it():
     `test_a_clear_by_hand_then_a_crc_start_before_any_read_is_undone_and_said` measures, with a pod running — not "while
     no pod was running"; and SPEC_S4c's note sits above its body."""
     new = {b["path"]: b["fences"][-1] for b in blocks()}
-    runbook = new["charts/group-sync-dashboard/RUNBOOK.md"]
+    runbook = new["charts/group-sync-dashboard/docs/RUNBOOK.md"]
     assert "while no dashboard pod was running" not in runbook
     assert "before any dashboard pod had read the Lease again" in runbook and "discovery interval" in runbook
     changelog = new["docs/CHANGELOG.md"]

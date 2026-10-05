@@ -5,7 +5,7 @@ description: Preview a mermaid diagram as ASCII in the terminal with mermaid-asc
 
 # Preview mermaid diagrams in the terminal — `mermaid-ascii`
 
-When you add or change a ```` ```mermaid ```` block in this repo (`docs/reference-architecture.md`,
+When you add or change a ```` ```mermaid ```` block in this repo (`docs/guides/reference-architecture.md`,
 `docs/DESIGN_*`, `docs/specs/SPEC_*`, the tutorial), **look at it as ASCII before you commit** —
 `mermaid-ascii` renders it straight to the terminal, no browser. It catches "this arrow points the
 wrong way / this node is orphaned" in a second, which reading the source does not. Full reference and
@@ -37,7 +37,7 @@ extraction the CI job does:
 
 ```sh
 # Preview the Nth ```mermaid block of a doc (0-based). --ascii = plain charset (log/paste friendly).
-python3 - "docs/reference-architecture.md" 0 <<'PY' | mermaid-ascii --ascii -f -
+python3 - "docs/guides/reference-architecture.md" 0 <<'PY' | mermaid-ascii --ascii -f -
 import re, pathlib, sys
 md = pathlib.Path(sys.argv[1]).read_text()
 sys.stdout.write(re.findall(r"```mermaid\n(.*?)```", md, re.S)[int(sys.argv[2])])

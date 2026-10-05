@@ -39,7 +39,7 @@ rules:
   # list users.user.openshift.io" and names this grant. Set it false to decline deliberately.
   #
   # Since chart 0.9.0 the User objects are the SOURCE of the Users tab — OpenShift creates one at a
-  # person's first login, so the tab counts who has logged in (docs/DESIGN_users_tab_logins.md).
+  # person's first login, so the tab counts who has logged in (docs/design/DESIGN_users_tab_logins.md).
   # Read: name, fullName, creation time, and the provider prefix of each identities[] entry. Group
   # membership is still derived from Group objects, listed above, never from the User.
   - apiGroups: ["user.openshift.io"]
@@ -92,7 +92,7 @@ rules:
   # Findings are published to the log, the RBAC policy tab and
   # /api/clusters/{id}/bindings/findings instead. Suppressing one is a cluster-admin task on
   # the object: `oc annotate ... rbac.ocp.io/unmanaged-exception="<why>"`, which the dashboard
-  # reads. See values.yaml and docs/unmanaged-audit-design.md.
+  # reads. See values.yaml and docs/design/unmanaged-audit-design.md.
   {{- if .Values.rbac.bindings }}
   # Powers the "Access granted" view and dangling-binding detection.
   #

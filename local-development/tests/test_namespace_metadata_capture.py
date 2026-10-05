@@ -1,5 +1,5 @@
 """Extension B1 — the poll captures a bounded set of namespace labels and the store persists them
-(docs/DESIGN_reporting_auditors_and_ns_selector.md §3.3, §3.4). No report/GUI change yet."""
+(docs/design/DESIGN_reporting_auditors_and_ns_selector.md §3.3, §3.4). No report/GUI change yet."""
 from __future__ import annotations
 
 import sqlite3

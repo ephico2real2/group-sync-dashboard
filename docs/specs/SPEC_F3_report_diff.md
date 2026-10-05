@@ -9,7 +9,7 @@
 | Version note | Image content (a new module, a branch in `create_run` and in the worker), so the next application MINOR, 4.3.0 (`docs/specs/README.md`, the version ladder). The chart takes the PATCH that moves `appVersion`, 0.66.7: its only other change is the README's reports paragraph; no value key, default, template or RBAC rule changes (the chart's rule, `charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`; 0.66.5 and 0.66.6 were the same kind of step). Read on `43b231b6` (application 4.2.0, chart 0.66.6); W1 is `specified` at chart 0.67.0, which stays above 0.66.7, so W1 does not move. A release that lands first makes the version blocks (§7, Blocks 12 to 15) fail their check; the implementing pull request corrects them here first |
 | Issue | [#108](https://github.com/ephico2real2/group-sync-dashboard/issues/108) |
 | Status | released |
-| Source | OB1-lite's research and specification of 2026-10-03, from the issue's refined body (2026-09-26), `docs/DESIGN_reporting_output_and_delivery.md` §1 and §3 re-measured against main after F1 (#270) and F2 (#106). Measured on main `43b231b6` with the repository's venv (Python 3.14): §2.3's probes built all eleven reports over the seeded snapshot of `tests/test_report_seal.py`. No lab read; §5 states the walk. §7's blocks (the page's included, written in a second pass the same day) were proved against a clean checkout of `43b231b6` (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-03, from the issue's refined body (2026-09-26), `docs/design/DESIGN_reporting_output_and_delivery.md` §1 and §3 re-measured against main after F1 (#270) and F2 (#106). Measured on main `43b231b6` with the repository's venv (Python 3.14): §2.3's probes built all eleven reports over the seeded snapshot of `tests/test_report_seal.py`. No lab read; §5 states the walk. §7's blocks (the page's included, written in a second pass the same day) were proved against a clean checkout of `43b231b6` (§4.3) |
 
 ## How to read this spec
 
@@ -359,7 +359,7 @@ $ git diff --stat        (diff.py and test_report_diff.py are new)
  charts/group-sync-dashboard/Chart.yaml       |  7 ++-
  charts/group-sync-dashboard/README.md        |  4 +-
  docs/CHANGELOG.md                            |  9 ++++
- docs/DESIGN_reporting_output_and_delivery.md |  4 +-
+ docs/design/DESIGN_reporting_output_and_delivery.md |  4 +-
  docs/specs/SPEC_C3_reporting_microservice.md |  3 ++
  local-development/API.md                     |  2 +-
  local-development/gsd/__init__.py            |  2 +-
@@ -1071,17 +1071,17 @@ it is not a catalogue entry. `docs/specs/SPEC_F3_report_diff.md`.
 ## Design
 ```
 
-### Block 16 — `docs/DESIGN_reporting_output_and_delivery.md`: the status line
+### Block 16 — `docs/design/DESIGN_reporting_output_and_delivery.md`: the status line
 
-<!-- block: docs/DESIGN_reporting_output_and_delivery.md | edit -->
+<!-- block: docs/design/DESIGN_reporting_output_and_delivery.md | edit -->
 ```markdown
-renderer or its `#` label rows (SPEC_F2 §2.4, §2a).** Record: `docs/REVIEW_reporting_output_delivery.md`. Four
+renderer or its `#` label rows (SPEC_F2 §2.4, §2a).** Record: `docs/reviews/REVIEW_reporting_output_delivery.md`. Four
 ```
 
 ```markdown
 renderer or its `#` label rows (SPEC_F2 §2.4, §2a). §3 (diffs) is built by `docs/specs/SPEC_F3_report_diff.md`
 (#108), which compares stable coverage conclusions and the sealed sections, and keys blocks by section, kind, title and columns (SPEC_F3
-§2.4).** Record: `docs/REVIEW_reporting_output_delivery.md`. Four
+§2.4).** Record: `docs/reviews/REVIEW_reporting_output_delivery.md`. Four
 ```
 
 ### Block 17 — `local-development/gsd/static/index.html`: the picker is the reader's state, kept across repaints

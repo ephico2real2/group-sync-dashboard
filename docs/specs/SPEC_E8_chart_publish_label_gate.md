@@ -6,7 +6,7 @@
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; its own PR and its own review, carried by Epic E's release, milestone 3.0.0) |
 | Version on release | no version change (workflow, tests and docs only) |
-| Version note | The change touches `.github/workflows/helm.yaml`, `.github/workflows/ci.yml`, `local-development/tests/test_supply_chain.py`, `docs/RELEASING.md`, `docs/DESIGN_supply_chain.md` and `docs/CHANGELOG.md`. None is in `publish.yml`'s `on.push.paths` (the allowlist at `.github/workflows/publish.yml#ONLY WHEN SOMETHING THAT GOES INTO THE IMAGE CHANGED` names twelve paths: `local-development/gsd/**`, `pyproject.toml`, `README.md`, `uninstall-lists.py`, `image-proof.py`, `Containerfile`, `.containerignore`, `build-and-push-external.sh`, `Containerfile.report`, `report-image-proof.py`, `build-and-push-report.sh`, and `publish.yml` itself), so `ci.yml`'s "App image changes bump the app version" asks for no application bump; and none is under `charts/`, so "Chart changes bump the chart version" asks for no chart bump. The issue's Versions box says the same for PR A. SPEC_E5's rule for specs that claim the same numbers does not apply: this spec claims none |
+| Version note | The change touches `.github/workflows/helm.yaml`, `.github/workflows/ci.yml`, `local-development/tests/test_supply_chain.py`, `docs/guides/RELEASING.md`, `docs/design/DESIGN_supply_chain.md` and `docs/CHANGELOG.md`. None is in `publish.yml`'s `on.push.paths` (the allowlist at `.github/workflows/publish.yml#ONLY WHEN SOMETHING THAT GOES INTO THE IMAGE CHANGED` names twelve paths: `local-development/gsd/**`, `pyproject.toml`, `README.md`, `uninstall-lists.py`, `image-proof.py`, `Containerfile`, `.containerignore`, `build-and-push-external.sh`, `Containerfile.report`, `report-image-proof.py`, `build-and-push-report.sh`, and `publish.yml` itself), so `ci.yml`'s "App image changes bump the app version" asks for no application bump; and none is under `charts/`, so "Chart changes bump the chart version" asks for no chart bump. The issue's Versions box says the same for PR A. SPEC_E5's rule for specs that claim the same numbers does not apply: this spec claims none |
 | Issue | [#410](https://github.com/ephico2real2/group-sync-dashboard/issues/410) |
 | Status | released |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code, from the issue's body of 2026-10-01 and its "Decisions and corrections (2026-10-01)", the epic (#385) and #414's merged guard. Measured on origin/main `f1423143` (application 2.0.0, chart 0.59.25): skopeo 1.13.3 (the version the `ubuntu-latest` runner carries) and 1.22.3 run in throwaway containers, read-only against quay.io, and quay's tag API read anonymously. §7's blocks were cut from a copy of `f1423143` with the design implemented and proved against a clean tree (§4.3). Revised the same day on OB2's review of `d5d14f5e` (Orchestrator's notes, "The review of `d5d14f5e`"): Blocks 12 to 18 are OB2's, the second writer's fix moved into this spec, and the branch merged origin/main `31e4f037` (SPEC E3, E6, E7), where every block was proved again (§4.3) |
@@ -147,7 +147,7 @@ observations are recorded and change nothing. The measurements below are OB2's.
     prints the never-published remedy; any other failure is "cannot tell … re-run".
   - There is one temporary file and one trap (Block 20 removes the alias guard's pair). A second `trap … EXIT` would
     replace the first and leak the file.
-  - The fix also adds T410-27 (Block 21), a row in `docs/RELEASING.md` (Block 22) and one sentence in the
+  - The fix also adds T410-27 (Block 21), a row in `docs/guides/RELEASING.md` (Block 22) and one sentence in the
     CHANGELOG (Block 23).
   - Measured after the fix: `REGISTRY=quay.invalid` exits 1 with `cannot tell whether quay.invalid/…:2.3.0 exists
     … no such host … Re-run this workflow once the registry answers.` Today's state still reaches the login with
@@ -182,8 +182,8 @@ version deploys"; item 4 in `.github/workflows/ci.yml`:
 4. In `.github/workflows/ci.yml`'s pull-request `version-bump` job, refuse a chart version whose tag on the
    dashboard repository is already that application's alias, which closes `publish.yml`'s write of
    `:<chartVersion>` too (Orchestrator's note 2).
-5. The tests (T410-1 to T410-6, T410-10, and §4.1's additions), `docs/RELEASING.md`'s two troubleshooting rows,
-   the corrected sentence in `docs/DESIGN_supply_chain.md`, and the CHANGELOG entry.
+5. The tests (T410-1 to T410-6, T410-10, and §4.1's additions), `docs/guides/RELEASING.md`'s two troubleshooting rows,
+   the corrected sentence in `docs/design/DESIGN_supply_chain.md`, and the CHANGELOG entry.
 
 **Out of scope.**
 
@@ -329,7 +329,7 @@ hand and only for the Time Machine window; the gate prevents the overwrite inste
 | B. Install `oc` on the runner and run `release-crc.sh`'s command unchanged | runner README (§2.3); `redhat-actions/openshift-tools-installer` (v3.1, 2026-08-25, not archived) | a downloaded binary, or a new third-party action pinned by sha, in the job that holds `contents: write` and `id-token: write`; a second tool beside the skopeo the step already uses | Rejected: a supply-chain addition to the publishing job for a read skopeo already makes |
 | C. One shared reader script under `local-development/`, called by both | — | both callers change (`release-crc.sh` too); the script must still call `oc` on a workstation and `skopeo` on the runner, so it shares only the Python both already share | Rejected: more moving parts than a test holding the shared lines equal (T410-16) |
 | D. A registry client in Python (`urllib` and the token flow) shared by both | distribution spec | auth, token and proxy handling written by hand: a third reader | Rejected: invents what both tools already do |
-| E. Chart-version labels in their own tag form (`chart-0.59.25`) | the issue's second option (2026-09-26) | changes a documented convention (`docs/RELEASING.md`, "Three tags"); `build-and-push-external.sh` writes `:<chartVersion>` too (an image input, an application bump); old tags stay | Rejected by the issue's decision ("the first option … the smallest guard that closes problem 1") |
+| E. Chart-version labels in their own tag form (`chart-0.59.25`) | the issue's second option (2026-09-26) | changes a documented convention (`docs/guides/RELEASING.md`, "Three tags"); `build-and-push-external.sh` writes `:<chartVersion>` too (an image input, an application bump); old tags stay | Rejected by the issue's decision ("the first option … the smallest guard that closes problem 1") |
 | F. Refuse at pull-request time a chart version whose tag is already that application's alias (`ci.yml`, read from the tag's label) | OB2's review | about 40 lines in the pull-request-only `version-bump` job; one anonymous registry read per pull request | **Taken as well** (Blocks 14 to 18): it closes `publish.yml`'s write of `:<chartVersion>`, which A cannot reach (Orchestrator's note 2). The same check over version history (git tags, CHANGELOG headings) is refuted there by measurement |
 | G. Collision rule "refuse any existing tag at another digest" | — | also refuses today's legitimate relabel of `:<chartVersion>` (T410-13) and a pinned chart on a release merge | Rejected: wider than the defect. Only a tag that IS application `<chartVersion>` is refused |
 | H. Collision rule "refuse when the tag name is in the application's version history (git)" | — | needs a list of released versions; misses a hand-pushed alias | Rejected: the registry's own label answers the question directly |
@@ -498,7 +498,7 @@ each call.
 | T410-4 | `test_t410_4_a_stale_report_alias_is_refused` | report `:2.0.0` labelled 1.9.0 | exit 1 naming the report image, no copy | **fails**: exit 0 |
 | T410-5 | `test_t410_5_every_linux_image_behind_a_list_carries_the_label` (two cases) | a list, amd64 2.0.0, arm64 2.0.0 or 1.9.0 | green / exit 1 with `is application 1.9.0, 2.0.0` | `every-child` passes; `stale-arm64-child` **fails**: exit 0 |
 | T410-6 | `test_t410_6_a_missing_image_is_still_red_with_today_s_remedy` | `:2.0.0` absent | exit 1, today's message and two commands | passes (regression guard) |
-| T410-10 | `test_t410_10_the_release_guide_says_what_the_label_refusal_means` | `docs/RELEASING.md` | a row for each refusal | **fails**: no row |
+| T410-10 | `test_t410_10_the_release_guide_says_what_the_label_refusal_means` | `docs/guides/RELEASING.md` | a row for each refusal | **fails**: no row |
 | T410-11 | `test_t410_11_a_chart_version_that_is_an_application_alias_is_never_copied_over` | chart 1.0.0, `:1.0.0` is application 1.0.0 | exit 1, alias untouched | **fails**: copied over it |
 | T410-12 | `test_t410_12_a_chart_version_tag_publish_already_made_is_copied_again_unchanged` | `:0.59.25` already at the source digest | copied | passes (regression guard) |
 | T410-13 | `test_t410_13_a_chart_version_tag_on_another_build_is_relabelled_as_today` | `:0.59.25` labelled 1.21.0 | relabelled | passes (regression guard) |
@@ -536,7 +536,7 @@ assertion prints, ends at `labelling it` and then copies):
 | T410-14 | `AssertionError: chart 0.59.25 deploys 2.0.0; labelling it` (exit 0) |
 | T410-15 | `AssertionError: skopeo inspect --no-tags --format {{.Digest}} docker://quay.io/example/group-sync-dashboard:2.0.0` (the stub log, which holds the `skopeo copy`) |
 | T410-16 | `assert ('print(", ".join(sorted({(i.get("config", {})…' in <release-crc.sh> and … in <the step>)`: the step has no such line |
-| T410-10 | `AssertionError:` (no row in `docs/RELEASING.md` names the refusal) |
+| T410-10 | `AssertionError:` (no row in `docs/guides/RELEASING.md` names the refusal) |
 
 `10 failed, 7 passed, 34 deselected`. The seven that pass are the regression guards named in §4.1 (T410-2, T410-3, T410-5 `every-child`, T410-6, T410-12,
 T410-13, T410-17).
@@ -628,7 +628,7 @@ is touched. The implementing pull request:
 
 - Normally, two extra log lines naming the label compared for each image, then today's `labelled:` line.
 - A red run, `<image>:<appVersion> is application X, not <appVersion> (#410)`: the alias has not moved yet, or
-  names an old build. Wait for `publish.yml` on the release merge, then re-run (`docs/RELEASING.md`, the new row).
+  names an old build. Wait for `publish.yml` on the release merge, then re-run (`docs/guides/RELEASING.md`, the new row).
 - A red run, `<image>:<chartVersion> is application <chartVersion>'s own alias`: give the chart an unused version
   in a pull request. Never retag or delete.
 
@@ -855,14 +855,14 @@ import yaml
 
 <!-- block: local-development/tests/test_supply_chain.py | edit -->
 ```python
-INSTALL_GUIDE = REPO / "docs" / "HELM_DOWNLOAD_AND_INSTALL.md"
+INSTALL_GUIDE = REPO / "charts" / "group-sync-dashboard" / "docs" / "HELM_DOWNLOAD_AND_INSTALL.md"
 
 ```
 
 ```python
-INSTALL_GUIDE = REPO / "docs" / "HELM_DOWNLOAD_AND_INSTALL.md"
+INSTALL_GUIDE = REPO / "charts" / "group-sync-dashboard" / "docs" / "HELM_DOWNLOAD_AND_INSTALL.md"
 RELEASE_CRC = REPO / "local-development" / "release-crc.sh"   # the deploy-side label guard (#414)
-RELEASING = REPO / "docs" / "RELEASING.md"
+RELEASING = REPO / "docs" / "guides" / "RELEASING.md"
 
 ```
 
@@ -1154,9 +1154,9 @@ class TestTheChartPublishLabelGate:
         assert "Chart.yaml" in collision, collision
 ```
 
-### Block 8 — docs/RELEASING.md: the chart flow draws the two refusals
+### Block 8 — docs/guides/RELEASING.md: the chart flow draws the two refusals
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 ```markdown
         |          success while publishing nothing.
         |
@@ -1190,9 +1190,9 @@ class TestTheChartPublishLabelGate:
         |
 ```
 
-### Block 9 — docs/RELEASING.md: what each refusal means and what to do
+### Block 9 — docs/guides/RELEASING.md: what each refusal means and what to do
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 ```markdown
 | chart release run is red at "Label the image this chart version deploys" | the image the chart resolves was never published, so there is nothing to retag | run `./build-and-push-external.sh --release-tags` and `./build-and-push-report.sh --release-tags` from a clean checkout, then re-run the release |
 | `helm search repo` shows the old chart after a merge | `Chart.yaml` `version` was not bumped, so chart-releaser skipped it | bump it. `ci.yml`'s version-bump check exists to stop this reaching main |
@@ -1205,9 +1205,9 @@ class TestTheChartPublishLabelGate:
 | `helm search repo` shows the old chart after a merge | `Chart.yaml` `version` was not bumped, so chart-releaser skipped it | bump it. `ci.yml`'s version-bump check exists to stop this reaching main |
 ```
 
-### Block 10 — docs/DESIGN_supply_chain.md: helm.yaml now reads the report image, and still copies nothing there
+### Block 10 — docs/design/DESIGN_supply_chain.md: helm.yaml now reads the report image, and still copies nothing there
 
-<!-- block: docs/DESIGN_supply_chain.md | edit -->
+<!-- block: docs/design/DESIGN_supply_chain.md | edit -->
 ```markdown
 label or resolve the report image by chart version —
 `.github/workflows/helm.yaml#Label the image this chart version deploys` names the dashboard
@@ -1532,9 +1532,9 @@ class TestTheChartVersionIsNeverAReleasedApplicationVersion:
         assert "skopeo copy" not in log and "skopeo login" not in log, log
 ```
 
-### Block 22 — docs/RELEASING.md: what "cannot tell whether <image>:<appVersion> exists" means (OB2, the review of PR #529, F1)
+### Block 22 — docs/guides/RELEASING.md: what "cannot tell whether <image>:<appVersion> exists" means (OB2, the review of PR #529, F1)
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 ```markdown
 | chart release run is red at "Label the image this chart version deploys" with `<image>:<appVersion> is application X, not <appVersion> (#410)` | the tag exists but names another build: `publish.yml` has not moved the alias yet on the release merge, or the tag is a chart-version label on an old image (`:0.39.0` was application 0.24.0). Nothing was copied and no chart was published | wait for `publish.yml` on the release merge to finish green, then re-run the release. Never retag or delete the old tag by hand: a cluster, a mirror or a Helm release may pin it |
 ```

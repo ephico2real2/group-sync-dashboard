@@ -110,7 +110,7 @@
   <main id="main"></main>
 </div>
 
-<!-- The idle-timeout countdown (docs/DESIGN_session_and_signout.md, "Idle timeout"). Static
+<!-- The idle-timeout countdown (docs/design/DESIGN_session_and_signout.md, "Idle timeout"). Static
      markup outside #main and #filters, so no repaint ever replaces it; hidden until the idle
      model says otherwise, and inert-ing #wrap while open is the focus trap. -->
 <div id="idle-modal" class="idle-backdrop" hidden>
@@ -1131,7 +1131,7 @@ function wireSearchBox(key) {
 function renderFilters() {
   const clusters = data.clusters;
   // The selector says when a cluster is narrowed for THIS reader — read off the row's
-  // server-decided `visibility`, never derived here (docs/ACCESS_CONTROL.md §11). A reader who
+  // server-decided `visibility`, never derived here (docs/guides/ACCESS_CONTROL.md §11). A reader who
   // is wide on the host and narrow on a remote would otherwise switch clusters and see the
   // table shrink with nothing to say why. `!== "all"`, the same fail-closed rule as the pill
   // and the narrowing helpers (review of D2, second pass).
@@ -2368,7 +2368,7 @@ function identitiesNote(d) {
 }
 
 /* The Users tab's row selection — chips, then the free-text box — written once so the table and
-   the export (docs/DESIGN_export.md) read the same rows. Only the PAINT is capped (USERS_RENDER);
+   the export (docs/design/DESIGN_export.md) read the same rows. Only the PAINT is capped (USERS_RENDER);
    this returns every match, which is what an export must carry. */
 function usersMatched(d) {
   const all = d.users || [];
@@ -4405,7 +4405,7 @@ const LOGIN_SOURCE_TEXT = {
       profile except <code>None</code>, so nothing has to raise the authentication operator's
       <code>spec.logLevel</code>, and nothing rolls the OAuth server.`,
     disabledHow: `Turning capture back on is <code>loginCapture.enabled=true</code> with
-      <code>loginCapture.source=audit-log</code>; <code>docs/AUDIT_LOG_CAPTURE.md</code> shows the path end to end.`,
+      <code>loginCapture.source=audit-log</code>; <code>docs/guides/AUDIT_LOG_CAPTURE.md</code> shows the path end to end.`,
     column: "Node / stored pod",
     columnHelp: `<strong>Node</strong> is the control-plane node whose audit file recorded it — the node to read
       with <code>oc adm node-logs &lt;node&gt; --path=oauth-server/audit.log</code>. For a stored pod-log row,
@@ -7126,7 +7126,7 @@ function sortBy(rows, keyFn, dir) {
    focusable and not announced as actionable, so header sorting becomes mouse-only. The
    arrow is text rather than a glyph so it survives forced-colors, and aria-sort tells a
    screen reader which column is ordering the table and in which direction. */
-/* ── Export: what was served, and nothing more (docs/DESIGN_export.md) ────────────────────
+/* ── Export: what was served, and nothing more (docs/design/DESIGN_export.md) ────────────────────
    The file is built HERE, from `data` — the rows the server served THIS reader at THEIR tier —
    after the page's own filter and sort, read through the same selection functions the tables
    paint from. It makes no request: a server-side export would have to re-implement six
@@ -8641,7 +8641,7 @@ history.replaceState(
 /* The session cap this page quotes when it ends. From /api/whoami rather than hardcoded, so
    it cannot contradict the proxy's own -cookie-expire. */
 /* ── Idle timeout: a MODEL the page runs, enforced by the proxy ────────────────────────────
-   docs/DESIGN_session_and_signout.md, "Idle timeout". The page cannot observe its session, so
+   docs/design/DESIGN_session_and_signout.md, "Idle timeout". The page cannot observe its session, so
    this counts ACTIVITY — pointer, keyboard, the tab becoming visible — from configured inputs
    that /api/whoami restates. At zero it removes the data from the screen and sends the browser
    to the proxy's sign_out; the PROXY ends the session by clearing its cookie. Nothing here is
@@ -8809,7 +8809,7 @@ let sessionCapNote = "";
 
    `logout_url` is the proxy's own sign_out under its configured prefix. The proxy clears its
    session cookie there; the application does not revoke the OpenShift access token (measured in
-   docs/DESIGN_session_and_signout.md — revocation is deliberately not implemented). */
+   docs/design/DESIGN_session_and_signout.md — revocation is deliberately not implemented). */
 async function initSession() {
   try {
     const who = await api("/api/whoami");
@@ -8872,7 +8872,7 @@ refresh();
 const POLL_INTERVAL_MS = 60000;
 /* The one gate every automatic refresh passes: a hidden tab has no reader, and a tab whose idle
    countdown is on screen (or has expired) must not keep a session alive with its own requests —
-   lesson 3 of docs/DESIGN_session_and_signout.md. Resumes with "Stay signed in". */
+   lesson 3 of docs/design/DESIGN_session_and_signout.md. Resumes with "Stay signed in". */
 function autoRefresh() {
   if (document.hidden) return;
   if (idleSuspended()) return;

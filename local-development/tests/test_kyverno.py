@@ -327,7 +327,7 @@ class TestApiAndMetrics:
         assert not re.search(r"^gsd_kyverno_\w+\{", text, re.M), text
 
 
-# ══ OB3's review of #228 (docs/REVIEW_kyverno_module.md) — the harness that measured M2–M6/M10 and the pin behind each
+# ══ OB3's review of #228 (docs/reviews/REVIEW_kyverno_module.md) — the harness that measured M2–M6/M10 and the pin behind each
 # fix, kept as they were written: each F-test failed on 0989e4b and passes with its fix. ═══════════════════════════════
 
 # ── M2: discovery and paging ────────────────────────────────────────────────────────────────────

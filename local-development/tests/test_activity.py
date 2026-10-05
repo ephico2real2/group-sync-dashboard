@@ -487,7 +487,7 @@ class TestFlushFailure:
 
 class TestRetentionSignals:
     def test_prune_notes_the_deletion_on_the_signals_seam(self, store):
-        """§3.8 of docs/DESIGN_metrics_refresh.md: the dashboard_user_activity increments
+        """§3.8 of docs/design/DESIGN_metrics_refresh.md: the dashboard_user_activity increments
         come from prune() itself, so the counter and the log line cannot disagree."""
         from gsd.metrics import RuntimeSignals
 

@@ -1,7 +1,7 @@
 # The corrected backup runbook on the CRC lab: the SPEC_E10 §5 walk (#533)
 
 Walked 2026-10-02 14:49–15:18 UTC on CRC (OpenShift 4.22.7, OpenShift GitOps with Argo CD v3.4.7). The commands are
-those of `docs/RUNBOOK_backup_restore.md` as PR #537 changes it (`origin/feat/533-runbook-break-glass`, `961c1a42`):
+those of `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` as PR #537 changes it (`origin/feat/533-runbook-break-glass`, `961c1a42`):
 §0, §1, §4 (the Risks box, steps 1–5, §4a, §4c) and §4d. The §4d lines were cut from that file and run byte for
 byte, with only their placeholders filled. The lab runs application 2.4.0 (`521c2bb0b4`) and chart 0.61.2, with
 the offsite backup on its `pvc` destination. On this lab `NS=group-sync-dashboard` and `REL=group-sync-dashboard`.

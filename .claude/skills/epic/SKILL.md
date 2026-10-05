@@ -108,7 +108,7 @@ Grok can help with a hard problem as an advisor, but its proposals are checked l
 
 ## 6. Close the epic
 
-- **Application bump:** cut the next MAJOR per closed epic with `local-development/prepare-release.py --app X.0.0 "Epic summary"` (`docs/RELEASING.md`).
+- **Application bump:** cut the next MAJOR per closed epic with `local-development/prepare-release.py --app X.0.0 "Epic summary"` (`docs/guides/RELEASING.md`).
   It must equal the epic's milestone. If an epic closed out of its planned order, retitle the later milestones
   first. Close the milestone when the epic closes.
 
@@ -129,7 +129,7 @@ deploy or redeploy every epic and cut a release note. So we are remaining true."
    Review and merge the release PR as any other. After the merge, `helm.yaml` publishes the chart and retags the
    existing `:<appVersion>` image as `:<chart-version>`. `publish.yml` moves the `:<appVersion>` alias only on an
    application version change; image-changing issue PRs carry a MINOR bump and publish both tags too.
-   A `--chart`-only merge builds no image (`docs/RELEASING.md`, the chart-only flow).
+   A `--chart`-only merge builds no image (`docs/guides/RELEASING.md`, the chart-only flow).
 2. **Release note.** Once `helm.yaml` has created the GitHub release, write the epic's summary (the children, their
    merge shas, the lab evidence) into that release's body. List in it every schema line the epic's children released
    (#300): a child that added a migration carries `**Schema N → M.**` under its own MINOR heading in
@@ -143,7 +143,7 @@ deploy or redeploy every epic and cut a release note. So we are remaining true."
    `local-development/release-crc.sh --argocd release` (the chart on `release` and the two digests `promote.yml`
    pinned in `promotion.yaml`, read back before the Application is written), walk it, then
    `local-development/release-crc.sh --argocd main` to return the lab to `main`, its day-to-day branch (#598;
-   `docs/RELEASING.md`, "Promotion to the lab"). Bare `--argocd` builds HEAD and pins that image, so it is not the
+   `docs/guides/RELEASING.md`, "Promotion to the lab"). Bare `--argocd` builds HEAD and pins that image, so it is not the
    published release. Both modes refuse an image whose `org.opencontainers.image.version` label is not the release's
    (#410): wait for `publish.yml` and `promote.yml`, then re-run; never retag or edit `release` by hand. Between
    epics the lab tracks `main`, which can sync a release merge before its image is pushed (`ErrImagePull` until it

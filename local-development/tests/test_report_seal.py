@@ -245,7 +245,7 @@ def test_t592_2_no_report_reads_the_generation_clock_into_its_data():
     sources = {name: inspect.getsource(inspect.getmodule(build)) for name, (_, build) in REGISTRY.items()}
     assert not [name for name, source in sources.items() if "ctx.now" in source]
     assert {name for name, source in sources.items() if "ctx.snapshot_at" in source} == set(SNAPSHOT_CLOCK)
-    design = (DOCS / "DESIGN_reporting_service.md").read_text()
+    design = (DOCS / "design" / "DESIGN_reporting_service.md").read_text()
     paragraph = design[design.index("**What the sha256 covers (SPEC_F1, #270).**"):]
     paragraph = paragraph[:paragraph.index("\n\n")]
     assert "end at the\nsnapshot's stamp, not at the generation time" in paragraph and "generation clock" not in paragraph

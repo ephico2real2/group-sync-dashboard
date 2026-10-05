@@ -80,11 +80,11 @@ Decisions made on "easy to manage, best practice", corrections to the issue, and
    `<fullname>-grafana-discovery`; they sit under `rbac.create` like the chart's other RBAC; one Role serves both
    Leases; the render condition is exactly the ClusterRole rule's (`leaderElection.enabled`, or a fleet account in use,
    `charts/group-sync-dashboard/templates/rbac.yaml#gsd.fleetAccountInUse`); the template comment that called the rule
-   "scoped to one object the dashboard owns" is corrected in step 1 (block 8a); `docs/reference-architecture.md` gets
+   "scoped to one object the dashboard owns" is corrected in step 1 (block 8a); `docs/guides/reference-architecture.md` gets
    the condition right in step 1 (block 8e); the lab check reads "the elector's Lease renews, and the fleet Lease is
    read and written on the next fleet path" (§5).
 4. **Decided here.** The Role lives in `templates/rbac.yaml`, beside the ClusterRole it replaces, so the citations
-   `templates/rbac.yaml#leases` in `docs/api-contract.md` and the chart README keep resolving. It carries the
+   `templates/rbac.yaml#leases` in `docs/guides/api-contract.md` and the chart README keep resolving. It carries the
    `gsd.rbacLabels` labels and no `app.kubernetes.io/component`, as `-grafana-discovery` does. It sets no
    `resourceNames` (§3.2). It carries no Argo CD annotation: Argo CD is a conduit here and nothing in the design depends
    on it (§2.7).
@@ -143,7 +143,7 @@ Decisions made on "easy to manage, best practice", corrections to the issue, and
    2026-10-01): G4 is the forty-seventh index row, after E9, excluded from the rising-number assert by its id and pinned to #420 like the others; the
    version cells follow SPEC_E5's rule (Version note). Every file §2 reads is byte-identical at `21132a25` and
    `f1423143` (`git diff --stat 21132a25 f1423143` over the chart's templates, values, README and examples,
-   `environments/`, `docs/reference-architecture.md`, `gsd/leader.py`, `gsd/fleetstate.py`, `gsd/poller.py` and
+   `environments/`, `docs/guides/reference-architecture.md`, `gsd/leader.py`, `gsd/fleetstate.py`, `gsd/poller.py` and
    `gsd/api.py` prints nothing), so §2's line citations into main hold on both; the merge with `6d532178` changed none
    of them either (it added SPEC_E3, its index row and its pin), and no file a block of this spec edits besides the
    index and `SPEC_E3_restore_db.md`, which blocks 8m and 8n now edit.
@@ -510,7 +510,7 @@ values file's "its own leader-election Lease"), and promises no particular relea
 rest with the grant (T420-9): the template's header and the comment at the old rule (blocks 9 and 10), the Role's
 own comment (blocks 1 and 11),
 `fleet-account-rbac.yaml` (block 12), both `values.yaml` comments (blocks 15 and 16), the chart README's `rbac.create`
-row and RBAC paragraph (blocks 6 and 17), and `docs/reference-architecture.md` §7.1 and §8 (blocks 18 to 22, which
+row and RBAC paragraph (blocks 6 and 17), and `docs/guides/reference-architecture.md` §7.1 and §8 (blocks 18 to 22, which
 also give the condition in full). `docs/CHANGELOG.md` gets one entry per step naming the moved atoms (blocks 7 and 23),
 and `Chart.yaml` one history line per step (blocks 8 and 24). Blocks 8g to 8p move seven other specs' version cells
 above step 2's chart (the Version note), and blocks T1 to T5 teach the checker the two markers this spec stages its
@@ -603,7 +603,7 @@ The blocks were not written from memory: each was applied and its tests run.
 | index pin | `test_specs_index.py` with G4's row and header both mistyped `#421` | unmutated `100 passed`; mistyped `1 failed, 99 passed`, `AssertionError: ('G4 is #420', '421')`; mistyped with the pin deleted `100 passed`, so the pin is what catches it |
 | chart | `helm lint` on step 1 and step 2 | `1 chart(s) linted, 0 chart(s) failed`, both |
 | pod template | §2.8, `environments/crc.yaml` | only `checksum/config` differs, main to step 1 and step 1 to step 2 |
-| markdown | `markdownlint-cli2` on the chart README, `docs/CHANGELOG.md`, `docs/reference-architecture.md`, `docs/specs/README.md` | 24 findings on main, on step 1 and on step 2, the same per file and rule (MD004, MD040, MD012, MD014), none new |
+| markdown | `markdownlint-cli2` on the chart README, `docs/CHANGELOG.md`, `docs/guides/reference-architecture.md`, `docs/specs/README.md` | 24 findings on main, on step 1 and on step 2, the same per file and rule (MD004, MD040, MD012, MD014), none new |
 | diagram | `mermaid-ascii` 1.6.1 on §8's topology after block 21 and 22, and on §3's picture | both parse, rc 0 |
 
 ### 4.4 The probes
@@ -839,7 +839,7 @@ they must be equal. Never log in as the fleet account, never place a wrong fleet
 | `charts/group-sync-dashboard/values.yaml` | 7 / 3 | 7 / 7 |
 | `charts/group-sync-dashboard/README.md` | 7 / 3 | 25 / 12 |
 | `charts/group-sync-dashboard/Chart.yaml` | 4 / 1 | 4 / 1 |
-| `docs/reference-architecture.md` | 3 / 3 | 14 / 7 |
+| `docs/guides/reference-architecture.md` | 3 / 3 | 14 / 7 |
 | `docs/CHANGELOG.md` | 14 / 0 | 11 / 0 |
 | `docs/specs/README.md` (T5's bullet, 8g's five cells, 8m's and 8o's) | 12 / 7 | — |
 | `docs/specs/SPEC_E2_*`, `SPEC_G2_*`, `SPEC_E4_*`, `SPEC_G3_*`, `SPEC_E5_*`, `SPEC_E3_*`, `SPEC_E6_*` (one cell each) | 1 / 1 each | — |
@@ -1488,12 +1488,12 @@ same three verbs in the release namespace only (#420), and a later chart release
 from the ClusterRole once the operator agrees.
 ```
 
-#### Block 8d — docs/reference-architecture.md: §7.1's opening sentence names both Leases (step 1)
+#### Block 8d — docs/guides/reference-architecture.md: §7.1's opening sentence names both Leases (step 1)
 
 Scoped to the reader ClusterRole, as block 18 scopes it at step 2: `templates/rbac.yaml` also binds
 `system:auth-delegator`, which grants `create` on token and subject access reviews.
 
-<!-- applied-block: docs/reference-architecture.md | edit -->
+<!-- applied-block: docs/guides/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1509,11 +1509,11 @@ The reader ClusterRole in `templates/rbac.yaml` grants `get` and `list` and noth
 Leases the dashboard writes — the elector's and one per fleet account:
 ```
 
-#### Block 8e — docs/reference-architecture.md: the Lease row's condition (step 1)
+#### Block 8e — docs/guides/reference-architecture.md: the Lease row's condition (step 1)
 
 The issue's correction 4: the condition was given as `leaderElection.enabled` alone.
 
-<!-- applied-block: docs/reference-architecture.md | edit -->
+<!-- applied-block: docs/guides/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1712,13 +1712,13 @@ class TestTheLeaseGrantIsDescribedWhereItLives:
             "In the ClusterRole, `coordination.k8s.io/leases`"),
         "charts/group-sync-dashboard/values.yaml": (
             "The role's only write is get/create/update on the dashboard's own",),
-        "docs/reference-architecture.md": (
+        "docs/guides/reference-architecture.md": (
             "except on the Lease it needs to elect a leader",
             "except on the Leases the dashboard writes",
             "| `coordination.k8s.io` | `leases` | get, create, update —"),
     }
     NAMED = ("charts/group-sync-dashboard/README.md", "charts/group-sync-dashboard/values.yaml",
-             "docs/reference-architecture.md")
+             "docs/guides/reference-architecture.md")
 
     @staticmethod
     def _prose(path: str) -> str:
@@ -1837,9 +1837,9 @@ the poller down until the next round, 10 s later, renews the pod's own Lease; a 
 is reported as `fleet-state-unavailable` until the next discovery cycle, and nothing binds meanwhile.
 ```
 
-#### Block 18 — docs/reference-architecture.md: §7.1's opening sentence (step 2)
+#### Block 18 — docs/guides/reference-architecture.md: §7.1's opening sentence (step 2)
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1854,11 +1854,11 @@ New text:
 The reader ClusterRole in `templates/rbac.yaml` grants `get` and `list` and nothing else:
 ```
 
-#### Block 19 — docs/reference-architecture.md: the Lease row leaves the ClusterRole's table for its own paragraph (step 2)
+#### Block 19 — docs/guides/reference-architecture.md: the Lease row leaves the ClusterRole's table for its own paragraph (step 2)
 
 The row block 8e corrected for step 1 (the issue's correction 4) leaves the table.
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1883,9 +1883,9 @@ ClusterRole rule that held this grant before #420 reached every namespace, the n
 
 ```
 
-#### Block 20 — docs/reference-architecture.md: what the ServiceAccount can change (step 2)
+#### Block 20 — docs/guides/reference-architecture.md: what the ServiceAccount can change (step 2)
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1902,9 +1902,9 @@ coordination objects, in its own namespace; with the default values they are the
 cluster the ServiceAccount can change.
 ```
 
-#### Block 21 — docs/reference-architecture.md: §8's topology, the ClusterRole node (step 2)
+#### Block 21 — docs/guides/reference-architecture.md: §8's topology, the ClusterRole node (step 2)
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1918,9 +1918,9 @@ New text:
     cr["ClusterRole + Binding<br/>read-only"]
 ```
 
-#### Block 22 — docs/reference-architecture.md: §8's topology, the Lease node (step 2)
+#### Block 22 — docs/guides/reference-architecture.md: §8's topology, the Lease node (step 2)
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1947,7 +1947,7 @@ New text:
   Lease outside its own namespace; before, it could in every namespace, `kube-node-lease`'s node heartbeats and the
   control plane's election Leases included (measured on the lab, `oc auth can-i`). Rendered RBAC: REMOVED the 3 atoms
   `ClusterRole <fullname>-reader: coordination.k8s.io/leases get, create, update` wherever they rendered; ADDED 0. The
-  template comments, the values file, the chart README and `docs/reference-architecture.md` say where the grant lives.
+  template comments, the values file, the chart README and `docs/guides/reference-architecture.md` say where the grant lives.
   Upgrade through a release that carries both grants (chart 0.66.2, or a later one before this) first; an upgrade
   that skips them can refuse the outgoing pod one round of Lease calls (chart README, RBAC).
 ```

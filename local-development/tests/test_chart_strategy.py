@@ -126,7 +126,7 @@ class TestStillRenders:
 
 
 class TestNoPatchVerbAtAnyAuditMode:
-    """`docs/unmanaged-audit-design.md` I1 asserted this and said no test enforced it.
+    """`docs/design/unmanaged-audit-design.md` I1 asserted this and said no test enforced it.
 
     The chart used to grant `patch` on rolebindings/clusterrolebindings when
     `config.unmanagedAudit.mode` was `annotate`, so the dashboard could label its own
@@ -212,7 +212,7 @@ class TestNoPatchVerbAtAnyAuditMode:
                     f"{rule.get('resources')} — the leader-election Lease is the only object "
                     f"this application may write. If that changed deliberately, update "
                     f"rbac.yaml's header, values.yaml, the chart README and "
-                    f"docs/reference-architecture.md in the same commit."
+                    f"docs/guides/reference-architecture.md in the same commit."
                 )
 
     def test_the_cluster_secret_writes_are_the_one_opt_in_exception_and_exactly_that(self):
@@ -258,13 +258,13 @@ class TestTheLeaseGrantIsDescribedWhereItLives:
             "In the ClusterRole, `coordination.k8s.io/leases`"),
         "charts/group-sync-dashboard/values.yaml": (
             "The role's only write is get/create/update on the dashboard's own",),
-        "docs/reference-architecture.md": (
+        "docs/guides/reference-architecture.md": (
             "except on the Lease it needs to elect a leader",
             "except on the Leases the dashboard writes",
             "| `coordination.k8s.io` | `leases` | get, create, update —"),
     }
     NAMED = ("charts/group-sync-dashboard/README.md", "charts/group-sync-dashboard/values.yaml",
-             "docs/reference-architecture.md")
+             "docs/guides/reference-architecture.md")
 
     @staticmethod
     def _prose(path: str) -> str:
@@ -325,7 +325,7 @@ class TestTheUsersGrantIsReadOnlyAndOptional:
         assert sorted(rule["verbs"]) == ["get", "list"], (
             f"the users grant must be read-only and must not add watch: {rule['verbs']}. "
             f"If that changed deliberately, update rbac.yaml's header, values.yaml, the chart "
-            f"README and docs/reference-architecture.md in the same commit."
+            f"README and docs/guides/reference-architecture.md in the same commit."
         )
 
     def test_declining_the_grant_drops_the_rule_and_keeps_the_rest(self):
@@ -730,7 +730,7 @@ class TestVisibilityThreading:
             assert "visibility.tierTtlSeconds" in out
             assert "whole number of seconds" in out
 
-    # ── The Usage tab's second, stricter threshold (docs/SPEC_usage_admin_tier.md) ──────
+    # ── The Usage tab's second, stricter threshold (docs/design/SPEC_usage_admin_tier.md) ──────
 
     def test_the_usage_sar_default_is_a_write_verb_in_the_configmap(self):
         """Spec test 7: usageAdminSar threads into the ConfigMap, defaulting to the write verb
@@ -1502,7 +1502,7 @@ def _auditor_docs(**values):
 
 
 class TestReportingAuditors:
-    """rbacAuditors (docs/DESIGN_reporting_auditors_and_ns_selector.md #2): an opt-in read-only
+    """rbacAuditors (docs/design/DESIGN_reporting_auditors_and_ns_selector.md #2): an opt-in read-only
     auditor ClusterRole and a name-based ClusterRoleBinding per group, with render guards. Each
     render state is asserted so a future edit that breaks one is caught."""
 

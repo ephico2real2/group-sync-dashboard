@@ -18,7 +18,7 @@ here rather than a quiet disagreement):
     /api/dashboard/activity contract, generalised. The UI renders those fields and never
     decides the tier itself (tests/test_ui.py).
 
-Measured background these tests encode (docs/REQUIREMENTS_per_user_visibility.md §4/D2 and
+Measured background these tests encode (docs/design/REQUIREMENTS_per_user_visibility.md §4/D2 and
 the spec's arbitration): a SubjectAccessReview naming ONLY the user answers allowed=false
 for john.doe, who holds cluster-admin through Group/app-ocp-rbac-demo-cluster-admin —
 reproduced twice on the reference cluster; adding spec.groups flips it to allowed=true with
@@ -573,7 +573,7 @@ class TestAdminSeesExactlyToday:
                 )
 
 
-# ── The Usage tab's second, stricter tier (docs/SPEC_usage_admin_tier.md) ─────────────────
+# ── The Usage tab's second, stricter tier (docs/design/SPEC_usage_admin_tier.md) ─────────────────
 
 
 def _seed_usage(db: str) -> None:
@@ -771,7 +771,7 @@ def _sample(text: str, needle: str) -> float:
 
 
 class TestVisibilityMetricsSite:
-    """§3.2/§3.3 of docs/DESIGN_metrics_refresh.md, measured off the app's own /metrics:
+    """§3.2/§3.3 of docs/design/DESIGN_metrics_refresh.md, measured off the app's own /metrics:
     the decision and refusal counters increment where the decisions actually happen."""
 
     def test_decisions_and_refusals_reach_the_exposition(self, client):

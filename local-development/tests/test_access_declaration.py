@@ -1,4 +1,4 @@
-"""The access declaration (#239, docs/specs/SPEC_G1_tier_declaration.md): `docs/ACCESS_CONTROL.md` §3 and §4 say
+"""The access declaration (#239, docs/specs/SPEC_G1_tier_declaration.md): `docs/guides/ACCESS_CONTROL.md` §3 and §4 say
 which tier every page and every route gives each reader, and this module holds both to the code.
 
 What fails here, each the way the declaration was measured drifting (five routes and four tabs behind on 5c03a9b1):
@@ -33,7 +33,7 @@ from gsd.api import build_app
 from test_visibility import H, _MapResolver, _seed, _settings
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-DOC = REPO / "docs" / "ACCESS_CONTROL.md"
+DOC = REPO / "docs" / "guides" / "ACCESS_CONTROL.md"
 PAGE = REPO / "local-development" / "gsd" / "static" / "index.html"
 
 #: The one reader every persona but the first is. The seed makes her a member of g-adm, a user with a grant in ns1,
@@ -65,7 +65,7 @@ PATH_VALUES = {"cluster_id": "c1", "groups": "g-adm", "users": VIEWER, "namespac
 def _section(number: int) -> str:
     text = DOC.read_text()
     head = re.search(rf"^## {number}\. .*$", text, re.M)
-    assert head, f"docs/ACCESS_CONTROL.md has no section {number}"
+    assert head, f"docs/guides/ACCESS_CONTROL.md has no section {number}"
     rest = text[head.end():]
     following = re.search(r"^## ", rest, re.M)
     return rest[:following.start()] if following else rest
@@ -184,7 +184,7 @@ def test_every_route_the_app_registers_has_a_row(app):
     missing = sorted(_keys(app) - {_key(row) for row in ROUTES})
     rows = "\n".join(f"| {method} | `{path}` | <always, writes on or housekeeping on> | <gate or none> | <no identity> | <self> "
                      f"| <auditor> | <usage> | <cluster-admin> | <notes> |" for method, path in missing)
-    assert not missing, f"routes with no row in docs/ACCESS_CONTROL.md §4; add one each (§4 names the words):\n{rows}"
+    assert not missing, f"routes with no row in docs/guides/ACCESS_CONTROL.md §4; add one each (§4 names the words):\n{rows}"
 
 
 def test_every_row_names_one_route_the_app_serves(app):

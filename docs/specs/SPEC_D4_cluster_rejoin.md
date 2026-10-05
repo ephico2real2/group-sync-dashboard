@@ -481,13 +481,13 @@ the existing outcome and failure sentence are still reported.
 | `local-development/tests/test_api_contract.py` | the carve-out gains the route | +3 | −2 |
 | `local-development/tests/test_clusterconfig.py` | the pinned row gains `rejoinable` | +1 | −1 |
 | `local-development/tests/test_ui.py` | Refresh's `auth_failed` assertion names Rejoin; three Rejoin tests | +160 | −2 |
-| `charts/group-sync-dashboard/RUNBOOK.md` | new: Appendix B | +162 | −0 |
-| `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` | §4 names Rejoin; §5 describes it and links the runbook; its rules, with the gate's scope and what is stored | +25 | −12 |
+| `charts/group-sync-dashboard/docs/RUNBOOK.md` | new: Appendix B | +162 | −0 |
+| `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md` | §4 names Rejoin; §5 describes it and links the runbook; its rules, with the gate's scope and what is stored | +25 | −12 |
 | `charts/group-sync-dashboard/README.md` | links the runbook | +2 | −1 |
 | `charts/group-sync-dashboard/values.yaml` | the `clusterAdminSar` comment: the remote asks the same question (a comment only) | +2 | −1 |
 | `docs/README.md` | lists the runbook | +1 | −0 |
 | `local-development/API.md` | `rejoinable`; the route; six write routes | +30 | −2 |
-| `docs/DESIGN_remote_cluster_access.md` | D7 built, D8 directed and built; §7's text and twin | +17 | −16 |
+| `docs/design/DESIGN_remote_cluster_access.md` | D7 built, D8 directed and built; §7's text and twin | +17 | −16 |
 | `docs/diagrams/remote-cluster-access/source.html` | Figure 4 and the D8 card drawn as built | +14 | −13 |
 | `docs/specs/SPEC_D3_cluster_refresh.md` | a note: #316 builds the next step §4 names | +4 | −0 |
 | `docs/CHANGELOG.md` | the `## Unreleased` entry | +15 | −0 |
@@ -530,7 +530,7 @@ full-scope token for that person, which must be revoked.**
 - The lab, read-only: the Secret exists, `type: kubernetes.io/service-account-token`, annotated
   `kubernetes.io/service-account.name: group-sync-dashboard-cluster-poller`, with `helm.sh/resource-policy: keep`.
 - A cluster administrator may `get` it, and so may an `admin` of `group-sync-operator` who is not one
-  (`docs/DESIGN_remote_cluster_access.md` §5). D8 is the stricter gate, and it runs first.
+  (`docs/design/DESIGN_remote_cluster_access.md` §5). D8 is the stricter gate, and it runs first.
 
 ### A.3 D8: one SelfSubjectAccessReview, with the login's own token
 
@@ -602,7 +602,7 @@ The question is built as the host's `TierResolver` builds it (kube.py:1481-1495)
 
 ## Appendix B. The runbook
 
-**`charts/group-sync-dashboard/RUNBOOK.md`, beside `values.yaml` and `CLUSTER_CREDENTIALS.md`: numbered operations,
+**`charts/group-sync-dashboard/docs/RUNBOOK.md`, beside `values.yaml` and `CLUSTER_CREDENTIALS.md`: numbered operations,
 each a command and what its answer looks like.** Its six sections are the ones the comment of 2026-09-23 lists:
 
 | § | the operation | what it adds |
@@ -2457,12 +2457,12 @@ def test_the_budget_over_the_system(tmp_path, monkeypatch, remote):
 # ── the runbook (the 2026-09-23 requirement) ───────────────────────────────────────────────────────────────
 
 def test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it():
-    runbook = REPO / "charts/group-sync-dashboard/RUNBOOK.md"
+    runbook = REPO / "charts/group-sync-dashboard/docs/RUNBOOK.md"
     headings = re.findall(r"^## (\d)\. ", runbook.read_text(), re.M)
     assert headings == ["1", "2", "3", "4", "5", "6"], headings
-    assert "../charts/group-sync-dashboard/RUNBOOK.md" in (REPO / "docs/README.md").read_text()
-    assert "(RUNBOOK.md)" in (REPO / "charts/group-sync-dashboard/README.md").read_text()
-    credentials = (REPO / "charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md").read_text()
+    assert "../charts/group-sync-dashboard/docs/RUNBOOK.md" in (REPO / "docs/README.md").read_text()
+    assert "(docs/RUNBOOK.md)" in (REPO / "charts/group-sync-dashboard/README.md").read_text()
+    credentials = (REPO / "charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md").read_text()
     assert "Rejoin **PLANNED**" not in credentials and "(RUNBOOK.md)" in credentials
 ```
 
@@ -2676,7 +2676,7 @@ def test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it(
         assert page.evaluate("() => view.clusterRejoin.east.outcome") == "unknown"
 ```
 
-<!-- block: charts/group-sync-dashboard/RUNBOOK.md | create -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK.md | create -->
 ```markdown
 # Runbook — a remote cluster's connection is broken: Refresh, then Rejoin
 
@@ -2842,7 +2842,7 @@ oc --context="$REMOTE" delete useroauthaccesstokens <name>
 ~~~
 ```
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
 ## 4. Recovering a cluster today
 
@@ -2858,7 +2858,7 @@ by hand, and it requires being cluster-admin on **both** clusters with two sessi
 answer means, are in [`RUNBOOK.md`](RUNBOOK.md), beside this file:
 ```
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
 ## 5. The intended recovery flow — Refresh **BUILT**, Rejoin **PLANNED**
 ```
@@ -2867,7 +2867,7 @@ answer means, are in [`RUNBOOK.md`](RUNBOOK.md), beside this file:
 ## 5. The recovery flow — Refresh, then Rejoin
 ```
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
 **Rejoin (#316).** When Refresh reports `auth_failed`, an administrator clicks Rejoin and supplies
 **their own** cluster-admin username and password *at that moment*. The dashboard authenticates to
@@ -2887,7 +2887,7 @@ token Secret, signs the login out, and writes `gsd-cluster-<name>` with `token-s
 [`RUNBOOK.md`](RUNBOOK.md).
 ```
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
 - Rejoin's credentials are never stored, never logged, never echoed — in the Secret, a finding, or an
   error.
@@ -2917,12 +2917,12 @@ token Secret, signs the login out, and writes `gsd-cluster-<name>` with `token-s
 
 <!-- block: charts/group-sync-dashboard/README.md | edit -->
 ```markdown
-[`CLUSTER_CREDENTIALS.md`](CLUSTER_CREDENTIALS.md), beside this file.
+[`CLUSTER_CREDENTIALS.md`](docs/CLUSTER_CREDENTIALS.md), beside this file.
 ```
 
 ```markdown
-[`CLUSTER_CREDENTIALS.md`](CLUSTER_CREDENTIALS.md), beside this file. The repair itself, step by step (Refresh,
-then Rejoin, then the manual fallback), is [`RUNBOOK.md`](RUNBOOK.md).
+[`CLUSTER_CREDENTIALS.md`](docs/CLUSTER_CREDENTIALS.md), beside this file. The repair itself, step by step (Refresh,
+then Rejoin, then the manual fallback), is [`RUNBOOK.md`](docs/RUNBOOK.md).
 ```
 
 <!-- block: charts/group-sync-dashboard/values.yaml | edit -->
@@ -2937,12 +2937,12 @@ then Rejoin, then the manual fallback), is [`RUNBOOK.md`](RUNBOOK.md).
 
 <!-- block: docs/README.md | edit -->
 ```markdown
-- [RUNBOOK_backup_restore.md](RUNBOOK_backup_restore.md) — back up and restore the dashboard's history.
+- [RUNBOOK_backup_restore.md](../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md) — back up and restore the dashboard's history.
 ```
 
 ```markdown
-- [RUNBOOK_backup_restore.md](RUNBOOK_backup_restore.md) — back up and restore the dashboard's history.
-- [RUNBOOK.md](../charts/group-sync-dashboard/RUNBOOK.md) — a remote cluster's connection is broken: find out why, then Refresh and Rejoin; kept beside the chart's values.
+- [RUNBOOK_backup_restore.md](../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md) — back up and restore the dashboard's history.
+- [RUNBOOK.md](../charts/group-sync-dashboard/docs/RUNBOOK.md) — a remote cluster's connection is broken: find out why, then Refresh and Rejoin; kept beside the chart's values.
 ```
 
 <!-- block: local-development/API.md | edit -->
@@ -3005,7 +3005,7 @@ password, stripped and casefolded, is the username or lies inside it; #447). A s
 the person and the account and carries no credential.
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
 | Status | D1, D2 (`remote-sar` + `same-as-host`, the standard for every way a cluster is joined) and D5 built in SPEC_D2b (#338), the remote failure hold with them; D3 needs no code; D6's lab policy applied there; D4's fail-closed fallback built, its named finding recommended, not built; D7 directed, not built (#322); D8 open (§8) |
 ```
@@ -3014,7 +3014,7 @@ the person and the account and carries no credential.
 | Status | D1, D2 (`remote-sar` + `same-as-host`, the standard for every way a cluster is joined) and D5 built in SPEC_D2b (#338), the remote failure hold with them; D3 needs no code; D6's lab policy applied there; D4's fail-closed fallback built, its named finding recommended, not built; D7 built (#322); D8 directed 2026-09-26 and built with Rejoin (#316, `docs/specs/SPEC_D4_cluster_rejoin.md`) |
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
 is joined. It also defines who may join or rejoin a cluster (§7): D7 (directed, not built) makes a person's join or
 Rejoin a cluster-admin action checked on the host. Today the tab's writes ask only `create secrets` in the dashboard's
@@ -3027,7 +3027,7 @@ cluster-admin action checked on the host, and D8 (built with #316) has the remot
 login. The automatic lookup is started by configuration, not by a person.
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
 exchange started by a person with their own credentials. It is not built: the tab accepts only a pasted bearer token
 and refuses a username and password with `oauth-exchange-not-built`
@@ -3040,7 +3040,7 @@ exchange started by a person with their own credentials (`local-development/gsd/
 there is refused with `oauth-exchange-not-built` (`local-development/gsd/clusterconfig/writer.py#validate`).
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
 not cluster admin (§5). A person's Rejoin would be gated twice: on the host before the password exists (D7), and on
 the remote once it does (D8). Dashed boxes are proposed and not built.*
@@ -3051,7 +3051,7 @@ not cluster admin (§5). A person's Rejoin is gated twice: on the host before th
 the remote once it does (D8).*
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
  HOST    Rejoin (#316, not built), a person on the tab
 ```
@@ -3060,7 +3060,7 @@ the remote once it does (D8).*
  HOST    Rejoin (#316), a person on the tab
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
  REMOTE  2 (D8, proposed, Rejoin only) SelfSubjectAccessReview: update clusterrolebindings?
              no -> refuse and revoke; the fleet account skips this step
@@ -3072,7 +3072,7 @@ the remote once it does (D8).*
              the fleet account skips this step
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
 | Rejoin (#316) | not built | `clusterAdminSar`, then D8 on the remote | the host, then the remote | the person's own username and password, once, never stored |
 ```
@@ -3081,16 +3081,16 @@ the remote once it does (D8).*
 | Rejoin (#316) | `clusterAdminSar` on the host, then D8 on the remote | unchanged | the host, then the remote | the person's own username and password, once, never stored |
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
-| **D8** | Confirm a Rejoin credential on the remote | none; or one `SelfSubjectAccessReview` with the login's own token (`update clusterrolebindings`, #322's cluster-admin question), refusing and revoking on no | **Open**, recommended for Rejoin only. It enforces D7's rule with the remote's own RBAC once a credential exists and needs no new grant (`system:basic-user`). The login's token is `user:full` (`docs/DESIGN_session_and_signout.md`), so the review answers with the person's own RBAC and groups, with no group lookup. It refuses a namespace admin of `group-sync-operator`, whom the `admin` role lets read the token Secret (§5). Like #322's, the question is a threshold: `cluster-admin` passes it, and so would any other role that grants the verb. The fleet account skips it. |
+| **D8** | Confirm a Rejoin credential on the remote | none; or one `SelfSubjectAccessReview` with the login's own token (`update clusterrolebindings`, #322's cluster-admin question), refusing and revoking on no | **Open**, recommended for Rejoin only. It enforces D7's rule with the remote's own RBAC once a credential exists and needs no new grant (`system:basic-user`). The login's token is `user:full` (`docs/design/DESIGN_session_and_signout.md`), so the review answers with the person's own RBAC and groups, with no group lookup. It refuses a namespace admin of `group-sync-operator`, whom the `admin` role lets read the token Secret (§5). Like #322's, the question is a threshold: `cluster-admin` passes it, and so would any other role that grants the verb. The fleet account skips it. |
 ```
 
 ```markdown
-| **D8** | Confirm a Rejoin credential on the remote | none; or one `SelfSubjectAccessReview` with the login's own token (`update clusterrolebindings`, #322's cluster-admin question), refusing and revoking on no | **Directed** (the operator, 2026-09-26: *"we log the response from the remote cluster but don't make things very complicated. We can check if the person joining the cluster is also a cluster admin on the remote cluster."*), in its simple form, and built with Rejoin (#316, `docs/specs/SPEC_D4_cluster_rejoin.md`): one review, the remote's answer logged, a no reads and writes nothing. It enforces D7's rule with the remote's own RBAC once a credential exists and needs no new grant (`system:basic-user`). The login's token is `user:full` (`docs/DESIGN_session_and_signout.md`), so the review answers with the person's own RBAC and groups, with no group lookup. It refuses a namespace admin of `group-sync-operator`, whom the `admin` role lets read the token Secret (§5). Like #322's, the question is a threshold: `cluster-admin` passes it, and so would any other role that grants the verb. The fleet account skips it. |
+| **D8** | Confirm a Rejoin credential on the remote | none; or one `SelfSubjectAccessReview` with the login's own token (`update clusterrolebindings`, #322's cluster-admin question), refusing and revoking on no | **Directed** (the operator, 2026-09-26: *"we log the response from the remote cluster but don't make things very complicated. We can check if the person joining the cluster is also a cluster admin on the remote cluster."*), in its simple form, and built with Rejoin (#316, `docs/specs/SPEC_D4_cluster_rejoin.md`): one review, the remote's answer logged, a no reads and writes nothing. It enforces D7's rule with the remote's own RBAC once a credential exists and needs no new grant (`system:basic-user`). The login's token is `user:full` (`docs/design/DESIGN_session_and_signout.md`), so the review answers with the person's own RBAC and groups, with no group lookup. It refuses a namespace admin of `group-sync-operator`, whom the `admin` role lets read the token Secret (§5). Like #322's, the question is a threshold: `cluster-admin` passes it, and so would any other role that grants the verb. The fleet account skips it. |
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
 `self-only` and `hidden` clusters nothing changes. #322's Rejoin row is D7: the host will decide who may start one,
 and D8, if accepted, lets the remote refuse a credential that does not pass the same question there.
@@ -3226,7 +3226,7 @@ and D8 lets the remote refuse a credential that does not pass the same question 
   directory refused for that username is not sent again by that pod while it is the same password (the poller's
   credential gate, #315). The fleet account's name is refused. The route sits in the writes carve-out, so a default
   install has no Rejoin. `GET /api/clusterconfigs` rows gain `rejoinable`, and discovery counts a Rejoin over a
-  `saTokenLookup` stanza as that stanza's own Secret. `charts/group-sync-dashboard/RUNBOOK.md` walks the repair:
+  `saTokenLookup` stanza as that stanza's own Secret. `charts/group-sync-dashboard/docs/RUNBOOK.md` walks the repair:
   Refresh, then Rejoin, then the manual fallback. No RBAC change.
 ```
 

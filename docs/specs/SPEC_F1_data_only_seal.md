@@ -772,9 +772,9 @@ def test_t270_11_the_walk_document_states_the_recipe_the_check_runs():
     assert "page one" in sentence and "sealed" in sentence.replace("sealed_provenance", "")
 ```
 
-### Block 6 — `docs/DESIGN_reporting_service.md`: the provenance block says what the hash covers
+### Block 6 — `docs/design/DESIGN_reporting_service.md`: the provenance block says what the hash covers
 
-<!-- block: docs/DESIGN_reporting_service.md | edit -->
+<!-- block: docs/design/DESIGN_reporting_service.md | edit -->
 ```markdown
 ### 7.5 Never in a report
 ```

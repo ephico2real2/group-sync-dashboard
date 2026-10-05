@@ -385,7 +385,7 @@ def poll_once(
     #
     # getattr, not a direct call: tests stub this client with only the methods they exercise, and a
     # cosmetic field must not turn an old stub into an AttributeError mid-poll.
-    # The User objects: the Users tab's rows (docs/DESIGN_users_tab_logins.md), and the display
+    # The User objects: the Users tab's rows (docs/design/DESIGN_users_tab_logins.md), and the display
     # names every member surface shows. A failure here must not fail the poll — groups, bindings
     # and events do not depend on it — but it is no longer cosmetic, so a refusal is RECORDED and
     # the API and the tab say "unavailable, grant rbac.users" rather than "nobody has logged in".
@@ -805,7 +805,7 @@ def refresh_bindings(
     # Unmanaged-grant discovery. Runs LAST, after this cycle's rows are stored, so the
     # findings are computed from exactly what was just observed rather than from the previous
     # cycle. Nothing here writes to the cluster.
-    # docs/unmanaged-audit-design.md carries the invariants; gsd/audit.py the decisions.
+    # docs/design/unmanaged-audit-design.md carries the invariants; gsd/audit.py the decisions.
     if audit_mode == "log":
         # The poll thread's scheduler lists the new findings first and rotates the rest through
         # the cap; without one (a direct call, a test) the sorted first page as before.
@@ -1042,7 +1042,7 @@ class Poller:
              self.store.prune_sync_events),
             # binding_event shares membership_event's window: both are "who could reach what,
             # and since when", and a second knob for the same question would be one more
-            # thing to keep equal (docs/DESIGN_binding_events.md).
+            # thing to keep equal (docs/design/DESIGN_binding_events.md).
             ("binding_event", self.settings.membership_events_retention_days,
              self.store.prune_binding_events),
             # The Kyverno appeared/cleared history (#170): its own window, because a policy finding's

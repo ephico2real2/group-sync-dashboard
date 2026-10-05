@@ -54,7 +54,7 @@ issue, and what this spec shares with the other Epic E specs. Each is applied in
      (block 12, §3.4).
    - *2, the shallow refusal:* raised before any edit and recorded in the docstring's "WHAT IT REFUSES" (block 2).
      **Refinement:** only an application release reads the history. A chart-only release builds no image, so it
-     migrates nothing (`docs/RELEASING.md#A chart-only release`), and refusing it on a shallow clone would add a
+     migrates nothing (`docs/guides/RELEASING.md#A chart-only release`), and refusing it on a shallow clone would add a
      refusal with nothing to protect; `test_t300_6_a_chart_only_release_reads_no_history` holds that.
    - *3, the sandbox:* `FILES` gains `local-development/gsd/store.py` (block 8). Measured with the change applied
      and that one line removed: 14 of the file's 32 tests fail, 7 of them existing ones, every `--app` run refused
@@ -75,7 +75,7 @@ issue, and what this spec shares with the other Epic E specs. Each is applied in
      measured).
 2. **What this spec shares with SPEC_E2, SPEC_E3, SPEC_E4 and SPEC_E5, so the later one rebases mechanically.**
 
-   | passage of `docs/RUNBOOK_backup_restore.md` | other spec's block | this spec's block | how they meet |
+   | passage of `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` | other spec's block | this spec's block | how they meet |
    |---|---|---|---|
    | §4's opening, between the heading and "The dashboard is the only writer" | SPEC_E3 block 4 inserts **The script, in recovery mode (#302)** and **Undo a restore** | 15 inserts **In order.** after the heading line | disjoint: block 15's Old text is the heading line alone, so either order applies (measured on `b5463d45`+E2 and on the stack). Block 15 and block 16 name E3's paragraph by its bold title; a rename there must be carried here |
    | §4, recovery mode's step 3 | SPEC_E2 block 14 writes it | 16 rewrites its first two lines | depends on E2 (merged as a spec on main) |
@@ -182,7 +182,7 @@ issue, and what this spec shares with the other Epic E specs. Each is applied in
 whose version is bumped by hand, without `prepare-release.py`? One way is a test that every changelog heading whose
 image raised the schema carries the line. Today nothing else writes the line: the "App image changes bump the app
 version" job checks the version fields (`local-development/check-app-version-bump.py`), not the changelog, and
-`docs/RELEASING.md` (block 11) says a hand bump gets no line. This spec builds without it.
+`docs/guides/RELEASING.md` (block 11) says a hand bump gets no line. This spec builds without it.
 
 ## 1. The mandate, and what is out of scope
 
@@ -195,7 +195,7 @@ The issue (#300, "What must be accomplished"):
 2. No line when the schema did not move, and none on a chart-only release.
 3. The script keeps its refusals and its all-or-nothing behaviour: the schema is read before anything is edited, and
    a failure to read it edits nothing; the existing release tests still pass.
-4. `docs/RELEASING.md` says what the line means and when it appears.
+4. `docs/guides/RELEASING.md` says what the line means and when it appears.
 5. Runbook §0 "Before every upgrade": take the off-volume copy and confirm it landed (§2 with the offsite CronJob,
    §3 without); note the `user_version` you upgrade from without opening the live file; know where #301's
    pre-upgrade copy will be written and that it needs free space of at least the database's size.
@@ -242,7 +242,7 @@ Today's entries name migrations in prose when the author remembers ("schema migr
 version X (X.y.z | X > 0) MUST be incremented if any backward incompatible changes are introduced to the public API."
 
 **Settles.** This repository versions the application MINOR per merged issue and MAJOR per closed epic
-(`docs/RELEASING.md#Releasing`), and a migration ships with the next MINOR in its own pull request (#298's guard,
+(`docs/guides/RELEASING.md#Releasing`), and a migration ships with the next MINOR in its own pull request (#298's guard,
 `local-development/tests/test_migration_needs_app_release.py#assert_schema_released`). So a one-way schema move rides a
 MINOR; nothing in the number says it. The line is that signal.
 
@@ -398,7 +398,7 @@ tildes as the opening code fence."
 - **The runbook:** on `b5463d45`, `## 1.` to `## 6.` and no `## 0.`; `:0.15.0` pinned in §4b's helper pod;
   `"version": "0.15.0"` expected in §4c; `oc scale` to stop and start. On the stack, §4 already carries SPEC_E2's
   recovery mode and SPEC_E3's script (Orchestrator's notes, 3).
-- **What cites the runbook's numbers:** the store's refusals "(docs/RUNBOOK_backup_restore.md §4; after an upgrade,
+- **What cites the runbook's numbers:** the store's refusals "(charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4; after an upgrade,
   the pre-upgrade copy in §6)" and "§6", pinned by `local-development/tests/test_migrations.py`; a chart refusal "§5"
   (`charts/group-sync-dashboard/templates/_helpers.tpl#§5 covers moving the data`); links to `#6-pre-upgrade-copies`
   from the chart README and the changelog, and to `#4c-bring-it-back-and-verify` from the changelog.
@@ -603,7 +603,7 @@ dashboard ServiceAccount is untouched), no GUI action.
 | T300-5 | block 8 (`FILES` gains `store.py`); no test removed or weakened | not a failing test: with the change and without that line, 14 of 32 fail, 7 of the 22 existing (§4.2) |
 | T300-6 | `test_t300_6_a_shallow_history_is_refused_before_anything_is_edited`; `test_t300_6_an_unreadable_migrations_list_is_refused_before_anything_is_edited`; `test_t300_6_a_schema_that_fell_is_refused_before_anything_is_edited`; `test_t300_6_a_chart_only_release_reads_no_history` | today a shallow clone and a fallen schema release with no check (exit 0), and an unreadable entry is never read; the last is a guard of the refusals' scope |
 | T300-7 | the file's existing 22 tests, unchanged, and `tests/test_migration_needs_app_release.py`'s 7 | regression guard |
-| T300-8 | `test_t300_8_releasing_md_states_the_line_and_when_it_appears` | `docs/RELEASING.md` has no such text, and `prep.SCHEMA_LINE` does not exist |
+| T300-8 | `test_t300_8_releasing_md_states_the_line_and_when_it_appears` | `docs/guides/RELEASING.md` has no such text, and `prep.SCHEMA_LINE` does not exist |
 | T300-9 | `test_t300_9_section_0_comes_first_and_covers_the_three_steps` | no `## 0.` heading |
 | T300-10 | `test_t300_10_section_4_is_recovery_mode_and_the_script_with_oc_debug_as_the_fallback` | no **In order.** paragraph; an `oc scale` command line in §4; no `replicaCount: 0` |
 | T300-11 | `test_t300_11_no_stale_version_and_the_fallback_keeps_the_wal` | `group-sync-dashboard:0.15.0` and `"version": "0.15.0"` are in the runbook; "Scale to 0" is in §4 |
@@ -655,7 +655,7 @@ T300-5, measured with all blocks applied and block 8's `store.py` line removed f
 ### 4.3 Measured: where the blocks apply, and what else runs
 
     $ python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E7_schema_line_and_runbook.md <tree>
-    eade4c2a (main)                                FAIL block 16 (docs/RUNBOOK_backup_restore.md | edit): Old text occurs 0 times
+    eade4c2a (main)                                FAIL block 16 (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit): Old text occurs 0 times
     eade4c2a without blocks 16, 17 and 19          19 blocks check out across 7 files
     eade4c2a + SPEC_E2                             22 blocks check out across 7 files
     eade4c2a + SPEC_E2 + SPEC_E3 (as merged)       22 blocks check out across 7 files
@@ -1037,7 +1037,7 @@ def test_t300_3_no_line_when_the_schema_did_not_move(sandbox: pathlib.Path) -> N
 
 
 def test_t300_4_no_line_on_a_chart_only_release(sandbox: pathlib.Path) -> None:
-    """A chart-only release builds no image (docs/RELEASING.md, the chart-only flow), so it migrates nothing."""
+    """A chart-only release builds no image (docs/guides/RELEASING.md, the chart-only flow), so it migrates nothing."""
     add_migrations(sandbox, 1)
     target = _next_chart_patch(sandbox)
     done = run(sandbox, "--chart", target, "A template change", "--no-commit")
@@ -1110,7 +1110,7 @@ def test_t300_6_a_chart_only_release_reads_no_history(sandbox: pathlib.Path, tmp
 
 
 def test_t300_8_releasing_md_states_the_line_and_when_it_appears() -> None:
-    text = (REPO / "docs" / "RELEASING.md").read_text()
+    text = (REPO / "docs" / "guides" / "RELEASING.md").read_text()
     section = text.split("### An application release", 1)[1].split("### A chart-only release", 1)[0]
     assert prep.SCHEMA_LINE.format(then="N", now="M") in section, "the exact line, as the script writes it"
     assert f"- **Schema N → M.** {SCHEMA_SENTENCE}" in section
@@ -1118,11 +1118,11 @@ def test_t300_8_releasing_md_states_the_line_and_when_it_appears() -> None:
         assert words in section, words
 ```
 
-### Block 10 — docs/RELEASING.md: step 6 names the line
+### Block 10 — docs/guides/RELEASING.md: step 6 names the line
 
 T300-8.
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 
 Old text:
 
@@ -1139,11 +1139,11 @@ New text:
    everything merged since the last release beneath it.
 ```
 
-### Block 11 — docs/RELEASING.md: what the line means and when it appears
+### Block 11 — docs/guides/RELEASING.md: what the line means and when it appears
 
 T300-8.
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 
 Old text:
 
@@ -1224,8 +1224,8 @@ New text:
   anything, and when HEAD's is higher writes a bullet under the release's reason: `Schema N → M.`, the first start
   on the image migrates the database one way, and the pre-upgrade copy (#301) and `restore-db.sh` (#302) are the way
   back. A chart-only release reads nothing and gets no line; an application release on a shallow clone is refused
-  with nothing edited. `docs/RELEASING.md` says what the line means and when it appears, and the epic skill's
-  release note lists the children's lines. `docs/RUNBOOK_backup_restore.md` gains §0, "Before every upgrade": read
+  with nothing edited. `docs/guides/RELEASING.md` says what the line means and when it appears, and the epic skill's
+  release note lists the children's lines. `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` gains §0, "Before every upgrade": read
   the schema lines and the schema you leave (the running image's `KNOWN_SCHEMA_VERSION`, no live file opened), take
   an off-volume copy and confirm it (§2 with the offsite CronJob, §3 without), and check the free space the
   pre-upgrade copy needs. §4 opens with the order (recovery mode, `restore-db.sh`, recovery mode off), points its
@@ -1235,11 +1235,11 @@ New text:
 
 ```
 
-### Block 14 — docs/RUNBOOK_backup_restore.md: §0, before every upgrade
+### Block 14 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §0, before every upgrade
 
 T300-9 (§3.5): a new section after the opening, before the pictures.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1319,11 +1319,11 @@ its values file), do these three things. None of them stops the dashboard.
 ## What a successful backup looks like
 ```
 
-### Block 15 — docs/RUNBOOK_backup_restore.md: §4 opens with the order and the rule
+### Block 15 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4 opens with the order and the rule
 
 T300-10 (§3.6).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1344,11 +1344,11 @@ release goes through its values file and its deployment pipeline, never `oc scal
 controller that self-heals, Argo CD's for one, reverts a hand edit to an object it renders.
 ```
 
-### Block 16 — docs/RUNBOOK_backup_restore.md: §4, step 3 restores with the script, the manual paths as its fallback
+### Block 16 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4, step 3 restores with the script, the manual paths as its fallback
 
 T300-10 (§3.6); SPEC_E2's text. Applies after SPEC_E2's runbook blocks (its text).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1367,11 +1367,11 @@ New text:
    or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
 ```
 
-### Block 17 — docs/RUNBOOK_backup_restore.md: §4, without recovery mode: the writer stops through the values file, not `oc scale`
+### Block 17 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4, without recovery mode: the writer stops through the values file, not `oc scale`
 
 T300-10 (§3.7); SPEC_E2's text. Applies after SPEC_E2's runbook blocks (its text).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1394,11 +1394,11 @@ Deployment's `replicas` and the configuration's copy of the number, not the clai
 ```sh
 ```
 
-### Block 18 — docs/RUNBOOK_backup_restore.md: §4b's helper pod runs the Deployment's image, not 0.15.0
+### Block 18 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4b's helper pod runs the Deployment's image, not 0.15.0
 
 T300-11.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1412,11 +1412,11 @@ New text:
       image: <the Deployment's image>   # oc get deploy -n $NS $REL -o jsonpath='{.spec.template.spec.containers[0].image}'
 ```
 
-### Block 19 — docs/RUNBOOK_backup_restore.md: §4c brings the app back through the values file
+### Block 19 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4c brings the app back through the values file
 
 T300-10 (§3.7); SPEC_E2's text. Applies after SPEC_E2's runbook blocks (its text).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1437,11 +1437,11 @@ and roll it out. The app starts on the restored file:
 ```sh
 ```
 
-### Block 20 — docs/RUNBOOK_backup_restore.md: §4c expects the version the release runs, in the shape `/api/version` prints
+### Block 20 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4c expects the version the release runs, in the shape `/api/version` prints
 
 T300-11 (§2.9).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1458,11 +1458,11 @@ rollback, as `gsd_build_info` on `/metrics` says too (with `oauthProxy.enabled` 
 inside the pod is the honest check).
 ```
 
-### Block 21 — docs/RUNBOOK_backup_restore.md: §4c, after a refusal: recovery mode, not a scale to 0
+### Block 21 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4c, after a refusal: recovery mode, not a scale to 0
 
 T300-10 (§3.7).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1489,7 +1489,7 @@ T300-9 to T300-12 (§4).
 <!-- block: local-development/tests/test_runbook_backup_restore.py | create -->
 
 ```python
-"""docs/RUNBOOK_backup_restore.md, as #300 left it: §0 before every upgrade, §4 around recovery mode (#303) and
+"""charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, as #300 left it: §0 before every upgrade, §4 around recovery mode (#303) and
 restore-db.sh (#302) with the manual paths as the fallback, and the section numbers the code cites.
 
 The runbook is the procedure an operator follows at 03:00, so these read it as text: a heading renumbered or a
@@ -1503,7 +1503,7 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-RUNBOOK = REPO / "docs" / "RUNBOOK_backup_restore.md"
+RUNBOOK = REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md"
 TEXT = RUNBOOK.read_text()
 HEADINGS = re.findall(r"^## (\d+)\. (.+)$", TEXT, re.M)
 

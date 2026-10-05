@@ -16,4 +16,4 @@ three schedule shapes `environments/crc.yaml` declares. Every line below is the 
 | no uncaught error | `errors : []` |
 
 Captures: `01-status-strip.png`, `02-schedules.png`, `03-history.png`, `04-375.png`. The live check of
-R1/R3/R4 that ran on the same deploy is in `docs/REVIEW_schedules_and_formats.md`.
+R1/R3/R4 that ran on the same deploy is in `docs/reviews/REVIEW_schedules_and_formats.md`.
