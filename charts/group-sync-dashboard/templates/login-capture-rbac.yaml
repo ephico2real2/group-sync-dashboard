@@ -1,0 +1,53 @@
+{{- $source := include "gsd.loginCaptureSource" . }}
+{{- if and .Values.loginCapture.enabled (eq $source "audit-log") }}
+# Lets the DASHBOARD read the oauth-server's AUDIT log on the control-plane nodes.
+#
+# A ClusterRole, and the reason is the resource: node logs are reached through the API server's
+# node proxy — GET /api/v1/nodes/<node>/proxy/logs/oauth-server/audit.log, what `oc adm node-logs`
+# issues — which the API server authorises as `get nodes/proxy`. That verb on that subresource is
+# READ ACCESS TO EVERYTHING THE KUBELET SERVES OVER GET: every container's log on the node
+# (/containerLogs/<ns>/<pod>/<container>), the kube-apiserver and openshift-apiserver audit logs,
+# the journal. Read-only and cluster-wide. `resourceNames` narrows it to
+# named nodes when loginCapture.auditLog.nodeNames is set — honoured for `get`, which is the only
+# verb here — and then no `list nodes` is needed or granted.
+#
+# No pods or pods/log grant, and no authentication-operator write.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "gsd.fullname" . }}-login-capture-audit
+  labels:
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
+    app.kubernetes.io/component: login-capture
+rules:
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"]
+    {{- with .Values.loginCapture.auditLog.nodeNames }}
+    resourceNames: {{ toJson . }}
+    {{- end }}
+  {{- if not .Values.loginCapture.auditLog.nodeNames }}
+  # Discovery of the control-plane nodes by selector. Node objects are metadata (names, labels,
+  # addresses, versions); `list` cannot be narrowed by name, which is exactly what pinning
+  # nodeNames buys — with names set this rule does not render.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list"]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "gsd.fullname" . }}-login-capture-audit
+  labels:
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
+    app.kubernetes.io/component: login-capture
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "gsd.fullname" . }}-login-capture-audit
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gsd.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

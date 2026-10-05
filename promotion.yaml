@@ -1,0 +1,8 @@
+# Written by .github/workflows/promote.yml for main cb832a6a691fc2f4ccc890801fb7b05461c996ab: the images it read back, by digest.
+image:
+  repository: quay.io/ephico2real/group-sync-dashboard
+  digest: sha256:cfd0cd28d3fb6a49b6cf8de6b54d11a26de1d4b6f251391a53a23348494d8a8d
+reporting:
+  image:
+    repository: quay.io/ephico2real/group-sync-dashboard-report
+    digest: sha256:2172be1bcea40f1ee1d3f78b951c203849b4bd7a5bdd3eced87048d653f8a47a

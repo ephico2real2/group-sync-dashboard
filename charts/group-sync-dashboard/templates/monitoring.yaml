@@ -1,0 +1,404 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+# Requires the Prometheus Operator CRDs. Off by default (operator decision, chart 0.14.0): the
+# reference cluster runs no Prometheus, and applying this where the CRDs are absent fails the
+# whole install. Rendering with it on is verified by the chart tests and was applied live once.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "gsd.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}{{- toYaml . | nindent 4 }}{{- end }}
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    # ServiceMonitor is a CRD from the Prometheus Operator. Argo dry-runs every resource
+    # before applying, and a dry-run against a CRD that is not installed FAILS THE WHOLE
+    # SYNC — not just this resource. That turns "monitoring is not installed yet" into
+    # "nothing deploys", which is a disproportionate failure for an optional extra.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  {{- end }}
+spec:
+  selector:
+    matchLabels: {{- include "gsd.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      {{- if .Values.oauthProxy.enabled }}
+      # HTTPS, because the Service port named `http` targets the PROXY container port when
+      # the proxy is on, and that port speaks TLS only. Prometheus scrapes the pod IP at
+      # that port, so the default `http` scheme fails the handshake on EVERY scrape —
+      # silently, while the Service and the ServiceMonitor both look correct.
+      #
+      # No credential is needed: /metrics is in oauthProxy.skipAuthRegex, so the proxy
+      # passes it through unauthenticated. That is also why the exporter emits counts and
+      # states only, never a group or user name.
+      scheme: https
+      tlsConfig:
+        # VERIFIED — and this block used to say it could not be. The old comment reasoned that
+        # service-ca issues the certificate for the SERVICE DNS name while Prometheus dials the
+        # POD IP, so the name can never match (true), and concluded that verification therefore
+        # had to be off "regardless of how trust is configured" (false). `serverName` sets the
+        # name that is VERIFIED independently of the address dialled, which is what it is for.
+        #
+        # Measured on the reference cluster — connecting to the pod IP while verifying against
+        # the service name, which is exactly what these two fields ask Prometheus to do:
+        #   curl --cacert .../service-ca.crt \
+        #        --resolve 'group-sync-dashboard.<ns>.svc:8443:10.217.0.157' \
+        #        https://group-sync-dashboard.<ns>.svc:8443/metrics
+        #     -> HTTP 200, ssl_verify_result=0
+        # The same call with no --cacert is REFUSED, so that success is real verification and
+        # not a handshake that would have passed anyway.
+        #
+        # The certificate carries the service DNS names and nothing else, which is why
+        # `serverName` must name the Service rather than the pod:
+        #   DNS:<name>.<ns>.svc, DNS:<name>.<ns>.svc.cluster.local
+        #
+        # OPENSHIFT-ONLY, deliberately. `openshift-service-ca.crt` is injected into every
+        # namespace by the service-ca operator, and the Prometheus Operator resolves a
+        # configMap reference against the ServiceMonitor's OWN namespace, so it resolves here
+        # with nothing copied in. Vanilla Kubernetes has neither that ConfigMap nor the serving
+        # certificate — but it also has no Route, no oauth-proxy sidecar and no
+        # user.openshift.io, so this chart is already OpenShift-shaped.
+        ca:
+          configMap:
+            name: openshift-service-ca.crt
+            key: service-ca.crt
+        serverName: {{ printf "%s.%s.svc" (include "gsd.fullname" .) .Release.Namespace | quote }}
+      {{- end }}
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+{{- if eq (include "gsd.reportingEnabled" .) "true" }}
+---
+# The report service's own exposition (gsd_report_*), scraped on its Service. Same CA and
+# serverName rule as above; /report/metrics is unauthenticated on the Service and reachable from
+# the monitoring namespaces through the NetworkPolicy.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "gsd.reportName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.reportLabels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}{{- toYaml . | nindent 4 }}{{- end }}
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  {{- end }}
+spec:
+  selector:
+    matchLabels: {{- include "gsd.reportSelectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: https
+      path: /report/metrics
+      {{- if .Values.reporting.tls.enabled }}
+      scheme: https
+      tlsConfig:
+        ca:
+          configMap:
+            name: openshift-service-ca.crt
+            key: service-ca.crt
+        serverName: {{ printf "%s.%s.svc" (include "gsd.reportName" .) .Release.Namespace | quote }}
+      {{- end }}
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+{{- end }}
+{{- end }}
+{{- if .Values.monitoring.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "gsd.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}{{- toYaml . | nindent 4 }}{{- end }}
+  {{- if .Values.argocd.enabled }}
+  annotations:
+    # Same reasoning as the ServiceMonitor above.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  {{- end }}
+spec:
+  groups:
+    - name: {{ include "gsd.fullname" . }}
+      rules:
+        # The metric is a unix timestamp, not a precomputed age, so the threshold is
+        # visible and tunable here rather than baked into the exporter.
+        - alert: GroupSyncOverdue
+          expr: (time() - gsd_groupsync_last_sync_timestamp_seconds) > {{ .Values.monitoring.prometheusRule.overdueSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.overdue }}
+          labels: {severity: warning}
+          annotations:
+            summary: "GroupSync {{ `{{ $labels.groupsync }}` }} has not synced recently"
+            description: >-
+              Last successful sync was {{ `{{ $value | humanizeDuration }}` }} ago on
+              cluster {{ `{{ $labels.cluster }}` }}.
+
+        # The group was operator-managed and has disappeared, so the binding grants nobody
+        # while `oc get rolebinding` shows a healthy object.
+        - alert: DanglingRoleBinding
+          expr: gsd_bindings_total{finding="dangling"} > 0
+          for: {{ .Values.monitoring.prometheusRule.for.dangling }}
+          labels: {severity: critical}
+          annotations:
+            summary: "{{ `{{ $value }}` }} RoleBinding(s) grant access to a group that no longer exists"
+
+        # Catches a dead poll loop, which the health endpoints structurally cannot:
+        # /healthz is unconditional and /readyz only reads the store, so both stay green
+        # while the dashboard serves frozen data.
+        - alert: GroupSyncDashboardNotPolling
+          expr: (time() - gsd_cluster_last_poll_timestamp_seconds) > {{ .Values.monitoring.prometheusRule.notPollingSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.notPolling }}
+          labels: {severity: critical}
+          annotations:
+            summary: "Dashboard has not polled {{ `{{ $labels.cluster }}` }} recently"
+            description: >-
+              The data shown is stale. The pod may be running and reporting healthy while
+              its poll loop has stopped.
+
+        - alert: GroupSyncClusterUnreachable
+          expr: gsd_cluster_up == 0
+          for: {{ .Values.monitoring.prometheusRule.for.unreachable }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Dashboard cannot poll cluster {{ `{{ $labels.cluster }}` }}"
+
+        - alert: GroupSyncDashboardDirectUserGrants
+          expr: gsd_alerts_total{kind="direct_user_binding"} > 0
+          for: {{ .Values.monitoring.prometheusRule.for.directUserGrants }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Namespaces still grant access to people, not LDAP groups"
+            description: >-
+              One or more RoleBindings name a User subject directly. Those grants survive
+              offboarding — removing someone from an LDAP group revokes their access
+              everywhere at once, while a binding that names them keeps granting until
+              somebody remembers it exists — and no group-based access review can see
+              them. The dashboard's Namespace audit tab lists them per namespace with the
+              migration path. Platform identities and kubeadmin are excluded.
+
+        - alert: GroupSyncDashboardConfigReconcileError
+          expr: gsd_alerts_total{kind="config_reconcile_error"} > 0
+          for: {{ .Values.monitoring.prometheusRule.for.configError }}
+          labels: {severity: critical}
+          annotations:
+            summary: "A NamespaceConfig/GroupConfig is failing to reconcile"
+            description: >-
+              The namespace-configuration-operator CR named in the dashboard's alerts view
+              is currently failing. These CRs template the RoleBindings that give synced
+              groups their access, so while this persists RBAC has silently stopped
+              reconciling: new namespaces receive no bindings and drift stops being
+              corrected. Nothing else on the cluster reports this.
+
+        {{- if .Values.config.alerts.groupCountCliff.enabled }}
+        # A group lost config.alerts.groupCountCliff.dropRatio of at least minMembers members
+        # within windowHours. The unsilenced kind ONLY: a cliff an administrator silenced (the
+        # Group annotation or the values list) is exported as kind=group_count_cliff_silenced
+        # and must not page. Rendered only while the module is on — a rule on a kind the
+        # collector never emits can never fire (docs/DESIGN_metrics_refresh.md §5.2).
+        - alert: GroupSyncGroupCountCliff
+          expr: gsd_alerts_total{kind="group_count_cliff"} > 0
+          for: {{ .Values.monitoring.prometheusRule.for.groupCountCliff }}
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ `{{ $value }}` }} group(s) on {{ `{{ $labels.cluster }}` }} lost at least {{ printf "%g" (mulf (.Values.config.alerts.groupCountCliff.dropRatio | float64) 100.0) }}% of their members"
+            description: >-
+              A synced group's membership fell by the configured ratio within the window.
+              The dashboard's Overview names the group and the before/after counts; compare
+              the group's LDAP entry with its GroupSync CR's last sync. If the drop is
+              expected, annotate the Group with
+              groupsync-dashboard.io/silence-group-count-cliff=until=YYYY-MM-DD — the
+              alert then reports as silenced instead of firing.
+        {{- end }}
+        # Both of the following are SILENT failures: the pod stays Ready, every other metric
+        # looks normal, and the first visible symptom is a full volume or a latency cliff.
+        - alert: GroupSyncDashboardWalGrowing
+          expr: gsd_sqlite_wal_bytes > {{ .Values.monitoring.prometheusRule.walMiB }} * 1024 * 1024
+          for: {{ .Values.monitoring.prometheusRule.for.walGrowing }}
+          labels: {severity: warning}
+          annotations:
+            summary: "SQLite write-ahead log is not being checkpointed"
+            description: >-
+              Checkpoints yield to open readers, so a sustained read load can starve them.
+              The WAL then grows until the PVC fills while the database file stays small.
+              Check gsd_sqlite_checkpoint_busy_total: if it rises every cycle, the
+              checkpoint is being starved rather than merely lagging.
+
+        - alert: GroupSyncDashboardWalDisabled
+          expr: gsd_sqlite_wal_enabled == 0
+          for: {{ .Values.monitoring.prometheusRule.for.walDisabled }}
+          labels: {severity: warning}
+          annotations:
+            summary: "SQLite is not in WAL mode; reads block on every write"
+            description: >-
+              WAL was requested but the filesystem refused it, which is expected on NFS, EFS
+              and SMB. Without it a reader blocks for the whole duration of the poll's bulk
+              write, so API latency tracks the write rather than being independent of it.
+              Move the database to block storage.
+
+        # The fail-closed visibility control. Every outcome here except allowed/denied is a
+        # check that FAILED and served the self view fail-closed — safe, and completely
+        # silent: the reader sees their own data, not an error, so nothing else reports
+        # this. A fail-closed control with no alert is indistinguishable from a broken one.
+        - alert: GroupSyncDashboardVisibilityChecksFailing
+          expr: >-
+            sum(increase(gsd_visibility_tier_checks_total{
+              outcome=~"unreachable|auth_failed|forbidden|error"}[15m])) > 0
+          for: {{ .Values.monitoring.prometheusRule.for.visibilityFailing }}
+          labels: {severity: critical}
+          annotations:
+            summary: "Visibility tier checks are failing; readers are being served the self view fail-closed"
+            description: >-
+              The SubjectAccessReview behind per-user visibility is erroring rather than
+              answering, so every affected reader silently receives only their own data.
+              outcome=forbidden usually means the ServiceAccount lost `create
+              subjectaccessreviews` (the system:auth-delegator grant);
+              unreachable/auth_failed point at the API server or the ServiceAccount token.
+              The pod log names the affected viewers.
+
+        # Capture rides the poll thread, so its cadence is pollIntervalSeconds; stale by
+        # this much means it stopped (grant revoked, oauth pods unreadable, thread dead)
+        # while the Logins page silently freezes and the pod stays Ready.
+        #
+        # `and on()`, not a bare `and`: the enabled gauge is unlabelled while the staleness
+        # side carries {cluster} (plus target labels), so default matching would never pair
+        # them and the alert could never fire.
+        - alert: GroupSyncDashboardLoginCaptureStalled
+          expr: >-
+            (time() - gsd_login_capture_last_read_timestamp_seconds)
+              > {{ .Values.monitoring.prometheusRule.captureStalledSeconds }}
+            and on() (gsd_login_capture_enabled == 1)
+          for: {{ .Values.monitoring.prometheusRule.for.captureStalled }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Login capture has stopped reading the oauth-server log on {{ `{{ $labels.cluster }}` }}"
+            description: >-
+              No successful oauth-log read for {{ `{{ $value | humanizeDuration }}` }}.
+              Attempts made in this window are recorded only as far back as the log's
+              retention reaches, so the gap becomes permanent if it outlives the pod log.
+
+        # The only copy of the data that cannot be re-fetched from the cluster. The metric
+        # reads the newest file in backupDir (above one replica, the newest that pod wrote,
+        # so each replica's series is its own; a pod that has written none yet, as every pod
+        # after a rollout, reads the whole directory), so this fires on every failure shape —
+        # including a wrong directory and rotation deleting everything. No series while
+        # backups are disabled, so a deployment without backupDir never alerts.
+        - alert: GroupSyncDashboardBackupStale
+          expr: >-
+            (time() - gsd_backup_last_success_timestamp_seconds)
+              > {{ .Values.monitoring.prometheusRule.backupStaleSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.backupStale }}
+          labels: {severity: critical}
+          annotations:
+            summary: "No successful database backup within the expected window"
+            description: >-
+              The newest backup in backupDir (above one replica, the newest this pod wrote, or
+              the directory's newest until it has written one) is
+              {{ `{{ $value | humanizeDuration }}` }} old —
+              at least two backup intervals. The sync and membership history exists only in
+              this database; check gsd_backup_failures_total for active failures and the
+              pod log for the cause.
+        {{- if eq (include "gsd.offsiteOn" .) "true" }}
+
+        # Rendered exactly when the offsite CronJob is: one helper decides both.
+        # The app cannot see its own CronJob, so these two read kube-state-metrics. On
+        # OpenShift the platform stack scrapes it for every namespace and user-workload rules
+        # are evaluated against the Thanos querier that federates it, so the series is
+        # normally visible here. Where kube-state-metrics is absent the second rule fires and
+        # stays firing — an alert that could never fire would be indistinguishable from
+        # healthy, which is the GroupSyncDashboardNotPolling lesson applied to a Job.
+        - alert: GroupSyncDashboardOffsiteBackupStale
+          expr: >-
+            (time() - max(kube_cronjob_status_last_successful_time{namespace="{{ .Release.Namespace }}",cronjob="{{ include "gsd.fullname" . }}-backup-offsite"}))
+              > {{ .Values.monitoring.prometheusRule.offsiteBackupStaleSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.offsiteBackupStale }}
+          labels: {severity: critical}
+          annotations:
+            summary: "The off-volume backup CronJob has not succeeded within the expected window"
+            description: >-
+              {{ include "gsd.fullname" . }}-backup-offsite last succeeded
+              {{ `{{ $value | humanizeDuration }}` }} ago — at least two schedule slots. A run
+              fails when either of its passes fails: nothing newer is off the volume, or, at one
+              replica, the newest pre-upgrade copy is refused while the six-hourly copies still ship.
+              `oc get jobs -l app.kubernetes.io/component=backup-offsite` and the failed pod's
+              log name the cause; docs/RUNBOOK_backup_restore.md has the manual run.
+        - alert: GroupSyncDashboardOffsiteBackupUnobserved
+          expr: >-
+            absent(kube_cronjob_status_last_successful_time{namespace="{{ .Release.Namespace }}",cronjob="{{ include "gsd.fullname" . }}-backup-offsite"})
+          for: {{ .Values.monitoring.prometheusRule.for.offsiteBackupUnobserved }}
+          labels: {severity: warning}
+          annotations:
+            summary: "No record of the off-volume backup CronJob ever succeeding"
+            description: >-
+              kube_cronjob_status_last_successful_time has no series for
+              {{ include "gsd.fullname" . }}-backup-offsite. Either the CronJob has never once
+              completed (it exists only after the first success), or kube-state-metrics is not
+              scraped into this Prometheus — in which case the stale alert above can never fire
+              and this one is the only signal.
+        {{- end }}
+        {{- if eq (include "gsd.reportingEnabled" .) "true" }}
+        # The dashboard's poller could not pull the report service's usage feed for three
+        # consecutive scrapes' worth of cycles: token mismatch (refused), Service/TLS (unreachable),
+        # or a shape change (error). Runs are not lost — the feed is pulled from a watermark — but
+        # the Usage tab's "Reports" table stops advancing.
+        - alert: GroupSyncDashboardReportUsagePullFailing
+          expr: increase(gsd_report_usage_pulls_total{outcome!="ok"}[15m]) > 0 and increase(gsd_report_usage_pulls_total{outcome="ok"}[15m]) == 0
+          for: {{ .Values.monitoring.prometheusRule.for.reportPull }}
+          labels: {severity: warning}
+          annotations:
+            summary: "the dashboard cannot pull the report service's usage feed"
+            description: {{ printf "Check the report pod, the -shared-token Secret in both pods, and TLS (oc logs deploy/%s -c dashboard | grep 'report usage pull')." (include "gsd.fullname" .) | quote }}
+        # The newest snapshot the report service would render from is older than four snapshot
+        # intervals: the dashboard's leader is not writing copies (reporting off on one side, the
+        # data claim not mounted, or a VACUUM INTO failing — see the dashboard log).
+        - alert: GroupSyncDashboardReportSnapshotStale
+          expr: gsd_report_snapshot_age_seconds > {{ mul 4 .Values.reporting.snapshot.intervalSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.reportSnapshot }}
+          labels: {severity: warning}
+          annotations:
+            summary: "the report service's data copy is stale"
+            description: "gsd_report_snapshot_age_seconds is above four snapshot intervals; reports would print stale data with an honest 'data as of' line."
+        # A schedule that silently stopped producing evidence (#140). The report service exports the
+        # Reporting status page's own verdict per schedule, so the rule and the page cannot disagree:
+        # `late` already holds the page's 30-minute grace after the expected fire. `never` (no success on
+        # record) and `disabled` (paused) do not fire. A completed CronJob is not evidence: a run refused
+        # outside the reporting window exits 0. max by (schedule): one alert per schedule, whatever the pod
+        # and instance labels; the report pod restarts with Recreate, so a restart leaves a gap and `for:` starts again.
+        - alert: GroupSyncDashboardReportScheduleLate
+          expr: max by (schedule) (gsd_report_schedule_status{status="late"}) == 1
+          for: {{ .Values.monitoring.prometheusRule.for.reportScheduleLate }}
+          labels: {severity: warning}
+          annotations:
+            summary: "report schedule {{ `{{ $labels.schedule }}` }} has produced no evidence since its last expected fire"
+            description: >-
+              The Reporting status page reads {{ `{{ $labels.schedule }}` }} as late: its last expected
+              fire is more than 30 minutes past and no run of it has succeeded since. Check its runs on
+              the Report history, the CronJob {{ include "gsd.reportName" . }}-{{ `{{ $labels.schedule }}` }}
+              (its spec.timeZone against reporting.window.timezone, its last Job's log), and the report pod's log.
+        {{- end }}
+        # The KPI module's self-report (#156), on the thresholds the KPI page draws (kpi.thresholds.*).
+        # Throttling is the saturation signal, not CPU%: a pod at 30 % CPU that is being throttled is
+        # mis-sized (#97, the report pod preempted 29× on a saturated node with no metric saying so).
+        - alert: GroupSyncDashboardPodThrottled
+          expr: max by (component) (rate(gsd_process_cpu_throttled_periods_total[15m]) / rate(gsd_process_cpu_periods_total[15m])) > {{ divf .Values.kpi.thresholds.throttledPercent 100 }}
+          for: {{ .Values.monitoring.prometheusRule.for.podThrottled }}
+          labels: {severity: warning}
+          annotations:
+            summary: "the {{ "{{ $labels.component }}" }} pod is CPU-throttled"
+            description: "More than {{ .Values.kpi.thresholds.throttledPercent }}% of scheduler periods throttled over 15m ({{ "{{ $value | humanizePercentage }}" }}): raise its CPU limit (resources.limits.cpu) — the KPI page reads it as watch."
+        - alert: GroupSyncDashboardPodMemoryHigh
+          expr: max by (component) (gsd_process_memory_bytes / gsd_process_memory_limit_bytes) > {{ divf .Values.kpi.thresholds.memoryPercent 100 }}
+          for: {{ .Values.monitoring.prometheusRule.for.podMemoryHigh }}
+          labels: {severity: warning}
+          annotations:
+            summary: "the {{ "{{ $labels.component }}" }} pod is near its memory limit"
+            description: "Above {{ .Values.kpi.thresholds.memoryPercent }}% of the cgroup limit ({{ "{{ $value | humanizePercentage }}" }}) for {{ .Values.monitoring.prometheusRule.for.podMemoryHigh }}: the next step is the OOM kill; raise resources.limits.memory."
+        - alert: GroupSyncDashboardVolumeDiskFull
+          expr: max by (component) (gsd_volume_disk_used_bytes / gsd_volume_disk_total_bytes) > {{ divf .Values.kpi.thresholds.diskPercent 100 }}
+          for: {{ .Values.monitoring.prometheusRule.for.volumeDiskFull }}
+          labels: {severity: warning}
+          annotations:
+            summary: "the filesystem under the {{ "{{ $labels.component }}" }} pod's volume is {{ "{{ $value | humanizePercentage }}" }} full"
+            description: "Above {{ .Values.kpi.thresholds.diskPercent }}% — on a hostPath volume that is the node's disk, and a full one stops the database's WAL and the report artefacts alike."
+{{- end }}

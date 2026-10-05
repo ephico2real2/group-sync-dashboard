@@ -1,0 +1,25 @@
+{{- if eq (include "gsd.reportingEnabled" .) "true" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gsd.reportName" . }}
+  namespace: {{ .Release.Namespace }}
+  # The ServiceMonitor selects Services by METADATA labels (templates/service.yaml records the
+  # scrape that silently broke when the dashboard's `app` label was dropped). gsd.reportLabels
+  # contains the report selector labels exactly once, so the monitor finds this Service without
+  # duplicate YAML keys and without the dashboard workload's `app` label.
+  labels: {{- include "gsd.reportLabels" . | nindent 4 }}
+  {{- if .Values.reporting.tls.enabled }}
+  annotations:
+    # service-ca issues and rotates the report service's certificate into this Secret; uvicorn
+    # serves with it, the proxy verifies it with -upstream-ca (the service-ca bundle).
+    service.beta.openshift.io/serving-cert-secret-name: {{ include "gsd.reportName" . }}-tls
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector: {{- include "gsd.reportSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
+{{- end }}

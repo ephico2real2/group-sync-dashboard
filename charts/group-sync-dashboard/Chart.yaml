@@ -1,0 +1,530 @@
+apiVersion: v2
+# 0.58.0 / app 0.36.0 (#321): audit-only capture; remove OAuth Debug Jobs and pod reader.
+name: group-sync-dashboard
+description: Read-only observability for the redhat-cop group-sync-operator
+type: application
+
+# version  — the CHART version, bumped when templates or defaults change. It is also what
+#            gates publishing: chart-releaser skips a version it has already released, so a
+#            chart change without a bump here publishes NOTHING and still reports success.
+#            .github/workflows/helm.yaml warns when that is about to happen.
+#
+#            BUMPED BY HAND, IN THE PR THAT CHANGES THE CHART. It was briefly automated —
+#            publish.yml's pin commit bumped the patch on every image build — and that automation
+#            is gone with the pin commit it existed to publish. `Chart changes bump the chart
+#            version` in ci.yml is the enforcement now: a PR touching charts/ that does not move
+#            this line fails. Nothing writes to this file except a human in a reviewed change —
+#            by hand, or through local-development/prepare-release.py, which moves the version
+#            fields and writes the history lines from two arguments the human gives it.
+#
+#            So every component means what it says again: MAJOR and MINOR for behaviour, PATCH for
+#            a fix or a defaults change. A patch bump is no longer noise from a build.
+#
+# appVersion — the application version, and it must equal local-development/pyproject.toml's
+#              `version`. That file is the single source of truth: build-and-push-external.sh
+#              reads it to build the image tag <version>-<git-sha>, which is then written into
+#              values.yaml's image.tag. appVersion sits OUTSIDE that chain, which is exactly
+#              how it rotted — it read 0.5.2 while the app had been 0.6.0 for weeks and the
+#              deployed image said so, so a consumer reading appVersion learned a version that
+#              had not shipped in a long time. tests/test_chart_versions.py now holds the two
+#              together, and holds appVersion against the pinned image tag's prefix.
+# 0.3.0 rather than 0.2.1, because the templates changed BEHAVIOUR and not just wording: the new
+# `gsd.logLevel` helper refuses a render that 0.2.0 accepted. `logLevel: Trace` (OpenShift's
+# vocabulary, an easy thing to reach for) used to template happily and crash-loop the pod at
+# startup; it now fails at `helm template`. That is the improvement, and it is exactly the kind of
+# change a consumer should be told about by the version rather than discover in a pipeline.
+#
+# WHY THIS BUMP IS NOT OPTIONAL. chart-releaser skips a version it has already released, so the
+# three template changes that merged in #27 published NOTHING and the run still went green —
+# measured: the release run for d62a92d concluded `success` while the Helm repo kept serving 0.2.0
+# from 2026-08-10T16:52. Anyone installing from the published repo was getting a chart without the
+# guard, so `logLevel: debug` still crash-looped their pod even though main was fixed.
+# 0.4.0, and a MINOR bump because this one changes behaviour on upgrade for a release that never
+# set `visibility.adminSar` explicitly. The wide-tier threshold's default moves from
+# `list groups.user.openshift.io` to `list clusterrolebindings` — cluster-wide RBAC read.
+#
+# For stock roles nothing changes: measured per persona with their real group memberships, both
+# thresholds admit cluster-admin and cluster-reader and refuse everyone else. What changes is the
+# cluster this default was wrong for — one whose custom or aggregated role grants directory read
+# WITHOUT RBAC read. There, a reader entitled only to read the directory was being served the whole
+# RBAC binding surface, including which groups hold cluster-admin. On upgrade that reader correctly
+# loses the wide tier, and their Overview / Access granted / RBAC policy tabs become named refusals
+# (Access granted only until 0.10.0, which shows a narrowed reader their own grants instead).
+#
+# So: a silent tightening for the clusters that need it, a no-op for the rest, and the old values
+# remain settable explicitly. values.yaml under visibility.adminSar carries the measurement.
+# 0.5.0, and a MINOR bump because this changes what an upgrade DEPLOYS for anyone who never set
+# image.tag. The chart shipped a pinned <appVersion>-<sha>; it now ships an empty tag and resolves
+# appVersion through gsd.image. So the first upgrade onto this chart moves a release from a fixed
+# image reference to the appVersion alias — the same application version, but no longer byte-pinned,
+# and with pullPolicy Always that is re-resolved on every container creation. A consumer must learn
+# that from the version rather than discover it on a node drain.
+#
+# Pin deliberately if you need byte-identical rollbacks:
+#   --set image.tag=0.7.0-db8a90510f
+# values.yaml under `image` carries the full reasoning, and
+# docs/DESIGN_decouple_chart_and_app_release.md carries the review that settled it.
+# 0.6.0, MINOR because it adds a value rather than changing one. `image.digest` gives consumers an
+# immutable pin — a tag is a name the registry owner can repoint, a digest is the content itself —
+# and it wins over `image.tag`. Nothing changes for a release that does not set it: the default is
+# empty and the tag/appVersion path is byte-identical to 0.5.0's.
+# 0.7.0, MINOR because appVersion moves: the chart deploys application 0.8.0 (below). No template
+# or default changes; a consumer who upgrades gets the new app and byte-identical Kubernetes
+# objects otherwise.
+# 0.7.1, PATCH: appVersion moves to 0.8.1 (below); no template or default changes.
+# CHART 0.8.0 (2026-09-03; the application 0.8.0 paragraph below is a coincidence of numbering),
+# MINOR because it changes what a default upgrade DEPLOYS. The dashboard is now exposed by an
+# OpenShift Route the chart owns (`route.enabled`, default true) instead of an Ingress the
+# ingress-to-route controller converted (`ingress.enabled`, now default false). On upgrade Helm
+# deletes the Ingress — and with it the Route the controller generated — and creates the chart's
+# Route, named like the Service, with the SAME hostname: <fullname>.<apps domain>, requested via
+# spec.subdomain so the namespace is never appended. The ServiceAccount's OAuth callback moves
+# from a literal URL to a reference to that Route by name. Sessions, data and RBAC are untouched.
+#
+# Why: the Ingress path needs the host at render time and reads the cluster's apps domain to get
+# it, which ArgoCD, Flux and every other `helm template` renderer cannot do — the render was
+# refused on every GitOps cluster. The Route needs no host at render time because the router
+# names it, so the default now works everywhere with no per-cluster value. A deliberately set
+# host (route.host, or an ingress.host carried over from an older values file) is used as given.
+#
+# Also in 0.8.0: `argocd.enabled` defaults to true. It adds `argocd.argoproj.io/sync-options`
+# annotations and nothing else (measured by diffing the render with it on and off), which
+# Kubernetes ignores outside Argo and which protect the PVC and the injected CA under it — so
+# an Application now needs no chart value at all.
+#
+# Measured on CRC 4.18.2: the upgrade of the reference release from 0.7.1, the resulting Route's
+# admission and host, and the OAuth server accepting the reference-resolved callback while
+# refusing a foreign one. The Ingress path is unchanged for those who turn it back on; its render
+# is byte-identical to 0.7.1 apart from the chart-version label.
+# CHART 0.9.0 (2026-09-03), MINOR: appVersion moves to application 0.9.0 (below), and the meaning of
+# the `rbac.users` grant changes even though no template output does. The User objects are now the
+# SOURCE of the Users tab rather than a decoration of it (docs/DESIGN_users_tab_logins.md), so an
+# operator who turns the grant off loses that tab's rows — the tab says so by name — instead of
+# losing display names. Rendered objects are byte-identical to 0.8.0 apart from the version labels.
+# CHART 0.9.1 (2026-09-03), PATCH: appVersion moves to application 0.10.0 (below); no template or
+# default changes — the 0.7.1 precedent.
+# CHART 0.9.2 (2026-09-04), PATCH: appVersion moves to application 0.10.1 (below); no template or
+# default changes.
+# CHART 0.9.3 (2026-09-04), PATCH: the chart README's values table only — the row for a
+# `redirectMode` key that no longer exists now says the callback form follows route/ingress.
+# No template or default changes; appVersion unchanged.
+# CHART 0.9.4 (2026-09-04), PATCH: appVersion moves to application 0.10.2 (below); no template or
+# default changes.
+# CHART 0.10.0 (2026-09-04), MINOR: appVersion moves to application 0.11.0 (below), the image on the
+# Red Hat Hardened Images, and curl in the pod trusts what the dashboard trusts: a new ConfigMap
+# <fullname>-curlrc mounted at /etc/curl and named by CURL_HOME gives curl the injected bundle as
+# cacert (when trustedCA.injected is on) and OpenSSL's hashed directory as capath, and a new
+# value, trustedCA.existingConfigMap.subjectHash, mounts the manual CA a second time into that
+# hashed directory (docs/DESIGN_hardened_image.md). Rendered objects otherwise unchanged.
+# CHART 0.11.0 (2026-09-05), MINOR: appVersion moves to application 0.12.0 (below), and one new module,
+# default-on. `config.alerts.groupCountCliff` (default true) adds five ConfigMap keys, a render guard on
+# its thresholds (`gsd.groupCountCliff`), a `for.groupCountCliff` interval and a twelfth PrometheusRule
+# alert, GroupSyncGroupCountCliff, rendered only while the module is on. A default upgrade therefore
+# gains the ConfigMap keys and, if the rules are on, one alert; nothing else changes shape.
+# CHART 0.12.0 (2026-09-05), MINOR: appVersion moves to application 0.13.0 (below), and one new module.
+# `config.retention` (membershipEventsDays 0 = forever, syncEventsDays 730) reaches the app as two new
+# ConfigMap keys; no template, RBAC or default object changes. Rendered objects for a release that sets
+# neither are unchanged apart from the two ConfigMap keys and the version labels.
+# CHART 0.13.0 (2026-09-05), MINOR: one new module, chart only. `monitoring.grafanaDashboard` (default "" =
+# follow monitoring.serviceMonitor.enabled) renders a sidecar-labelled ConfigMap carrying
+# dashboards/group-sync-dashboard.json byte-for-byte; a core resource, no CRD. A default install
+# renders nothing new until the ServiceMonitor is on. appVersion unchanged (0.13.0).
+# CHART 0.14.0 (2026-09-05), MINOR: every boolean switch on by default unless it costs RBAC, a
+# credential, a second image or a cluster-wide write. Flipped: podDisruptionBudget.enabled,
+# loginCapture.enabled, oauthProxy.apiTokenAccess.enabled. Kept off: allowPrivilegeEscalation,
+# trustedCA.existingConfigMap.enabled, ingress.enabled, authLogLevel.manage/.enabled (the audit
+# log replaces it), oauthProxy.requestLogging (the proxy logs the full request URI, OAuth code
+# included), and by operator decision oauthProxy.skipProviderButton (OpenShift login screen) and
+# monitoring.serviceMonitor / prometheusRule (no Prometheus on the reference cluster; on-state
+# rendering verified first). Hook Job pods dropped the workload selector labels so the budget
+# cannot match them.
+# CHART 0.15.0 (2026-09-05), MINOR: appVersion moves to application 0.14.0 (below); CSV and JSON
+# export of the table on screen (C1); ui.export.enabled reaches the ConfigMap as uiExportEnabled and
+# /api/version gains features.
+# CHART 0.16.0 (2026-09-05), MINOR: appVersion moves to application 0.15.0 (below); Users tab
+# provider allow-list and first login from Identity objects (C2): rbac.identities (a new
+# optional grant, the read switch too) and config.users.providers (a new value).
+# CHART 0.17.0 (2026-09-05), MINOR: one new module, chart only. `backup.offsite` (OFF) renders a
+# CronJob that mounts the data claim read-only and ships the newest VACUUM INTO copy to a second
+# claim or to object storage through an operator-supplied CLI image, with a stdlib copy script
+# shipped as a ConfigMap (scripts/offsite_backup.py), a dedicated ServiceAccount with no grants,
+# and — under monitoring.prometheusRule — two rules on kube_cronjob_status_last_successful_time.
+# Ten `fail` guards model its interactions with persistence, config.backup and the access mode.
+# Rendered objects for a release that leaves it off are unchanged apart from version labels.
+# CHART 0.18.0 (2026-09-06), MINOR: appVersion moves to application 0.16.0 (below); three new
+# values under session.idleTimeout (enabled OFF, minutes, warningSeconds) render into the ConfigMap
+# when the proxy is on, and two new render guards: enabled without the proxy, and a window not
+# shorter than oauthProxy.cookie.expire (it could never fire). Rendered objects otherwise unchanged.
+# CHART 0.19.0 (2026-09-06), MINOR: appVersion moves to application 0.17.0 (below). One new
+# module setting, `loginCapture.source` (pod-log, the default, renders as before): `audit-log`
+# renders a ClusterRole on `get nodes/proxy` + `list nodes` (or `resourceNames` from
+# `loginCapture.auditLog.nodeNames`) bound to the dashboard's ServiceAccount INSTEAD of the
+# namespaced pod-log Role — read-only, cluster-wide, its breadth stated in values — and carries
+# `loginCapture.auditLog.{nodeSelector,nodeNames,providers,ignoreIdentityPatterns}` to the
+# ConfigMap. Refused together with `authLogLevel.enabled=true`: the chart will not roll the OAuth
+# server as a side effect of a read setting; the NOTES say how to retire the Debug Jobs.
+# CHART 0.20.0 (2026-09-06), MINOR: a new module ON BY DEFAULT that adds a second Deployment,
+# Service, Secret, ServiceAccount, PVC and NetworkPolicy, a second upstream and a CA mount on the
+# oauth-proxy, seven ConfigMap keys, six render guards and two optional alerts; appVersion moves to
+# application 0.18.0. A default upgrade therefore gains a report pod and a /report/ route behind the
+# proxy — or refuses, naming the value, where the release cannot host one.
+# CHART 0.21.0 (2026-09-13), MINOR: appVersion moves to application 0.19.0 (below); Per-cluster
+# authorization for the multi-cluster case: clusters[].visibility and clusters[].identity (D2).
+# CHART 0.36.0 (2026-09-19), MINOR: monitoring.grafanaDashboard.cr.* — the GrafanaDashboard CR on
+# request (#161), OFF by default; six KPI panels on the shipped board; console.url empty now means
+# discovered (#157); grafana.url / console.url refused at render unless http(s). A default upgrade
+# changes only the board's ConfigMap.
+# CHART 0.36.1 (2026-09-19), PATCH: the report artefacts PVC carries helm.sh/resource-policy: keep
+# and the same Argo sync-options as the data claim (Prune=false,Delete=false,PruneLast=true).
+# CHART 0.37.0 (2026-09-20), MINOR: the oauth-proxy session key and the shared report token are minted
+# on the cluster by a hook (secretsMint), never rendered; their Secrets are <fullname>-oauth-session
+# and <reportName>-shared-token, carried over from the old names on the first upgrade.
+# CHART 0.41.1 (2026-09-20), PATCH: the chart README gains "Deploying with Flux or Kustomize" (#212);
+# no template or default changes; appVersion unchanged.
+# CHART 0.42.0 (2026-09-20), MINOR: clusters as labelled Secrets (#230 S1) — a namespaced Role on
+# secrets (get, list, watch) and the clusterConfig.secrets.enabled switch, on by default; migration 19.
+# CHART 0.42.1 (2026-09-20), PATCH: visibility.clusterConfigViewSar / .clusterConfigManageSar —
+# the cluster-configuration tier's two SAR questions (#230), defaulting to get/create secrets in
+# the release namespace; no other template or default change.
+# CHART 0.43.0 (2026-09-20), MINOR: two new values — `httpLogLevel` (the HTTP request record,
+# default WARNING, moved off `logLevel` on evidence) and `clusterConfigLogLevels` (per-logger
+# overrides). A default install now logs fewer lines, not more (#245).
+# CHART 0.44.0 (2026-09-20), MINOR: the Cluster Configurations tab's writes (#230 S2) —
+# clusterConfig.secrets.writes.enabled (OFF by default: the dashboard is a reader) adds create, update,
+# delete to the cluster-secrets Role and clusterSecretsWritesEnabled to the ConfigMap when on.
+# CHART 0.44.1 (2026-09-20), PATCH: appVersion follows the application to 0.30.0. No template or
+# defaults change — the image tag is empty on purpose, so every install now pulls 0.30.0.
+# CHART 0.45.0 (2026-09-20), MINOR: `clusters[].dashboardController` declares this pod's own
+# cluster instead of it being whichever entry sorted first (#249), and the default stanza is renamed
+# `dashboard`. A values file that sets neither keeps working — the first enabled entry is still the
+# host, and the pod log names the controller and whether anyone declared it
+# (`controller-cluster name=… declared=…`).
+# RENAMING A CLUSTER IS NOT FREE: `name` is the id every observation table keys on, so the old name
+# is retired (#96) and its history — sync events, KPI days, login events, report runs — stays under
+# it while the new name starts empty. Taking this chart's new default name on an existing release
+# does that. The flag itself needs no rename.
+# CHART 0.46.0 (2026-09-21), MINOR: `platformNamespaces` makes the platform/workload judgement an
+# estate's own (#255). Three axes — prefixes, suffixes and full names — because no two are enough:
+# measured on the reference cluster the shipped rule leaves seven pieces of platform among the
+# workloads, `-operator` catches three of them, `-manager` and `-provisioner` one each, and two match
+# no pattern at all. `prefixes`/`suffixes`/`names` replace the defaults; the `additional*` three
+# append, so an estate never restates a Red Hat list that changes between releases. Setting nothing
+# keeps today's behaviour exactly, and the chart renders the key only when it is set.
+# CHART 0.47.0 (2026-09-21), MINOR: a cluster may declare HOW its credential is obtained instead of
+# carrying one — `saTokenLookup` / `userSelfLogin`, with `ldapConnectionBootstrap` naming the account
+# and `clusterConfig.fleetAccount` as the estate-wide default (#248, SPEC_S3 S3a). The render refuses
+# what the loader refuses — both modes at once, a mode beside a credential, a mode on the declared
+# controller or the inferred host, and a non-boolean — so a green `helm upgrade` cannot CrashLoop the
+# pod. A stanza that declares nothing behaves exactly as before.
+# CHART 0.50.0 (2026-09-22), MINOR: `saTokenLookup` retrieves (#284, SPEC_S4b). The pod learns the
+# fleet account's address and `clusterConfig.saTokenLookup` (what it reads on every target) through
+# the ConfigMap; a saTokenLookup stanza is refused at render without `clusterConfig.secrets.writes.enabled`
+# and `secrets.enabled`, with `replicaCount > 1`, or with `visibility: remote-sar`. appVersion moves to
+# application 0.31.0 (below). A release declaring no mode renders exactly as before.
+# CHART 0.53.0 (2026-09-23), MINOR: a remote that states no policy is asked about the reader itself —
+# `remote-sar` + `same-as-host` is the default (#338, SPEC_D2b) — and `remote-sar` is accepted beside
+# `saTokenLookup`; the render refuses only an explicit `identity: none` beside `remote-sar`, and NOTES
+# prints each remote's resolved pair. appVersion moves to application 0.32.0 (below). A remote keeps the
+# old view with `visibility: self-only` and `identity: none`.
+# CHART 0.53.1 (2026-09-24), PATCH: every Role, ClusterRole and binding the chart ships carries
+# `rbac.ocp.io/config-source: group-sync-dashboard`, the policy system's provenance label, so the
+# dashboard no longer reports the chart's own auditor binding as a grant made by hand (#312).
+# Metadata only: no rule, subject or role changes.
+# CHART 0.54.0 (2026-09-24), MINOR: appVersion moves to application 0.33.0 (below) — the unmanaged finding
+# reads ServiceAccount and User subjects and honours the same label on them (#353, SPEC_U1). The README and
+# the values comment say what the finding covers; no template changes.
+# SPEC_S5 (#293): ConfigMap onboarding and namespaced read RBAC; minor release.
+# CHART 0.57.0 (2026-09-25), MINOR: the cluster-admin tier, `visibility.clusterAdminSar` (#322,
+# SPEC_T2) — one SubjectAccessReview, `update clusterrolebindings` on the host by default, gates the
+# whole Cluster Configurations tab and the KPI page and grants every host tier to whoever passes it.
+# `visibility.clusterConfigViewSar` and `.clusterConfigManageSar` are removed and refused by name.
+# appVersion moves to application 0.35.0 (below). WHO LOSES ACCESS: cluster-readers lose the KPI
+# page; namespace-scoped `admin`/`edit` holders lose the Cluster Configurations tab.
+# CHART 0.58.1 (2026-09-26), PATCH: docs only — the chart README links the docs index (#319) and the
+# auditor-group and polling guides. No template, value or RBAC change; appVersion unchanged.
+# CHART 0.58.2 (2026-09-26), PATCH: docs only — link the GitOps onboarding and manual Secret
+# examples (#389). No template, value or RBAC change; appVersion unchanged.
+# CHART 0.58.3 (2026-09-26), PATCH: Epic A: quick cleanup (#381).
+# CHART 0.58.4 (2026-09-26), PATCH: docs only — the values comment on config.backup and the README name
+# the pre-upgrade copy the next application release takes (#301, SPEC_M1). No template, value or RBAC
+# change; appVersion unchanged.
+# CHART 0.58.5 (2026-09-26), PATCH: appVersion moves to application 0.37.0 (below); Epic B: protect
+# the data during upgrades (#382).
+# CHART 0.58.6 (2026-09-26), PATCH: the secrets-mint Job's default image is registry.redhat.io's
+# ose-cli-rhel9:v4.22 instead of the in-cluster openshift/cli imagestream (the operator's choice; 4.18 and
+# above). A value default; no template or RBAC change; appVersion unchanged.
+# CHART 0.58.7 (2026-09-26), PATCH: docs only — CLUSTER_CREDENTIALS.md states the credential gate per
+# account (#315, SPEC_S4d). No template, value or RBAC change; appVersion unchanged.
+# CHART 0.58.8 (2026-09-26), PATCH: gsd.validateClusters refuses a clusters[].apiUrl carrying userinfo,
+# a query or a fragment, as the loader now does (#415), without repeating the value. Refuses only input the
+# pod already could not use safely; no value default, RBAC or appVersion change.
+# CHART 0.59.0 (2026-09-26), MINOR: the credential lifecycle (#285, SPEC_S4c) — clusterConfig.fleetAccount.ping
+# (enabled, intervalSeconds: on, daily) reaches the ConfigMap as fleetPingEnabled and fleetPingIntervalSeconds;
+# the `leases` rule renders under leaderElection.enabled OR a fleet account in use (the account's claim Lease);
+# a userSelfLogin stanza with replicaCount > 1 is refused. RBAC: the `leases` rule is added only where election
+# is off and a fleet account is in use; nothing is removed. appVersion unchanged: the application code rides
+# Epic C's release.
+# CHART 0.59.1 (2026-09-27), PATCH: docs only — CLUSTER_CREDENTIALS.md §6 states the policy on the
+# OAuthAccessToken objects a login leaves (#286). No template, value or RBAC change; appVersion unchanged.
+# CHART 0.59.2 (2026-09-27), PATCH: appVersion moves to application 1.0.0 (below); Epic C: keep the
+# shared fleet login account safe (#383).
+# CHART 0.59.3 (2026-09-27), PATCH: appVersion moves to application 1.1.0 (below); Epic C
+# composition review fixes (#383).
+# CHART 0.59.4 (2026-09-27), PATCH: appVersion moves to application 1.2.0 (below); README names the Refresh
+# route among the cluster-admin tier's writes. No template, value or RBAC change.
+# CHART 0.59.5 (2026-09-27), PATCH: appVersion moves to application 1.3.0 (below), shared API URL warnings (#314).
+# CHART 0.59.6 (2026-09-27), PATCH: appVersion moves to application 1.4.0 (below); CLUSTER_CREDENTIALS.md
+# states the ping's account rule (#432). No template, value or RBAC change.
+# CHART 0.59.7 (2026-09-27), PATCH: appVersion moves to application 1.5.0 (below); RUNBOOK.md, CLUSTER_CREDENTIALS.md
+# and values.yaml comments name Rejoin (#316). No template, value or RBAC change.
+# CHART 0.59.8 (2026-09-27), PATCH: appVersion moves to application 1.6.0 (below); Epic C's second composition
+# review fixes (#452, #440). No template, value or RBAC change.
+# CHART 0.59.9 (2026-09-28), PATCH: appVersion moves to application 1.7.0 (below); #435.
+# CHART 0.59.10 (2026-09-28), PATCH: appVersion moves to application 1.8.0 (below); #390.
+# CHART 0.59.11 (2026-09-28), PATCH: appVersion moves to application 1.9.0 (below); #404.
+# CHART 0.59.12 (2026-09-28), PATCH: appVersion moves to application 1.10.0 (below); #441.
+# CHART 0.59.13 (2026-09-28), PATCH: appVersion moves to application 1.11.0 (below); #447.
+# CHART 0.59.14 (2026-09-28), PATCH: appVersion moves to application 1.12.0 (below); #466.
+# CHART 0.59.15 (2026-09-28), PATCH: appVersion moves to application 1.13.0 (below); #473.
+# CHART 0.59.16 (2026-09-28), PATCH: appVersion moves to application 1.14.0 (below); #462.
+# CHART 0.59.17 (2026-09-28), PATCH: appVersion moves to application 1.15.0 (below); #467.
+# CHART 0.59.18 (2026-09-28), PATCH: appVersion moves to application 1.16.0 (below); #459.
+# CHART 0.59.19 (2026-09-28), PATCH: appVersion moves to application 1.17.0 (below); #478.
+# CHART 0.59.20 (2026-09-28), PATCH: appVersion moves to application 1.18.0 (below); #481.
+# CHART 0.59.21 (2026-09-28), PATCH: appVersion moves to application 1.19.0 (below); #465.
+# CHART 0.59.22 (2026-09-29), PATCH: trustedCA.enterpriseRoot.{sha256,subject} and trustedCA.expiryWarningDays
+#   reach the ConfigMap; appVersion moves to application 1.20.0 (below); #244.
+# CHART 0.59.23 (2026-09-30), PATCH: appVersion moves to application 1.21.0 (below); #492.
+# CHART 0.59.24 (2026-09-30), PATCH: appVersion moves to application 2.0.0 (below); Epic D:
+# reconnect a cluster from the screen (#384).
+# CHART 0.59.25 (2026-09-30), PATCH: RUNBOOK section 1 says the card's connection row and tls chip
+# are the last poll's, not Refresh's (Epic D composition review, K5).
+# CHART 0.60.0 (2026-10-01), MINOR: recovery.enabled and recovery.ttl (#303, SPEC_E2). The dashboard
+# container runs the chart's recovery script (a ConfigMap rendered only while it is on) instead of
+# uvicorn, with no liveness probe and a readiness probe that cannot pass. The default render is
+# unchanged apart from this version and what is computed from it; no RBAC change; appVersion unchanged.
+# CHART 0.60.1 (2026-10-01), PATCH: appVersion moves to application 2.1.0 (below); restore-db.sh
+# lists the database copies the recovery pod can restore and restores one (#302, SPEC_E3).
+# CHART 0.60.2 (2026-10-01), PATCH: appVersion moves to application 2.2.0 (below); per-pod backup
+# rotation above one replica (#391, SPEC_E4).
+# CHART 0.61.0 (2026-10-01), MINOR: backup.offsite.enabled defaults to "" (on wherever it can work),
+# read as true, false or empty; the offsite CronJob also ships the newest pre-upgrade copy (#304,
+# SPEC_E5). appVersion unchanged.
+# CHART 0.61.1 (2026-10-01), PATCH: appVersion moves to application 2.3.0 (below); the KPI page's
+# Backups card (#306, SPEC_E6).
+# CHART 0.61.2 (2026-10-02), PATCH: appVersion moves to application 2.4.0 (below); :latest follows
+# the newest signed main build (#425, SPEC_E9).
+# CHART 0.61.3 (2026-10-02), PATCH: appVersion moves to application 3.0.0 (below); Epic E, restore
+# tools and release safety (#385): recovery mode (#303), restore-db.sh (#302), per-pod backup
+# rotation (#391), off-volume backup on by default (#304), the KPI Backups card (#306), the schema
+# line and the runbook's checks (#300), the chart-publish label gate (#410), :latest (#425), the
+# runbook's break glass under Argo CD (#533).
+# CHART 0.62.0 (2026-10-02), MINOR: appVersion moves to application 3.1.0 (below); Delete report
+# runs and database copies from the page, previewed and confirmed, for the cluster-admin tier
+# (#542).
+# CHART 0.65.0, MINOR: recovery mode is its own workload (#532). A second Deployment,
+# <fullname>-recovery, is rendered on every release at 0 replicas; recovery.enabled scales the
+# app's to 0 and it to 1, so both report available and turning it off takes one rollout. A required
+# pod anti-affinity orders the two pods on the data claim. No RBAC change.
+# CHART 0.65.1, PATCH: the app pod also carries a required anti-affinity against the recovery pod
+# (#532, SPEC_E11 note 8), so the scheduler re-queues it the moment the recovery pod is deleted
+# instead of after its 5-minute unschedulable flush. No RBAC change.
+# CHART 0.66.0 (2026-10-03), MINOR: `platformUsers` (prefixes, names, additionalPrefixes, additionalNames) and
+#   `existingConfigMap` {enabled, name, key, revision} for platformNamespaces and platformUsers, mounted as a
+#   file, refused at render beside an inline list; an empty replacing list now renders; appVersion moves to
+#   application 3.2.0 (below); #255.
+# CHART 0.66.1 (2026-10-03), PATCH: docs/UNMANAGED_GRANT_EXCLUSIONS.md names group-sync-operator-helm
+# beside group-sync-dashboard and says the direct-user view follows the label; appVersion moves to
+# application 3.3.0 (below); #503.
+# CHART 0.66.2 (2026-10-03), PATCH: the dashboard's Leases are also granted by a Role and RoleBinding,
+# `<fullname>-leases`, in the release namespace, beside the ClusterRole's rule (#420 step 1, SPEC_G4).
+# RBAC REMOVED 0, ADDED 4 atoms; no value or appVersion change.
+# CHART 0.66.3 (2026-10-01), PATCH: the reader ClusterRole's leases rule is removed; the `<fullname>-leases`
+# Role is the Lease grant (#420 step 2, SPEC_G4, the operator's agreement on #420). RBAC REMOVED 3 atoms
+# (leases get, create, update on the reader ClusterRole), ADDED 0; no value or appVersion change.
+# CHART 0.66.4 (2026-10-03), PATCH: appVersion moves to application 4.0.0 (below); Epic G: access
+# declared, platform identities configured (#387).
+# CHART 0.66.5 (2026-10-03), PATCH: appVersion moves to application 4.1.0 (below); #270, SPEC_F1. No
+# template, value or RBAC change.
+# CHART 0.66.6 (2026-10-03), PATCH: appVersion moves to application 4.2.0 (below); #106, SPEC_F2. The
+# values, CronJob and README comments name csv as an allowed report format, off by default; no key,
+# default, template logic or RBAC change.
+# CHART 0.66.7 (2026-10-03), PATCH: appVersion moves to application 4.3.0 (below); #108, SPEC_F3. The
+# README's reports paragraph names report-diff; no key, default, template or RBAC change.
+# CHART 0.67.0 (2026-10-04), MINOR: `reporting.schedules[].deliver` {kind, webhookUrlSecret {name, key}, attach}
+# renders the trigger's delivery args, the URL Secret and the trust bundles into a schedule's CronJob, refused at
+# render when it cannot work; a schedule without it renders as before; `gsd.trustedCaFile` is the one CA list for
+# the dashboard and the Job; appVersion moves to application 4.4.0 (below); #109, SPEC_F4. No RBAC change.
+# CHART 0.68.0 (2026-10-04), MINOR: the alert GroupSyncDashboardReportScheduleLate (warning) and its
+# `monitoring.prometheusRule.for.reportScheduleLate` (15m), rendered with the rules and reporting on; it reads
+# `gsd_report_schedule_status{status="late"}`, the Reporting status page's own verdict; the README's alert table
+# and the board's alert panel name it; appVersion moves to application 4.5.0 (below); #140, SPEC_F5. No RBAC change.
+# CHART 0.69.0 (2026-10-04), MINOR: a third minted Secret, `<reportName>-ticket-key` (key `key`), created by the
+# secrets-mint hook only if absent and mounted at /etc/gsd/report-ticket in the dashboard (its `key` only) and the
+# report pod (with a rotation's `previous`), never in a schedule CronJob; the report pod's two env names and the
+# ConfigMap's reportingTicketKeyFile name it; appVersion moves to application 4.6.0 (below); #392, SPEC_F6. RBAC
+# REMOVED 0, ADDED 1 atom (get on the new Secret's name, for the hook's identity).
+# CHART 0.70.0 (2026-10-04), MINOR: scheduled reports refuse pdf at render time in reporting.formats.scheduled, a
+# schedule's formats and deliver.attach (#594); the recovery script waits on a wakeup pipe so a SIGTERM is not
+# missed (#555); appVersion moves to application 4.7.0 (below), the Tech debt sweep. No RBAC change.
+# CHART 0.70.1 (2026-10-04), PATCH: appVersion moves to application 5.0.0 (below); Epic F: reports,
+# honest seals, more formats, diffs and delivery (#386).
+# CHART 0.70.2 (2026-10-04), PATCH: appVersion moves to application 5.1.0 (below); the reports' clock is the
+# snapshot's (#592, #607, #593; SPEC_F7). No template, default or RBAC change.
+# CHART 0.70.3 (2026-10-04), PATCH: appVersion moves to application 5.2.0 (below); The lab deploys
+# only what promote.yml read back (#598).
+version: 0.70.3
+# 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
+# id or display name — and a Find member box on the group page. /users rows gain `full_name`,
+# nullable, the same field the members list already carried. Additive on the wire and in the UI,
+# hence MINOR; nothing a 0.7.0 consumer parses changes shape.
+#
+# 0.7.0. It must equal local-development/pyproject.toml's `version` (tests/test_chart_versions.py
+# holds them together, and holds appVersion against the pinned image tag's prefix), so moving it
+# means moving the app version AND re-pinning the image — all three land in one commit or CI is red,
+# which is the whole point of the coupling.
+#
+# The deferred decision recorded here since #27 is taken: the self-tier projection removes
+# `ldap_filter` and `error_message` from /groupsyncs for narrowed readers, so a self-tier consumer
+# parsing either one breaks on upgrade. That is a contract change, hence MINOR and not a patch.
+# Administrators are unaffected, byte-for-byte.
+# 0.8.1 (2026-09-03). The dashboard is renamed "OCP Access Tracking Dashboard" — it reads and
+# reports access, it never controls it — and the name now lives in ONE constant (gsd.TITLE) that
+# the page, the signed-out page and the API docs read. Nothing on the wire changes shape.
+# 0.9.0 (2026-09-03). The Users tab counts the people who have LOGGED IN: its rows are the OpenShift
+# User objects, which the cluster creates at first login and never before, with group membership as an
+# attribute of a row. Synced members who have never logged in are reported once, by count, not as rows.
+# /users gains logged_in, first_login_at, providers, last_login_at, login_capture, source, total and
+# offset (the paging rule R3 it never met), and never_logged_in_members; group_count may now be 0.
+# /users/{name} gains the same login facts and is no longer a 404 for a User in no group. Schema
+# migration 7 rebuilds ocp_user. MINOR: additive on the wire for a consumer that read the old fields,
+# but the row population changes — a synced member with no User object is no longer a row.
+# 0.10.0 (2026-09-03). Access granted opens on what was granted, faults first; every row says who
+# it reaches (the group's members, and how many have logged in — the 0.9.0 definition); the page
+# filters as you type and sorts by column; and a narrowed reader sees the bindings that reach them
+# through their groups instead of a refusal, from their own /users/{name} — the findings endpoint
+# is unchanged and still refuses a plain reader. Two additive fields on /bindings/findings rows,
+# member_count and logged_in_count, null when no Group object exists. MINOR.
+# 0.10.1 (2026-09-04). Access granted: a group name is a drill only where a group page can
+# answer. Built-in virtual groups never have a Group object and unresolved bindings name groups
+# that never existed, so those names drilled to a 404 that blamed a deletion which never happened.
+# They render as plain text now; dangling and granted groups keep the drill. PATCH.
+# 0.10.2 (2026-09-04). The second-pass review's findings on Access granted: the tab fails closed
+# to Loading when the reader's tier is indeterminate instead of painting a cached payload of either
+# tier; the Reaches column's logged-in count is null until the User objects have been read at least
+# once, rather than a confident zero; and a row that carries no tier renders its group name as text,
+# not a drill. PATCH.
+# 0.12.0 (2026-09-05). The group-count cliff alert (kinds group_count_cliff and
+# group_count_cliff_silenced), `silenced`/`silenced_by` on every /api/alerts row, `cliff_silence` on
+# group rows, schema migration 8. Additive on the wire; a consumer enumerating kinds sees two new
+# ones. MINOR.
+# 0.13.0 (2026-09-05). Retention for the accumulated history, leader-only, after the backup, in bounded
+# batches, and never when backups are off (docs/specs/SPEC_B2_history_retention.md). membership_event
+# keeps forever by default; sync_event keeps 730 days. Four responses gain an additive `retention` object
+# (/groupsyncs/{name}/events, /membership-changes, /groups/{name}, /users/{name}) so a timeline that
+# begins at the retention edge says so. The sync_event_by_time index is added to SCHEMA and built at first
+# start. gsd_retention_rows_deleted_total gains table="membership_event" and table="sync_event".
+# MINOR: additive on the wire, new settings, no shape change.
+# 0.14.0 (2026-09-05). CSV and JSON export of the table on screen (C1); ui.export.enabled reaches
+# the ConfigMap as uiExportEnabled and /api/version gains features. MINOR.
+# 0.15.0 (2026-09-05). Users tab provider allow-list and first login from Identity objects
+# (C2): rbac.identities (a new optional grant, the read switch too) and config.users.providers (a
+# new value). MINOR.
+# 0.16.0 (2026-09-06). Idle timeout with a countdown, as an off-by-default module (C4): after
+# session.idleTimeout.minutes without pointer, keyboard or tab-visibility activity the page opens a
+# role=dialog countdown (focus trapped with inert, Escape or Enter to stay), and at zero removes its
+# data and sends the browser to the proxy's sign_out, which clears the cookie. Modelled by the page,
+# enforced by the proxy; nothing persisted; activity shared across a browser's tabs; the poll
+# suspended while the countdown is up. /api/whoami's session gains idle_timeout. MINOR: additive.
+# 0.17.0 (2026-09-06). Login capture from the oauth-server AUDIT LOG as a second, opt-in source:
+# /var/log/oauth-server/audit.log on the control-plane nodes through the API server's node proxy
+# (what `oc adm node-logs --path=oauth-server/audit.log` does), at the default verbosity, with
+# history back to the rotated files on a first read. A byte cursor and a head fingerprint per node
+# and file, exact de-duplication by auditID, an audit event linked to its pod-log twin instead of
+# doubled, three kinds of attempt (credential, cli, session) and the provider the typed name
+# resolves to. Schema migration 10; new outcome provider_error; three metric families. MINOR: additive.
+# 0.18.0 (2026-09-06). The report service and its eleven-report catalogue (gsd.reporting, its own
+# image on the same version); GET /api/report/ticket and GET /api/dashboard/reports; feature flag
+# `reporting`; schema migration 11 (cluster_namespace, cluster_namespace_status, report_run); the
+# poller writes a VACUUM INTO copy for the report pod and pulls its usage. Additive on the wire. MINOR.
+# 0.19.0 (2026-09-13). Per-cluster authorization for the multi-cluster case: clusters[].visibility
+# and clusters[].identity (D2). MINOR.
+# 0.31.0 (2026-09-22). A `saTokenLookup` cluster is retrieved: the dashboard logs in as the fleet
+# account, reads the poller ServiceAccount's token on the target and writes the cluster Secret
+# (#284, SPEC_S4b). Eight finding codes join the closed set; additive on the wire. MINOR.
+# 0.32.0 (2026-09-23). `remote-sar` for every way a cluster is joined (#338, SPEC_D2b): a resolver per
+# remote cluster from its current configuration, values or Secret, rebuilt when its connection changes; a
+# remote that states no policy defaults to `remote-sar` + `same-as-host`; a failing remote is held for 30 s;
+# a lookup-owned Secret serves its stanza's policy and switch; a line beside the selector names the rule
+# that decided. MINOR: behaviour changes on upgrade for a remote that states nothing (docs/CHANGELOG.md).
+# 0.33.0 (2026-09-24). The unmanaged finding reads every subject kind — Group, ServiceAccount and User —
+# and a grant is silenced by the platform rule (`platformNamespaces`, OpenShift's two per-project controller
+# bindings, `system:` users) or by the operator's `rbac.ocp.io/config-source` label or the exception annotation
+# on its binding (#353, SPEC_U1). Schema migration 20 (the binding table's primary key gains
+# the subject's kind and namespace); `/bindings/findings` rows gain `subject_kind` and
+# `subject_namespace`. MINOR: additive on the wire; every unlabelled ServiceAccount and User grant outside
+# the platform's own is a finding from the first refresh after upgrade, which is the capability.
+# 0.35.0 (2026-09-25). The cluster-admin tier (#322, SPEC_T2): `GET /api/kpi` and the whole Cluster
+# Configurations tab ask `visibility.clusterAdminSar`; `/api/whoami` carries `visibility.cluster_admin`
+# and drops `clusterconfig`; the `cluster_admin` threshold label replaces `clusterconfig_view` and
+# `clusterconfig_manage`. MINOR: who may open two surfaces changes on upgrade (docs/CHANGELOG.md).
+# 0.37.0 (2026-09-26). Epic B: protect the data during upgrades (#382). MINOR.
+# 1.0.0 (2026-09-27). Epic C: keep the shared fleet login account safe (#383). MAJOR.
+# 1.1.0 (2026-09-27). Epic C composition review fixes (#383). MINOR.
+# 1.2.0 (2026-09-27). Refresh: POST /api/clusterconfigs/{name}/refresh and the card's Refresh button probe a
+# cluster with its stored credential; it never logs in (#311, SPEC_D3). MINOR.
+# 1.3.0 (2026-09-27). A warning, never a refusal, when two entries declare the same API URL (#314). MINOR.
+# 1.4.0 (2026-09-27). The daily ping presents the fleet password only as an account the configuration names
+# (#432, SPEC_S4e). MINOR.
+# 1.5.0 (2026-09-27). Rejoin: an administrator signs in to a remote cluster as themselves, once, and the
+# dashboard fetches a fresh poller token (#316, SPEC_D4). MINOR.
+# 1.6.0 (2026-09-27). Epic C's second composition review (OB2): a Rejoin keeps a declaring Secret loadable (#452),
+# and the lookup's revoke line never quotes the token it read (#440). MINOR.
+# 1.7.0 (2026-09-28). Refuse cluster URL userinfo at both egress points (#435). MINOR.
+# 1.8.0 (2026-09-28). The Rotate token draft survives the poll's repaint (#390). MINOR.
+# 1.9.0 (2026-09-28). The Clusters tab counts a ConfigMap-generated cluster under ConfigMap (#404). MINOR.
+# 1.10.0 (2026-09-28). Each Refresh button and result line has an id no other card can take (#441). MINOR.
+# 1.11.0 (2026-09-28). Rejoin refuses a password that is the username or a part of it, and says why (#447). MINOR.
+# 1.12.0 (2026-09-28). Discovery reads the other clusters when one Secret's caData holds a non-ASCII character (#466). MINOR.
+# 1.13.0 (2026-09-28). On a phone a finding's label sits above its value, so its detail wraps between words (#473). MINOR.
+# 1.14.0 (2026-09-28). Every per-cluster control's id is cc-<kind>_<id>, so one cluster's control can never take another's (#462). MINOR.
+# 1.15.0 (2026-09-28). The discovery line says what it counts: the served Secrets, and the refused labelled Secrets beside them (#467). MINOR.
+# 1.16.0 (2026-09-28). Maps keyed by an external name have no prototype: a cluster, page or role named constructor reads nothing inherited (#459). MINOR.
+# 1.17.0 (2026-09-28). a namespace label, and whoami's per-cluster visibility, are read by own key (#478). MINOR.
+# 1.18.0 (2026-09-28). A deleted fleet Lease is put back from the copy kept beside the database, so `crc start` sends no refused password again and pings no second time in a day (#481). MINOR.
+# 1.19.0 (2026-09-28). A quoted text that holds the password is shown whole as a fixed mark, and left out where the mark would meet the password; Rejoin adds no refusal (#465). MINOR.
+# 1.20.0 (2026-09-29). Each cluster card lists its trusted certificates' subject, issuer and dates, says whether one is the pinned enterprise root, and shows the fix under a verify failure; a CA within thirty days of expiry warns on the Cluster Configurations banner (#244). MINOR.
+# 1.21.0 (2026-09-30). A card whose last poll failed TLS verification wears a `verify failed` warning chip instead of the green `verified` one; the `ca:` mode text is unchanged (#492). MINOR.
+# 2.0.0 (2026-09-30). Epic D: reconnect a cluster from the screen (#384). MAJOR.
+# 2.1.0 (2026-10-01). restore-db.sh lists the database copies the recovery pod can restore and
+# restores one (#302, SPEC_E3). MINOR.
+# 2.2.0 (2026-10-01). per-pod backup rotation above one replica (#391, SPEC_E4). MINOR.
+# 2.3.0 (2026-10-01). the KPI page's Backups card (#306, SPEC_E6). MINOR.
+# 2.4.0 (2026-10-02). :latest follows the newest signed main build (#425, SPEC_E9). MINOR.
+# 3.0.0 (2026-10-02). Epic E, restore tools and release safety (#385): recovery mode (#303),
+# restore-db.sh (#302), per-pod backup rotation (#391), off-volume backup on by default (#304), the
+# KPI Backups card (#306), the schema line and the runbook's checks (#300), the chart-publish label
+# gate (#410), :latest (#425), the runbook's break glass under Argo CD (#533). MAJOR.
+# 3.1.0 (2026-10-02). Delete report runs and database copies from the page, previewed and confirmed,
+# for the cluster-admin tier (#542). MINOR.
+# 3.2.0 (2026-10-03). An estate names its own platform users in the values file or a ConfigMap, and either platform list can live in a ConfigMap; the shipped platform users gain `kube:admin` (#255). MINOR.
+# 3.3.0 (2026-10-03). A direct user grant whose binding carries the operator's config-source label or exception annotation leaves the Namespace audit worklist, its counts and the direct-user alert, and is counted and listed as acknowledged; group-sync-operator-helm is a chart's provenance in the Group gate (#503). MINOR.
+# 4.0.0 (2026-10-03). Epic G: access declared, platform identities configured (#387). MAJOR.
+# 4.1.0 (2026-10-03). A report's sha256 covers its data only: page one's run facts (when, by whom, the run id, the release, the snapshot's age, the marking and the binding interval) leave the hash; two runs over one snapshot with the same parameters hash the same while the values a report computes against the generation clock coincide; every artefact's hash changes once (#270). MINOR.
+# 4.2.0 (2026-10-03). CSV as a fourth report format, off by default: one file per run with the report's tables, its sha256 and page one, each cell written as the page's table export writes it (#106). MINOR.
+# 4.3.0 (2026-10-03). What changed between two runs: a report-diff run compares the sealed data of two finished runs of one report on one cluster, rows removed and added per table, stored as a sealed manual run naming both inputs and their sha256s (#108). MINOR.
+# 4.4.0 (2026-10-04). Webhook delivery of scheduled reports: each finished run of a schedule's fan-out is POSTed as one CloudEvent to the URL in a mounted Secret, retried for 408, 429, 500, 502, 503, 504 and network errors, never printing the URL; a run not delivered fails the Job (#109). MINOR.
+# 4.5.0 (2026-10-04). A schedule that silently stops producing evidence raises an alert: the report service exports each schedule's state on the Reporting status page (ok, late, never, disabled) as gsd_report_schedule_status, computed by the page's own code (#140). MINOR.
+# 4.6.0 (2026-10-04). Tickets are signed with a ticket key of their own, never with the service token the schedule Jobs and the poller hold, so a token holder can no longer sign a ticket naming anybody; a ticket of the earlier format is answered 401 so an open page mints again; a rotation verifies with `previous` until it is closed (#392). MINOR.
+# 4.7.0 (2026-10-04). The Tech debt sweep: the Generate label, the KPI cards on a phone, no PDF on schedules, the recovery script's SIGTERM, the Reports description, report-diff order, access-certification's sealed stamp, two stale names, cron day and month names, the release note's schema line, the walk's interpreter, the README and the cosign version (#577 #546 #548 #594 #555 #587 #588 #589 #590 #585 #543 #591 #545 #535). MINOR.
+# 5.0.0 (2026-10-04). Epic F: reports, honest seals, more formats, diffs and delivery (#386). MAJOR.
+# 5.1.0 (2026-10-04). A report's windows, cutoffs and overdue states end at the snapshot's stamp, not the generation time (#592); compliance-snapshot and login-activity keep the last poll's and the last read's instants out of their sealed sections (#607); the Reports form starts with only HTML ticked (#593). MINOR.
+# 5.2.0 (2026-10-04). The lab deploys only what promote.yml read back (#598). MINOR.
+appVersion: "5.2.0"
+
+keywords: [openshift, ldap, rbac, groupsync, observability]
+home: https://github.com/ephico2real2/group-sync-dashboard
+sources:
+  - https://github.com/ephico2real2/group-sync-dashboard
+maintainers:
+  - name: ephico2real

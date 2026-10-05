@@ -1,0 +1,67 @@
+# The Ingress alternative (ingress.enabled, off by default; the Route in route.yaml is the
+# default). On OpenShift the ingress-to-route controller (openshift.io/ingress-to-route)
+# converts this into a Route automatically, so one manifest covers both OpenShift and plain
+# Kubernetes — which is what this is for.
+#
+# The cost of that portability is a host known at template time: a hostless Ingress produces
+# no Route at all, so gsd.externalHost either takes ingress.host or reads the cluster's apps
+# domain — and refuses to render when it can do neither, which is every GitOps renderer.
+# The Route has no such requirement, which is why it is the default.
+#
+# TLS termination is carried by an annotation because Ingress has no field for it. Verified
+# on this cluster: the generated Route came out `reencrypt/Redirect`.
+#
+# ---------------------------------------------------------------------------------------
+# argocd.argoproj.io/sync-options: ServerSideApply=true   (when argocd.enabled)
+# ---------------------------------------------------------------------------------------
+# The ingress-to-route controller writes `status.loadBalancer` here once a Route exists, and
+# on a cluster with a mutating webhook or a service mesh more can appear. Server-side apply
+# keeps Argo's ownership to the fields the chart actually sets, so what the cluster adds
+# later does not read as drift.
+#
+# The route.openshift.io annotations below are OURS, not injected — they are what tells the
+# controller how to terminate TLS — so they were never the reason this is here.
+#
+# Pair it with an ignoreDifferences entry on /status in the Application; see the chart
+# README for why both, and which of the two was measured rather than inferred.
+{{- if eq (include "gsd.exposure" .) "Ingress" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "gsd.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.labels" . | nindent 4 }}
+  annotations:
+    {{- if .Values.argocd.enabled }}
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+    {{- end }}
+    # reencrypt whenever the proxy is on — it terminates TLS itself with the service-ca
+    # certificate, so the router must re-encrypt to it. See the gsd.termination helper.
+    route.openshift.io/termination: {{ include "gsd.termination" (dict "root" . "configured" .Values.ingress.termination) | quote }}
+    {{- if .Values.ingress.insecureEdgeTerminationPolicy }}
+    route.openshift.io/insecureEdgeTerminationPolicy: {{ .Values.ingress.insecureEdgeTerminationPolicy | quote }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}{{- toYaml . | nindent 4 }}{{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    # Always emits a host. A hostless Ingress yields no Route on OpenShift, so the release
+    # would install cleanly and serve nothing.
+    - host: {{ include "gsd.externalHost" . }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "gsd.fullname" . }}
+                # The Service port stays 8080 in both modes; only its targetPort moves to
+                # the proxy, so this reference does not change.
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

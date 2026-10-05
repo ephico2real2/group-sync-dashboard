@@ -1,0 +1,232 @@
+{{- include "gsd.reportingGuards" . }}
+{{- if eq (include "gsd.reportingEnabled" .) "true" }}
+{{- $dataClaim := .Values.persistence.existingClaim | default (printf "%s-data" (include "gsd.fullname" .)) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gsd.reportName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.reportLabels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Recreate: one artefact store, one index, one worker. Two report pods on one RWO claim would
+  # never schedule, and on RWX would race on the run index.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "gsd.reportSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "gsd.reportSelectorLabels" . | nindent 8 }}
+      annotations:
+        # priorityClassName is pod-spec (it rolls the pod via the template diff on its own), not config
+        # the report process reads, so it is omitted here — otherwise merely adding the key to values.yaml
+        # (0.33.0, default "") would Recreate-roll the #97 report pod on a defaults-only upgrade.
+        checksum/reporting: {{ omit .Values.reporting "priorityClassName" | toYaml | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "gsd.reportName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.reporting.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.reporting.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.reporting.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.reporting.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      containers:
+        - name: report
+          image: {{ include "gsd.reportImage" . }}
+          imagePullPolicy: {{ .Values.reporting.image.pullPolicy }}
+          {{- if .Values.reporting.tls.enabled }}
+          command:
+            - python3.14
+            - -m
+            - uvicorn
+            - gsd.reporting.server:create_report_app
+            - --factory
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8443"
+            - --workers
+            - "1"
+            - --ssl-certfile
+            - /etc/gsd/report-tls/tls.crt
+            - --ssl-keyfile
+            - /etc/gsd/report-tls/tls.key
+          {{- end }}
+          ports:
+            - name: https
+              containerPort: 8443
+          env:
+            - name: GSD_LOG_LEVEL
+              value: {{ include "gsd.logLevel" . | quote }}
+            # The per-request record, the dashboard's setting applied to this pod too (#245 reached
+            # the dashboard only). At the default WARNING a routine probe writes nothing and a
+            # failing request still does; INFO restores the full per-request lines.
+            - name: GSD_HTTP_LOG_LEVEL
+              value: {{ include "gsd.httpLogLevel" . | quote }}
+            - name: GSD_REPORT_SNAPSHOT_DIR
+              value: /data/report
+            - name: GSD_REPORT_ARTIFACT_DIR
+              value: /artifacts
+            - name: GSD_REPORT_TOKEN_FILE
+              value: /etc/gsd/report/token
+            # The ticket key (#392): tickets verify with it, never with the token above; `previous` exists only
+            # while a rotation is open (charts/group-sync-dashboard/README.md, "Rotating the report ticket key").
+            - name: GSD_REPORT_TICKET_KEY_FILE
+              value: /etc/gsd/report-ticket/key
+            - name: GSD_REPORT_TICKET_PREVIOUS_KEY_FILE
+              value: /etc/gsd/report-ticket/previous
+            - name: GSD_REPORT_PDF_ENABLED
+              value: {{ .Values.reporting.pdf.enabled | quote }}
+            - name: GSD_REPORT_PDF_VARIANT
+              value: {{ include "gsd.reportPdfVariant" . | quote }}
+            - name: GSD_REPORT_SCHEDULED_KEEP_PER_SCHEDULE
+              value: {{ .Values.reporting.retention.scheduled.keepPerSchedule | quote }}
+            - name: GSD_REPORT_SCHEDULED_RETENTION_DAYS
+              value: {{ .Values.reporting.retention.scheduled.days | quote }}
+            - name: GSD_REPORT_MANUAL_RETENTION_DAYS
+              value: {{ .Values.reporting.retention.manual.days | quote }}
+            - name: GSD_REPORT_MANUAL_RETENTION_MAX_RUNS
+              value: {{ .Values.reporting.retention.manual.maxRuns | quote }}
+            # The schedules as the status page needs them (#149 R6): cadence, next fire and effective
+            # retention come from the cron expression and these values, not from a cluster call.
+            - name: GSD_REPORT_SCHEDULES
+              value: {{ include "gsd.reportSchedulesJson" . | quote }}
+            - name: GSD_REPORT_FORMATS_SCHEDULED
+              value: {{ join "," ((.Values.reporting.formats | default dict).scheduled | default (list "html" "json")) | quote }}
+            - name: GSD_REPORT_FORMATS_MANUAL
+              value: {{ join "," ((.Values.reporting.formats | default dict).manual | default (list "html" "json" "pdf")) | quote }}
+            - name: GSD_REPORT_MARKING
+              value: {{ .Values.reporting.marking | quote }}
+            - name: GSD_REPORT_ENABLED_REPORTS
+              value: {{ include "gsd.reportEnabledReports" . | quote }}
+            # Facts about the DASHBOARD's configuration the coverage block must state and a
+            # snapshot cannot carry: whether capture and the namespaces read are on, the cadence.
+            - name: GSD_REPORT_LOGIN_CAPTURE_ENABLED
+              value: {{ .Values.loginCapture.enabled | quote }}
+            - name: GSD_REPORT_NAMESPACES_READ_ENABLED
+              value: {{ .Values.rbac.namespaces | quote }}
+            - name: GSD_REPORT_BINDING_INTERVAL_SECONDS
+              value: {{ .Values.config.bindingIntervalSeconds | quote }}
+            # The two delete routes the dashboard calls with the service token (#542, SPEC_H1); off, neither exists.
+            - name: GSD_REPORT_HOUSEKEEPING_ENABLED
+              value: {{ .Values.housekeeping.enabled | quote }}
+            # The captured Namespace-metadata DIMENSIONS the namespace-access report selects on, as a JSON
+            # array (same transport as namespaceMetadataLabels). The report pod reads these; the dashboard
+            # poller captures under reporting.namespaceMetadata.labels.
+            # #149 R7: the namespace label that pins an EXACT group; the forms resolve a mnemonic through it.
+            - name: GSD_REPORT_NAMESPACE_GROUP_LABEL
+              value: {{ (.Values.reporting | default dict).namespaceGroupLabel | default "" | quote }}
+            - name: GSD_REPORT_NS_SELECTOR_LABELS
+              value: {{ (((.Values.reporting | default dict).namespaceSelector) | default dict).labels | default list | toJson | quote }}
+            # The global reporting window (design §5). Disabled by default; the timezone defaults to
+            # .Values.timezone (the pod's TZ) when reporting.window.timezone is empty. The service
+            # validates these at startup and fails closed on a malformed enabled window.
+            {{- $window := (.Values.reporting | default dict).window | default dict }}
+            - name: GSD_REPORT_WINDOW_ENABLED
+              value: {{ include "gsd.reportWindowEnabled" . | quote }}
+            - name: GSD_REPORT_WINDOW_TIMEZONE
+              value: {{ ($window.timezone | default .Values.timezone) | quote }}
+            - name: GSD_REPORT_WINDOW_START
+              value: {{ $window.start | default "22:00" | quote }}
+            - name: GSD_REPORT_WINDOW_END
+              value: {{ $window.end | default "06:00" | quote }}
+            - name: GSD_REPORT_WINDOW_DAYS
+              value: {{ $window.days | default list | toJson | quote }}
+            {{- with .Values.timezone }}
+            - name: TZ
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.reporting.tls.enabled }}
+            - name: GSD_REPORT_TLS_CERT
+              value: /etc/gsd/report-tls/tls.crt
+            - name: GSD_REPORT_TLS_KEY
+              value: /etc/gsd/report-tls/tls.key
+            {{- end }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            # THE DATA CLAIM, READ-ONLY, TWICE OVER: at the claim and at the mount. The report
+            # service opens /data/report/gsd-*.db with immutable=1 and never the live gsd.db;
+            # the read-only mount is what makes "never" a property of the pod, not of the code.
+            - name: data
+              mountPath: /data
+              readOnly: true
+            - name: artifacts
+              mountPath: /artifacts
+            - name: report-token
+              mountPath: /etc/gsd/report
+              readOnly: true
+            - name: report-ticket-key
+              mountPath: /etc/gsd/report-ticket
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.reporting.tls.enabled }}
+            - name: report-tls
+              mountPath: /etc/gsd/report-tls
+              readOnly: true
+            {{- end }}
+          {{- $probes := .Values.reporting.probes | default dict }}
+          {{- $live := $probes.liveness | default dict }}
+          {{- $ready := $probes.readiness | default dict }}
+          livenessProbe:
+            httpGet:
+              path: /report/healthz
+              port: https
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.reporting.tls.enabled }}
+            initialDelaySeconds: {{ $live.initialDelaySeconds | default 10 }}
+            periodSeconds: {{ $live.periodSeconds | default 300 }}
+            timeoutSeconds: {{ $live.timeoutSeconds | default 5 }}
+            failureThreshold: {{ $live.failureThreshold | default 2 }}
+          readinessProbe:
+            httpGet:
+              path: /report/readyz
+              port: https
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.reporting.tls.enabled }}
+            initialDelaySeconds: {{ $ready.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ $ready.periodSeconds | default 30 }}
+            timeoutSeconds: {{ $ready.timeoutSeconds | default 5 }}
+            failureThreshold: {{ $ready.failureThreshold | default 3 }}
+          resources: {{- toYaml .Values.reporting.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $dataClaim }}
+            readOnly: true
+        - name: artifacts
+          {{- if .Values.reporting.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.reporting.persistence.existingClaim | default (printf "%s-artifacts" (include "gsd.reportName" .)) }}
+          {{- else }}
+          # Artefacts reset on every restart; every one is regenerable from a snapshot.
+          emptyDir: {}
+          {{- end }}
+        - name: report-token
+          secret:
+            secretName: {{ include "gsd.reportName" . }}-shared-token
+            defaultMode: 288
+        - name: report-ticket-key
+          secret:
+            secretName: {{ include "gsd.reportName" . }}-ticket-key
+            defaultMode: 288
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.reporting.tls.enabled }}
+        - name: report-tls
+          secret:
+            secretName: {{ include "gsd.reportName" . }}-tls
+            defaultMode: 288
+        {{- end }}
+{{- end }}

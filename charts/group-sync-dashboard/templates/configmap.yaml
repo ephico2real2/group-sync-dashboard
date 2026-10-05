@@ -1,0 +1,205 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gsd.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.labels" . | nindent 4 }}
+data:
+  clusters.yaml: |
+    pollIntervalSeconds: {{ .Values.config.pollIntervalSeconds }}
+    scheduleGraceSeconds: {{ .Values.config.scheduleGraceSeconds }}
+    bindingIntervalSeconds: {{ .Values.config.bindingIntervalSeconds }}
+    discoveryIntervalSeconds: {{ .Values.config.discoveryIntervalSeconds }}
+    {{- if lt (int .Values.config.discoveryIntervalSeconds) 1 }}
+    {{- fail (printf "config.discoveryIntervalSeconds must be at least 1: at 0 the discovery thread's wait returns at once, a busy loop of LISTs against the host API, and the #284 lookup's retry backoff collapses to 0; got %v" .Values.config.discoveryIntervalSeconds) }}
+    {{- end }}
+    sqliteBusyTimeoutMs: {{ .Values.config.sqlite.busyTimeoutMs }}
+    sqliteReaderBusyTimeoutMs: {{ .Values.config.sqlite.readerBusyTimeoutMs }}
+    sqliteSynchronous: {{ .Values.config.sqlite.synchronous | quote }}
+    sqliteWalCheckpointMb: {{ .Values.config.sqlite.walCheckpointMb }}
+    {{- if .Values.config.backup.enabled }}
+    backupDir: {{ .Values.config.backup.dir | quote }}
+    backupIntervalHours: {{ .Values.config.backup.intervalHours }}
+    backupKeep: {{ .Values.config.backup.keep }}
+    {{- end }}
+    requestTimeoutSeconds: {{ .Values.config.requestTimeoutSeconds }}
+    # The app cannot see its own sidecar, and must not infer authentication from the
+    # presence of X-Forwarded-User — that header is precisely what an unauthenticated
+    # caller would set. So the chart states it, and the app records identity only when
+    # this is true.
+    oauthProxyEnabled: {{ .Values.oauthProxy.enabled }}
+    {{- if .Values.oauthProxy.enabled }}
+    # The proxy's route prefix and session cap, restated for /api/whoami. The cap comes
+    # from the SAME helper that builds the sidecar's -cookie-expire flag, and both render
+    # in one helm invocation, so the number the app can report is the number the proxy
+    # enforces — by construction rather than by convention. The session cookie is HttpOnly,
+    # so the page can NEVER observe its own lifetime; it can only be told, from the one
+    # place that also set it.
+    #
+    # No refresh key: refresh is retired (values.yaml carries the measurement) and the app
+    # reads its absence as disabled. Both keys are absent when the proxy is off — there is
+    # no session to restate then, and an unguarded value would reach the app's parser with
+    # no render guard standing in front of it.
+    oauthProxyPrefix: {{ .Values.oauthProxy.proxyPrefix | quote }}
+    sessionCookieExpire: {{ include "gsd.cookieExpire" . | quote }}
+    # The idle timeout's OWN keys (values.yaml `session.idleTimeout`), never derived from the
+    # cookie cap, and inside this block because with no proxy there is no session to time out.
+    sessionIdleTimeoutEnabled: {{ include "gsd.idleTimeoutEnabled" . }}
+    sessionIdleTimeoutMinutes: {{ include "gsd.idleTimeoutMinutes" . }}
+    sessionIdleTimeoutWarningSeconds: {{ include "gsd.idleTimeoutWarningSeconds" . }}
+    {{- end }}
+    unmanagedAuditMode: {{ .Values.config.unmanagedAudit.mode | quote }}
+    unmanagedAuditMaxPerCycle: {{ .Values.config.unmanagedAudit.maxPerCycle }}
+    {{- include "gsd.groupCountCliff" . }}
+    # The group-count cliff alert (values.yaml config.alerts.groupCountCliff). The silence
+    # list is joined like loginCaptureHtpasswdProviders: the app splits on commas.
+    groupCountCliffEnabled: {{ .Values.config.alerts.groupCountCliff.enabled }}
+    groupCountCliffMinMembers: {{ .Values.config.alerts.groupCountCliff.minMembers }}
+    groupCountCliffDropRatio: {{ .Values.config.alerts.groupCountCliff.dropRatio }}
+    groupCountCliffWindowHours: {{ .Values.config.alerts.groupCountCliff.windowHours }}
+    groupCountCliffSilence: {{ .Values.config.alerts.groupCountCliff.silence | join "," | quote }}
+    # The KPI page's thresholds and doors (values.yaml `kpi`, `grafana`, `console`).
+    kpiMemoryWarnPercent: {{ .Values.kpi.thresholds.memoryPercent }}
+    kpiCpuWarnPercent: {{ .Values.kpi.thresholds.cpuPercent }}
+    kpiThrottledWarnPercent: {{ .Values.kpi.thresholds.throttledPercent }}
+    kpiDiskWarnPercent: {{ .Values.kpi.thresholds.diskPercent }}
+    {{- include "gsd.doorUrl" (list "grafana.url" .Values.grafana.url) }}
+    {{- include "gsd.doorUrl" (list "console.url" .Values.console.url) }}
+    grafanaUrl: {{ .Values.grafana.url | quote }}
+    grafanaDashboardUid: {{ .Values.grafana.dashboardUid | quote }}
+    grafanaRouteSelector: {{ ((.Values.grafana.discovery | default dict).selector | default "") | quote }}
+    consoleUrl: {{ .Values.console.url | quote }}
+    userActivityEnabled: {{ .Values.config.userActivity.enabled }}
+    userActivityVisibility: {{ .Values.config.userActivity.visibility | quote }}
+    userActivityFlushSeconds: {{ .Values.config.userActivity.flushSeconds }}
+    userActivityRetentionDays: {{ .Values.config.userActivity.retentionDays }}
+    # The UI modules (values.yaml `ui`). Read at boot from /api/version; a module off here
+    # renders no control at all rather than a disabled one.
+    uiExportEnabled: {{ .Values.ui.export.enabled }}
+    # The Users tab's provider allow-list (values.yaml config.users.providers, empty = all) and the
+    # Identity read switch, which is the same value as the grant (rbac.identities). The list is
+    # rendered as a YAML flow sequence, not comma-joined: a provider name may legally contain a
+    # comma or a space (review of C2), and the app accepts the list form as it is.
+    usersProviders: {{ .Values.config.users.providers | toJson }}
+    identitiesReadEnabled: {{ .Values.rbac.identities }}
+    # The Kyverno policy module (#170): the read switch, the breaker scrape and the history window.
+    kyvernoEnabled: {{ .Values.kyverno.enabled }}
+    kyvernoMetricsUrl: {{ .Values.kyverno.metricsUrl | quote }}
+    kyvernoEventsRetentionDays: {{ .Values.kyverno.eventsRetentionDays }}
+    # Clusters as labelled Secrets (#230, SPEC_S1): the discovery switch; the Role is cluster-secrets-rbac.yaml.
+    clusterSecretsEnabled: {{ .Values.clusterConfig.secrets.enabled }}
+    clusterSecretsWritesEnabled: {{ .Values.clusterConfig.secrets.writes.enabled }}
+    # The page's deletes of report runs and database copies (#542, SPEC_H1), for the cluster-admin tier.
+    housekeepingEnabled: {{ .Values.housekeeping.enabled }}
+    # The fleet account (SPEC_S3 §3.1) and what saTokenLookup reads (SPEC_S4b): the username and the
+    # password Secret's ADDRESS — the password itself is read at connect time through the grant
+    # fleet-account-rbac.yaml renders, and never rendered anywhere.
+    fleetAccountUsername: {{ .Values.clusterConfig.fleetAccount.username | quote }}
+    fleetPasswordSecretNamespace: {{ .Values.clusterConfig.fleetAccount.passwordSecret.namespace | quote }}
+    fleetPasswordSecretName: {{ .Values.clusterConfig.fleetAccount.passwordSecret.name | quote }}
+    fleetPasswordSecretKey: {{ .Values.clusterConfig.fleetAccount.passwordSecret.key | quote }}
+    # The daily ping (SPEC_S4c §3.4): once per fleet account per interval, on the discovery cadence.
+    fleetPingEnabled: {{ .Values.clusterConfig.fleetAccount.ping.enabled }}
+    fleetPingIntervalSeconds: {{ .Values.clusterConfig.fleetAccount.ping.intervalSeconds }}
+    enterpriseCaSha256: {{ .Values.trustedCA.enterpriseRoot.sha256 | quote }}
+    enterpriseCaSubject: {{ .Values.trustedCA.enterpriseRoot.subject | quote }}
+    caExpiryWarningDays: {{ .Values.trustedCA.expiryWarningDays }}
+    saTokenLookupSourceNamespace: {{ .Values.clusterConfig.saTokenLookup.sourceNamespace | quote }}
+    saTokenLookupSourceServiceAccount: {{ .Values.clusterConfig.saTokenLookup.sourceServiceAccount | quote }}
+    saTokenLookupTokenSecretName: {{ .Values.clusterConfig.saTokenLookup.tokenSecretName | quote }}
+    # How many replicas this release runs: the lookup is one retriever per estate (SPEC_S4 §6), and a
+    # Secret-declared mode is invisible to the render, so the pod refuses it above one replica itself.
+    replicaCount: {{ int .Values.replicaCount }}
+    # Retention on the irreplaceable history; 0 keeps forever. See values.yaml config.retention.
+    membershipEventsRetentionDays: {{ .Values.config.retention.membershipEventsDays }}
+    syncEventsRetentionDays: {{ .Values.config.retention.syncEventsDays }}
+    # Per-user visibility: the SubjectAccessReview that separates the wide tier from the
+    # self tier. The ON/OFF switch itself travels as GSD_ENABLE_VIEW_RESTRICTIONS on the
+    # Deployment — one wire, visible where an auditor reads the pod spec — so it is
+    # deliberately not repeated here, where a second copy could disagree with the first.
+    # Quoted unconditionally: the apiGroup may legitimately be the empty string (the core
+    # API group), which unquoted YAML would read as null.
+    visibilityAdminSarApiGroup: {{ include "gsd.visibilitySarApiGroup" . | quote }}
+    visibilityAdminSarResource: {{ include "gsd.visibilitySarResource" . | quote }}
+    visibilityAdminSarVerb: {{ include "gsd.visibilitySarVerb" . | quote }}
+    visibilityAdminSarNamespace: {{ include "gsd.visibilitySarNamespace" . | quote }}
+    # The Usage tab's SEPARATE, STRICTER threshold. Usage data lives only in the dashboard's
+    # own database and cannot be reproduced with oc, so it gets a higher bar than the audit
+    # views: cluster-reader (the auditor) passes adminSar above but must NOT pass this one.
+    # Quoted for the same core-group-empty-string reason as adminSar.
+    visibilityUsageAdminSarApiGroup: {{ include "gsd.usageVisibilitySarApiGroup" . | quote }}
+    visibilityUsageAdminSarResource: {{ include "gsd.usageVisibilitySarResource" . | quote }}
+    visibilityUsageAdminSarVerb: {{ include "gsd.usageVisibilitySarVerb" . | quote }}
+    visibilityUsageAdminSarNamespace: {{ include "gsd.usageVisibilitySarNamespace" . | quote }}
+    {{- /* The cluster-admin tier (#322): one question, `update clusterrolebindings` on this cluster by
+           default, gating the Cluster Configurations tab and the KPI page and granting every host tier
+           to whoever passes it. The two blocks it replaced are refused by name at render. */}}
+    {{- include "gsd.refuseRemovedVisibilitySar" . }}
+    visibilityClusterAdminSarApiGroup: {{ include "gsd.clusterAdminSarField" (dict "ctx" . "field" "apiGroup" "default" "rbac.authorization.k8s.io") | quote }}
+    visibilityClusterAdminSarResource: {{ include "gsd.clusterAdminSarField" (dict "ctx" . "field" "resource" "default" "clusterrolebindings") | quote }}
+    visibilityClusterAdminSarVerb: {{ include "gsd.clusterAdminSarField" (dict "ctx" . "field" "verb" "default" "update") | quote }}
+    visibilityClusterAdminSarNamespace: {{ include "gsd.clusterAdminSarField" (dict "ctx" . "field" "namespace" "default" "") | quote }}
+    # Unquoted: the app casts this with int(), and a quoted value would still parse but the
+    # other numeric keys here are unquoted and one convention is worth keeping.
+    visibilityTierTtlSeconds: {{ include "gsd.visibilityTierTtl" . }}
+    {{- if eq (include "gsd.reportingEnabled" .) "true" }}
+    # Reporting (values.yaml `reporting`). reportingUrl is the module switch for the app: set, the
+    # dashboard mints tickets, writes snapshots under reportingSnapshotDir and pulls the usage feed.
+    reportingUrl: {{ include "gsd.reportUrl" . | quote }}
+    reportingTokenFile: /etc/gsd/report/token
+    reportingTicketKeyFile: /etc/gsd/report-ticket/key
+    reportingCaFile: {{ ternary "/etc/gsd/service-ca/service-ca.crt" "" .Values.reporting.tls.enabled | quote }}
+    reportingSnapshotDir: /data/report
+    reportingSnapshotIntervalSeconds: {{ .Values.reporting.snapshot.intervalSeconds }}
+    reportingSnapshotKeep: {{ .Values.reporting.snapshot.keep }}
+    reportingTicketTtlSeconds: {{ .Values.reporting.ticket.ttlSeconds }}
+    {{- end }}
+    # Whether the poller reads Namespace objects (rbac.namespaces) — the namespace report's coverage.
+    namespacesReadEnabled: {{ .Values.rbac.namespaces }}
+    # The bounded Namespace label keys the poll captures (reporting.namespaceMetadata.labels).
+    namespaceMetadataLabels: {{ include "gsd.namespaceMetadataLabels" . }}
+    # Which namespaces and which users are the platform's (#255). Rendered only when set: an absent key
+    # is the shipped rule. An `additional*` list renders only with entries; a replacing key (`prefixes`,
+    # `suffixes`, `names`) renders whenever it is set, even empty, because `names: []` means "none of the
+    # shipped names" and dropping it would keep them silently. With existingConfigMap on, the key names the
+    # ConfigMap and where deployment.yaml mounts it, and the loader reads the lists from that file; its
+    # `revision` is here only so that changing it changes checksum/config and rolls the pod.
+    # PLATFORM-CLASSIFICATION (#255, #353): values.yaml platformNamespaces → this file → config.py _platform_namespaces_setting
+    # PLATFORM-CLASSIFICATION (#255, #353): values.yaml platformUsers → this file → config.py _platform_users_setting
+    {{- $_ := include "gsd.validatePlatformLists" . }}
+    {{- range $name := list "platformNamespaces" "platformUsers" }}
+    {{- with index $.Values $name }}
+    {{- $cm := .existingConfigMap | default dict }}
+    {{- if $cm.enabled }}
+    {{ $name }}ConfigMap: {{ toJson (dict "name" $cm.name "key" $cm.key "path" (printf "%s/%s" (include "gsd.platformListDir" $name) $cm.key) "revision" (ternary "" (toString $cm.revision) (kindIs "invalid" $cm.revision))) }}
+    {{- else }}
+    {{- $set := dict }}
+    {{- range $k, $v := . }}{{- if and (ne $k "existingConfigMap") (kindIs "slice" $v) (or $v (has $k (list "prefixes" "suffixes" "names"))) }}{{- $_ := set $set $k $v }}{{- end }}{{- end }}
+    {{- if $set }}
+    {{ $name }}: {{ toJson $set }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    # The module and its read grant share the values switch. The helper refuses removed keys.
+    loginCaptureEnabled: {{ .Values.loginCapture.enabled }}
+    loginCaptureSource: {{ include "gsd.loginCaptureSource" . | quote }}
+    loginCaptureAuditNodeSelector: {{ .Values.loginCapture.auditLog.nodeSelector | quote }}
+    # Lists, as JSON, never comma-joined: an ignore pattern is a DN fragment and OpenShift accepts a
+    # provider named `a,b` — the same reason usersProviders above is a list.
+    loginCaptureAuditNodeNames: {{ .Values.loginCapture.auditLog.nodeNames | toJson }}
+    loginCaptureAuditProviders: {{ .Values.loginCapture.auditLog.providers | toJson }}
+    loginCaptureAuditIgnoreIdentityPatterns: {{ .Values.loginCapture.auditLog.ignoreIdentityPatterns | toJson }}
+    # Which provider NAMES are local HTPasswd accounts. The log carries the provider name and
+    # nothing about its type, so a success on `developer` is indistinguishable from a directory
+    # login without this list — and these are break-glass accounts, not people to offboard.
+    loginCaptureHtpasswdProviders: {{ .Values.loginCapture.htpasswdProviders | join "," | quote }}
+    loginRetentionDays: {{ .Values.loginCapture.retentionDays }}
+    # The login-gate group's DN. Empty means "discover it from the OAuth CR" — see values.yaml.
+    # Quoted unconditionally: a DN contains commas and colons, both of which YAML reads as structure.
+    clusterAccessGroup: {{ .Values.clusterAccess.group | quote }}
+    leaderElection: {{ .Values.leaderElection.enabled }}
+    leaderLeaseName: {{ .Values.leaderElection.leaseName | quote }}
+    {{- include "gsd.validateClusters" . }}
+    clusters:
+      {{- toYaml .Values.clusters | nindent 6 }}

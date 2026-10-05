@@ -1,0 +1,2601 @@
+# Defaults reproduce exactly what is running today, so `helm install` with no overrides
+# yields the deployment that was verified on the cluster. Everything below is here because
+# it is plausibly environment-specific; anything genuinely invariant stays in the templates.
+
+# ---------------------------------------------------------------------------
+# Image
+# ---------------------------------------------------------------------------
+image:
+  repository: quay.io/ephico2real/group-sync-dashboard
+
+  # EMPTY ON PURPOSE, and empty means `appVersion`. gsd.image resolves
+  # `default .Chart.AppVersion .Values.image.tag`, so a chart that names no tag deploys the
+  # application version it declares — the shape cert-manager uses, for a chart that ships
+  # alongside the app it deploys.
+  #
+  # It used to carry a pinned <appVersion>-<git-sha>, written back to `main` by CI after every
+  # build. That one write-back caused three defects: a published chart that lagged two merges and
+  # shipped without a data-exposure fix (#34), a release that published nothing while reporting
+  # success (#37), and branch protection being impossible because CI had to write to the default
+  # branch. docs/DESIGN_decouple_chart_and_app_release.md has the review that settled it.
+  #
+  # SET IT to deploy a specific build, and the fallback steps aside:
+  #   --set image.tag=0.7.0-db8a90510f      an exact commit's image, immutable
+  # `local-development/build-and-push-external.sh --update-values` writes exactly that for you,
+  # which is the path to use when you build into your own registry — a fork, an air-gapped
+  # mirror — and need the chart pointing at your own image rather than ours.
+  #
+  # WHAT `appVersion` RESOLVES TO IS A MOVING ALIAS, republished only when the application version
+  # changes. So it is stable for the life of an appVersion and NOT a substitute for pinning if you
+  # need byte-identical rollbacks: with pullPolicy Always below, every container creation
+  # re-resolves it. Pin the sha form, or `digest` below, if that matters to you.
+  tag: ""
+
+  # THE ONLY TRULY IMMUTABLE PIN, and it WINS over `tag` and over the appVersion fallback.
+  #
+  # A tag — including the <appVersion>-<sha> form — is a NAME, and whoever owns the registry can
+  # repoint a name. A digest IS the content: the registry cannot serve different bytes under it,
+  # because the digest is a hash of those bytes. So this is the value to set when "the same image
+  # after a node drain" has to be a guarantee rather than a convention.
+  #
+  # Get one from the tag you already trust:
+  #   skopeo inspect --no-tags docker://quay.io/ephico2real/group-sync-dashboard:0.7.0 | grep Digest
+  #   --set image.digest=sha256:aa6a7f5463c6b39f8d2647ba24ae756f4e7a0b101fe05c8e5bb58d05de016a68
+  #
+  # gsd.image renders `repository@digest` — `@`, not `:`. A malformed value is REFUSED at render
+  # time rather than passed through, because a bad digest still forms a reference Kubernetes accepts
+  # and the failure would surface as ImagePullBackOff on a cluster instead of in a pipeline. The
+  # error names how to get a correct one.
+  #
+  # WITH A DIGEST SET, `pullPolicy: Always` costs a registry round trip and buys nothing — the
+  # content cannot have changed. Deliberately NOT automated: silently flipping pullPolicy because
+  # another field is set is the kind of cleverness that surprises somebody at 2am. Set
+  # `pullPolicy: IfNotPresent` yourself if you want that saving.
+  digest: ""
+
+  # Always, deliberately. A tag that can be republished must be re-resolved, or two nodes end up
+  # running different bytes under one tag — and the sha form is immutable, so re-resolving it costs
+  # a registry round trip and changes nothing. See `digest` above for the one case where this is
+  # pure overhead.
+  pullPolicy: Always
+
+  # Only needed for a PRIVATE registry. Leave empty for a public repository: an empty
+  # secret reference makes a pod fail to schedule rather than falling back to anonymous
+  # pull, so it must be absent rather than blank.
+  pullSecrets: []
+  # pullSecrets:
+  #   - name: quay-pull-secret
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Workload
+# ---------------------------------------------------------------------------
+# RECOMMENDED: 1.
+#
+# This polls every 60s and serves a handful of operators; it is not in anyone's request
+# path. A node drain costs one missed poll, which the next one heals. What a second replica
+# actually buys is HTTP uptime, and it pays for it in DIVERGENT HISTORY — each pod only has
+# the timeline since its own database existed, so the Service answers "when did this user
+# leave?" differently depending on which pod you reach. That history is the irreplaceable
+# part; current state self-heals within one poll.
+#
+# If you do raise it, the chart switches GSD_DB_PATH to /data/$(POD_NAME)/gsd.db so each pod
+# gets its OWN file. That is deliberate and not optional: SQLite WAL coordinates writers
+# through an mmap'd -shm file that assumes all processes are on one host, so sharing a
+# single file across a ReadWriteMany volume corrupts rather than errors. A shared VOLUME
+# with unshared FILES is safe; a shared FILE is not.
+#
+# Requirements for >1: ReadWriteMany persistence, and leaderElection DISABLED — with
+# per-pod databases a pod that lost the lease would stop polling while still serving reads
+# from its own now-stale copy, which is worse than no election at all.
+#
+# Note a ReadWriteOnce PVC restricts to one NODE, not one pod, so several pods CAN share it
+# if they land on the same node — but relying on that means pinning them there, and losing
+# that node then loses every replica.
+replicaCount: 1
+
+# A PDB on one replica governs DRAINS, not availability — there is no second pod.
+#   maxUnavailable: 1  the drain proceeds, the pod moves, one poll is missed (default)
+#   minAvailable: 1    the drain BLOCKS indefinitely, because one replica can never satisfy
+#                      it. Cluster admins hit this during maintenance and cannot see whose
+#                      workload is stalling them. Only choose it if a human must be involved
+#                      before this pod moves.
+#
+# On by default since chart 0.14.0 (the chart's rule since 0.14.0: every switch is on unless it costs RBAC, a credential,
+# a second image or a cluster-wide write): with maxUnavailable: 1 the object costs nothing on one
+# replica and a drain still proceeds. Only minAvailable turns it into something that blocks a human.
+# One more thing can block it, and the chart guards against it: a pod the selector matches whose
+# owner has no scale subresource (a Job) fails the budget with DisruptionAllowed=False. The hook
+# Jobs therefore do not carry the selector labels — see templates/pdb.yaml.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+  minAvailable: ""     # set this INSTEAD of maxUnavailable to block drains
+
+leaderElection:
+  # Only the lease holder polls; every replica still serves the API and /metrics.
+  #
+  # BEST-EFFORT, not a write fence. Leadership is checked once before each poll cycle and
+  # never again during it, so a pod that stalls after the check can lose the lease and
+  # still finish its writes. Two pods can also both consider themselves leader briefly,
+  # since expiry is judged against each pod's own clock. Treat this as reducing the
+  # ordinary overlap cases, not as a guarantee that one process writes — the guarantee
+  # comes from the deployment shape: one replica, Recreate, one database file.
+  #
+  # Worth leaving on even at one replica: `Recreate` is not instantaneous, `kubectl scale`
+  # is one keystroke, and a partitioned node can leave an old pod running while a new one
+  # starts. Each of those puts two pollers on one database.
+  #
+  # MUST be false above one replica, and the chart refuses to render otherwise. Each pod then
+  # owns its own database file, so a pod that loses the lease would stop polling while still
+  # serving reads from a copy that never updates again.
+  enabled: true
+  leaseName: group-sync-dashboard
+
+# Empty derives it: Recreate at one replica, where overlapping pods would contend for the
+# same database file, and RollingUpdate above one, where each pod owns its own file and
+# Recreate would take the whole deployment down on every upgrade. Set it explicitly to
+# override.
+strategy: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  # Stays false under the 0.14.0 on-by-default rule: a hardening posture, not a feature switch.
+  # true would grant the container a privilege; the rule turns features on and relaxes nothing.
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+# The dashboard pod's scheduling priority. Empty = the cluster default (priority 0). A PDB does NOT
+# stop preemption; set a PriorityClass name here when this pod must outrank contending workloads on a
+# saturated node (#97). Rendered only when set.
+priorityClassName: ""
+podAnnotations: {}
+podLabels: {}
+
+# ---------------------------------------------------------------------------
+# Probes
+# ---------------------------------------------------------------------------
+# Neither probe is gated on a reachable cluster: an unreachable cluster is a thing this
+# dashboard exists to DISPLAY, so failing a probe for one would take it down exactly when
+# it has something to report.
+#
+# The 1s default timeout is deliberately not used. On a host that suspends and resumes,
+# every in-flight probe fails with "context deadline exceeded" and liveness kills a healthy
+# process — observed here, and it cascaded into a ~4h outage. Liveness is the more forgiving
+# of the two because a failed readiness only removes the pod from the Service, while a
+# failed liveness destroys in-flight state and forces an image re-pull.
+#
+# THE TWO PERIODS ARE DELIBERATELY FAR APART, and the reason is what each probe costs when
+# it is wrong. Readiness runs every 15s because it is cheap to be wrong: the pod leaves the
+# Service and comes back. Liveness runs every 5min because it is expensive to be wrong: it
+# destroys in-flight state and forces a container restart, and this process holds the only
+# copy of accumulated history between checkpoints.
+#
+# failureThreshold moved 6 -> 2 with that period. It has to: 6 failures at a 300s period is
+# a THIRTY MINUTE wait before a genuinely wedged pod is restarted, which is not a health
+# check. At 2 the budget is 10 minutes of sustained failure — still more forgiving than the
+# 3 minutes this had at 30s x 6, because the period, not the threshold, is what protects a
+# healthy-but-briefly-slow process.
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 10
+    periodSeconds: 300     # 5 min — see the threshold note above before raising this
+    timeoutSeconds: 5
+    failureThreshold: 2    # 2 x 300s = 10 min to restart a wedged pod
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# ---------------------------------------------------------------------------
+# Recovery mode (#303) — the app stopped and a recovery pod holding the data volume
+# ---------------------------------------------------------------------------
+# For a restore or a rollback (docs/RUNBOOK_backup_restore.md section 4). The chart renders a second
+# Deployment, <fullname>-recovery, on every release (#532): the app's pod spec and the same /data
+# volume, with the chart's recovery script (scripts/recovery_mode.py, shipped in a ConfigMap) in the
+# dashboard container instead of uvicorn, at 0 replicas. recovery.enabled=true scales the app's
+# Deployment to 0 and the recovery Deployment to 1, and false the other way round: nothing else
+# changes, so both Deployments report available and the next rollout turns it off whatever the
+# deployment tool prunes. No process opens gsd.db in the recovery pod, so you can replace it from
+# `oc exec`, and a dropped session does not end the pod. The script ships with the chart, not the
+# image, so it runs under the older image a rollback targets. The scheduler starts the recovery pod
+# only once the app's pod is gone, and the app's only once the recovery pod is gone (a required pod
+# anti-affinity on the recovery pod), so the two never hold the database at once.
+#
+# SET IT IN THIS RELEASE'S VALUES FILE and roll it out through the release's deployment pipeline,
+# like any other value; for a rollback, set the older image.tag in the same change. Never with
+# `oc set env` or an edit of the Deployment: a GitOps tool such as Argo CD (selfHeal) reverts a hand
+# edit, and an environment variable alone would leave the liveness probe to kill the pod in the
+# middle of a restore.
+#
+# The recovery pod has no liveness probe and no readiness probe, and no Service selects it: READY
+# reads 2/2 (1/1 with the proxy off), the route has no endpoint, and both Deployments report
+# available. A pipeline that rolls a failed rollout back on its own (Helm's --rollback-on-failure
+# flag, --atomic in Helm 3, or an equivalent remediation) must still not carry this change: a
+# rollout that fails for another reason is rolled back, which turns recovery mode off by itself and
+# starts the app on a file that may be half restored. When backup.offsite uses the pvc destination,
+# its claim is mounted read-only at /offsite, so the offsite copies can be listed and read.
+#
+# NOTHING IS RECORDED WHILE IT IS ON, and no rule says recovery mode. GroupSyncDashboardNotPolling
+# does not fire: its gauge comes from the stopped process, and a missing series returns nothing.
+# With reporting on, GroupSyncDashboardReportSnapshotStale (warning) fires once the report
+# service's newest copy is older than four snapshot intervals, for for.reportSnapshot (about 50
+# minutes at the defaults). The TTL is the bound: a Go duration (2h, 90m, 1h30m), counted from the
+# pod's first start and kept in its /tmp across container restarts; a new pod (a new recovery.ttl,
+# a deleted or evicted pod) starts a new TTL. At the TTL the script exits 1 and every process in the
+# container stops with it, an `oc exec` restore still running included; the pod reads
+# CrashLoopBackOff, and the log says how to extend it (a longer recovery.ttl in the values file) or
+# leave it. Refused at render: replicaCount other than 1, persistence.enabled=false, and a TTL that
+# is not a positive duration.
+#
+# Stays false by default under the 0.14.0 rule: turning it on stops the dashboard.
+recovery:
+  enabled: false
+  ttl: 2h
+
+# ---------------------------------------------------------------------------
+# Application configuration
+# ---------------------------------------------------------------------------
+config:
+  # 60s. Measured on the reference cluster, one poll is TWO list calls — groupsyncs and
+  # groups — because 62 groups fit in a single 500-item page. That is 2880 calls a day per
+  # cluster, which is nothing, and it buys the thing this dashboard exists for.
+  #
+  # The precision argument, since it is the only one that matters here. A sync event
+  # carries the operator's own lastSyncSuccessTime, so a slow poll delays when a sync is
+  # NOTICED without distorting the recorded timeline. A MEMBERSHIP event has no upstream
+  # timestamp — observed_at is ours — so the poll interval IS the error bar on "when did
+  # this person lose access?". At 60s that is +/-1 minute; at 900s it was +/-15. Neither
+  # loses the change; the slower one just cannot say when it happened. That history is the
+  # irreplaceable part, so it gets the resolution.
+  #
+  # THREE VALUES ARE TIED TO THIS and move with it. Changing pollIntervalSeconds alone
+  # breaks all three, and two fail loudly:
+  #   * scheduleGraceSeconds below            (or every healthy CR flaps to `late`)
+  #   * monitoring.prometheusRule.notPollingSeconds (or that alert fires forever)
+  #   * bindingIntervalSeconds below          (or bindings refresh faster than groups)
+  pollIntervalSeconds: 60
+
+  # Slack before a CR is called late. Without it the state flaps every cycle: a sync lands
+  # 3-14s after its cron minute and is observed up to a POLL INTERVAL later, so a healthy
+  # CR briefly exceeds one interval on EVERY pass.
+  #
+  # Must stay above pollIntervalSeconds — the observation lag it absorbs IS the poll
+  # interval. 120 = 60 for that lag plus a minute for scheduler latency.
+  scheduleGraceSeconds: 120
+
+  # Bindings are listed across every namespace, far more expensive than the two group
+  # calls — ~154 paged requests at 100x the reference cluster — and they change on
+  # administrative action rather than on a schedule, so minute-level freshness buys
+  # nothing. Deliberately slower than the group poll, which means it moves when the group
+  # poll moves, or the expensive call becomes the frequent one.
+  #
+  # HOURLY BY DEFAULT (the operator, 2026-09-25: every 5 minutes was "too much checking and
+  # checking on every clusters"). The same timer also times operator-config and Kyverno health.
+  # Nothing alerts on the age of a binding refresh, and /healthz does not depend on it. The
+  # liveness probe keeps its own period (probes.liveness.periodSeconds), by the operator's
+  # ruling: it makes no cluster call, and tying it here would leave a hung pod for hours.
+  bindingIntervalSeconds: 3600
+
+  # CLUSTER DISCOVERY, on its own timer so that slowing the bindings never delays a new cluster
+  # (the operator, 2026-09-25). One pass is one LIST of labelled Secrets and one of onboarding
+  # ConfigMaps in this namespace, on the host only: no call reaches a managed cluster. A cluster
+  # applied with oc or GitOps is picked up within this interval; a write through the dashboard's
+  # own API wakes discovery at once. The #284 lookup's retry backoff rides it too
+  # (interval x 2^(attempt-1), capped at 24h). 300 is the cadence discovery had before it moved
+  # off bindingIntervalSeconds in chart 0.56.0.
+  discoveryIntervalSeconds: 300
+
+  requestTimeoutSeconds: 15
+
+  # SQLite locking. The defaults are tested; change them only for a diagnosed problem.
+  sqlite:
+    # How long a write waits for a lock another CONNECTION holds before giving up. SQLite's
+    # own default is 0 — it raises "database is locked" instantly, with no retry — and that
+    # default is the usual cause of the error. The collision this covers is the `Recreate`
+    # rollover, where the outgoing pod still holds the lock as the incoming one opens the
+    # file. Threads inside one pod are already serialised and never reach this.
+    busyTimeoutMs: 5000
+    # Deliberately shorter than the writer's: /readyz performs a read and the probe gives up
+    # at 5s, so a reader inheriting 5000 would turn contention into a restarted pod.
+    readerBusyTimeoutMs: 2000
+    # NORMAL is the documented companion to WAL — a power loss can lose the last commits but
+    # cannot corrupt the file, and what is lost is one poll of history that the next poll
+    # largely re-derives. FULL fsyncs every commit of a 50k-row refresh instead.
+    synchronous: NORMAL
+    # Truncate the write-ahead log once it passes this size. Checkpointing yields to open
+    # readers, so a steady read load can starve it and the WAL grows until the VOLUME fills
+    # while the database file itself stays small. Watch gsd_sqlite_wal_bytes.
+    walCheckpointMb: 8
+
+  # Periodic backup of the accumulated sync and membership history.
+  #
+  # THIS IS THE ONLY EXISTENTIAL RISK IN THE SYSTEM. Everything else the dashboard stores
+  # is a cache that the next poll re-fetches; the history exists only because this process
+  # observed it, and nothing upstream can replay it. Until this existed, a corrupted or
+  # deleted PVC lost it outright.
+  #
+  # VACUUM INTO, not a file copy: it takes a read transaction for the duration, so the
+  # output is consistent even while the poller writes. Copying gsd.db with a live WAL
+  # produces a torn file that opens without complaint and is missing the newest commits —
+  # a backup that restores, which is the worst kind.
+  #
+  # HALF AN ANSWER BY DESIGN. These land on the SAME volume they protect against, so they
+  # cover corruption, a bad migration and accidental deletion — not loss of the volume.
+  # Ship them off it with a CronJob mounting the same PVC read-only; the dashboard
+  # deliberately does not grow credentials for object storage.
+  #
+  # NOT THE PRE-UPGRADE COPY, which these keys do not control. From the application release after
+  # 0.36.0, a new image copies the database as it was, verified, to pre-upgrade/ beside it before it
+  # upgrades the schema: /data/pre-upgrade when there is one replica, /data/$POD_NAME/pre-upgrade when
+  # replicaCount is greater than 1, with backups on or off. It does not start if the copy cannot be
+  # written. The copies of the newest three upgrades are kept, each about the size of the database, so
+  # they count against persistence.size (docs/RUNBOOK_backup_restore.md §6).
+  #
+  # ABOVE ONE REPLICA every pod writes into this one dir as gsd-<stamp>-<pod>.db and keeps `keep` of
+  # its OWN: keep applies per replica, and no pod deletes another pod's copies. The copies of a pod
+  # that no longer exists are rotated by nobody (a rollout renames every pod). At one replica the name
+  # stays gsd-<stamp>.db and keep bounds the whole dir (the chart README's Scaling section).
+  backup:
+    enabled: true
+    dir: /data/backup
+    intervalHours: 6
+    keep: 4     # 4 x 6h = the last day, at roughly the size of the database each
+
+  # Retention on the accumulated history — the two tables the backup above exists for.
+  # 0 keeps a table forever. The leader prunes after each cycle's backup and NEVER before one
+  # has succeeded in its own life (a failing backup holds the prune; with config.backup off
+  # nothing is ever deleted, because the history would have no copy anywhere), 5000 rows per table per
+  # cycle so years of backlog cannot hold the single writer, counted into
+  # gsd_retention_rows_deleted_total{table}. The page and the API say where the cut is
+  # ("history retained since ...") so a timeline that begins there is not read as empty before.
+  #
+  # membershipEventsDays 0 — FOREVER — by judgment: one row per join or leave, about a megabyte
+  # a year at reference scale, and it is the answer to "when did this person lose access?".
+  # Deleting that is a policy an operator sets, not a default a chart picks.
+  # syncEventsDays 730 by judgment: one row per observed sync per CR — a ten-minute schedule
+  # is ~52k rows a year per CR, tens of megabytes a year on a claim that also holds every
+  # backup copy — naming CRs and counts and never a person. Two years bounds the claim.
+  retention:
+    membershipEventsDays: 0
+    syncEventsDays: 730
+
+  # Unmanaged-grant DISCOVERY. This feature writes nothing — and to be exact about the
+  # dashboard as a whole, the only objects it writes on any cluster by default are its own
+  # Leases, in its own namespace under the `<fullname>-leases` Role (#420), which are its
+  # coordination and not anything it reports on.
+  #
+  # A binding is `unmanaged` when it carries neither the policy system's config-source label
+  # nor an `rbac.ocp.io/unmanaged-exception` annotation and names an operator-synced group, a
+  # ServiceAccount or a user — somebody granted access by hand, outside the governance system,
+  # and nothing on the cluster reports it. The platform's own identities are never a finding: a
+  # ServiceAccount in a namespace `platformNamespaces` (below) names, a user `platformUsers` (below)
+  # names — by default a `system:` user, the kube components, kubeadmin and kube:admin.
+  # Nothing else about how a grant was applied (a Helm or OLM label, a binding's name) excludes
+  # it: a legitimate one is silenced by labelling its binding `rbac.ocp.io/config-source=<who
+  # decided>`, as this chart labels its own RBAC (#312, #353).
+  #
+  # `log` publishes each finding as a self-contained line a log pipeline can alert on:
+  #
+  #   UNMANAGED GRANT DISCOVERED — crc-local: ClusterRoleBinding demo-cluster-admin-crb
+  #   (cluster-wide) grants cluster-admin to group app-ocp-rbac-demo-cluster-admin, outside
+  #   the policy system (no config-source label, no exception annotation)
+  #
+  # The same findings are in the RBAC policy tab and at
+  # GET /api/clusters/{id}/bindings/findings. The discovery IS the deliverable.
+  #
+  # THERE WAS AN `annotate` MODE. IT WAS REMOVED, and this is the reason, so nobody
+  # reintroduces it: it labelled the objects themselves so they could be selected with
+  # `oc get ... -l rbac.ocp.io/unmanaged=true`, and Kubernetes will not allow it. Privilege
+  # escalation prevention requires the writer of an RBAC object to already hold every
+  # permission that object grants, even for a metadata-only patch. Measured on a live
+  # cluster: 4 findings planned, 0 landed, and the API server demanded 175 additional rule
+  # sets to label a binding granting nothing but `view` — a full wildcard for the
+  # cluster-admin one. Making it work means giving a read-only auditing tool the most
+  # privilege on precisely the most dangerous grants.
+  #
+  # SUPPRESSING A FINDING IS A CLUSTER-ADMIN TASK, performed on the object:
+  #
+  #   oc annotate clusterrolebinding <name> \
+  #     rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
+  #
+  # The dashboard READS that annotation and stops classifying the binding as unmanaged, so it
+  # leaves the log, the RBAC policy tab and the API together. Two properties follow from doing
+  # it this way round rather than keeping a suppression list in the dashboard: the
+  # justification lives next to the object it excuses, where anyone running `oc describe` finds
+  # it, and the acknowledgement is made by somebody who holds the privileges — which the
+  # dashboard deliberately does not. Separation of duties, not a limitation.
+  #
+  # If you also want the objects LABELLED so they can be selected with
+  # `oc get ... -l rbac.ocp.io/unmanaged=true`, an admin or a privileged CI job can apply
+  # `rbac.ocp.io/unmanaged=true` the same way. The dashboard notices a label applied by anyone
+  # and reports `unmanaged grant RESOLVED` when that binding stops being unmanaged, telling
+  # whoever applied it that the label is now stale.
+  unmanagedAudit:
+    # off | log   (anything unrecognised is treated as off; `annotate` runs as `log`
+     #              and says so, rather than failing to off and taking the findings away
+     #              from a cluster that had it set)
+    #
+    # `off` runs no discovery code at all. `log` needs no extra RBAC — the ServiceAccount
+    # stays read-only, which is checkable: the ClusterRole's binding verbs are get and list.
+    #
+    # DEFAULTS TO `log`, and the default moved from `off` deliberately. `off` was right while
+    # this feature could write: a default that patches cluster objects has to be opted into.
+    # It writes nothing now, so the only thing `off` buys is a governance tool that has found
+    # a hand-made cluster-admin grant and declines to mention it. A cluster with no unmanaged
+    # grants logs nothing at all, so the cost of the new default is zero where there is
+    # nothing to report.
+    #
+    # Set `off` if you have a reason — a noisy known-bad cluster mid-migration, or an alerting
+    # pipeline you have not tuned yet. Findings stay visible in the RBAC policy tab and the
+    # API either way; `off` only silences the log.
+    mode: "log"
+    # At most this many findings LISTED individually per binding refresh, so a misclassification
+    # bug fills one screenful of log per cycle instead of the whole cluster at once.
+    #
+    # The cap does NOT shrink the headline number: the summary reports every finding awaiting
+    # acknowledgement and then says how many of those it listed, because the total is what an
+    # operator escalates on. It reported the capped count until 2026-08-03, so a cluster with
+    # 500 unmanaged grants announced 20.
+    #
+    # "Awaiting acknowledgement" is narrower than "on the cluster": an object already carrying
+    # the rbac.ocp.io/unmanaged label is a finding but is not re-announced. For the cluster-wide
+    # set, use GET /api/clusters/{id}/bindings/findings, which the summary line links.
+    #
+    # Resolutions are never capped — a closed finding must not queue behind new ones.
+    maxPerCycle: 20
+
+  users:
+    # Identity-provider NAMES the Users tab lists. EMPTY means every provider — a value that is
+    # simply empty by default. Set it to show one directory's people on a cluster that also carries
+    # test or break-glass providers (measured: 49 `ceo_rnd_oim` accounts beside 8 LDAP users). Applied
+    # when the tab is read, not at the poll; the tab says "showing providers: …"; the never-logged-in
+    # line is not narrowed (a member who logged in through another provider has logged in); manual
+    # accounts with no identity drop out under any list. Names must match the identity provider's
+    # `name:` in oauth.config.openshift.io/cluster — OpenShift's rule and nothing stricter: not '.'
+    # or '..', no ':', '/' or '%'; spaces, commas, upper case and underscores are legal, and the
+    # chart carries them intact (the ConfigMap key is a list, not a comma-joined string).
+    providers: []
+
+  # Who used the dashboard. Requires oauthProxy.enabled — with the proxy off there is no
+  # authentication, X-Forwarded-User would be whatever the caller typed, and recording it
+  # would manufacture an audit trail rather than keep one. Nothing is recorded in that mode
+  # no matter what `enabled` says here.
+  #
+  # AGGREGATED, one row per user per UTC day: first seen, last seen, request count. It is
+  # deliberately not a page-view log. That bounds the table at users x days instead of
+  # growing without limit, and it answers "who uses this and when" without accumulating a
+  # record of which colleague read whose group membership. Read it at
+  # /api/dashboard/activity, which is authenticated and self-scoped by default.
+  #
+  # NOT via /metrics. There is no gsd_dashboard_active_users gauge; this comment used to point
+  # at one and it was removed on purpose (metrics.py:170). /metrics is deliberately
+  # unauthenticated so Prometheus can scrape it without credentials, and even an unlabelled
+  # count of distinct users is personnel information — it tells anyone who can reach the
+  # Service how many people worked on a given day. Unlabelled is not anonymous enough to
+  # publish without authentication.
+  #
+  # NOTE this cannot see logins. The proxy owns the session; the app only ever observes
+  # requests that are already authenticated, so there is no login or logout event to
+  # record and "session" here means the first-to-last-seen window on a given day.
+  #
+  # WHO CAN READ IT — `visibility` below. Default `self`: each user sees only their own
+  # row. This response is identifiable personnel data (who was present, on which days,
+  # between which times, how often), and the argument that carries the rest of this
+  # dashboard — "you could read the groups with oc anyway" — is true of group membership
+  # and false of who looked at it. It previously returned everyone to everyone.
+  #
+  # ABOVE ONE REPLICA it is per-pod, like the rest of the history: each pod counts only the
+  # requests it served, into its own database. So /api/dashboard/activity answers for whichever
+  # pod served the request, and there is no cluster-wide total — adding the pods' figures would
+  # double-count anyone who hit more than one.
+  userActivity:
+    enabled: true
+    # self | all.
+    #   self  each authenticated user sees only their own activity (default)
+    #   all   everyone sees everyone — the pre-existing behaviour, now an explicit choice
+    # Anything else is treated as `self`: an unrecognised value must never be the one that
+    # widens access to a personnel dataset.
+    #
+    # THE BLUNT OVERRIDE, and it still wins. `all` here means every admitted reader sees every
+    # row, and it takes precedence over the usage tier below — the pre-existing escape hatch,
+    # unchanged, for a deployment that genuinely wants the old everyone-sees-everyone view.
+    #
+    # DELIBERATELY INDEPENDENT of the wide `visibility.adminSar` tier. This knob governs data
+    # the dashboard GENERATED about its own readers, and it must NOT merge with the tier that
+    # gates CLUSTER data: handing this dataset to `adminSar` would let every cluster-reader see
+    # colleagues' presence records. Passing `adminSar` therefore does NOT widen this view.
+    #
+    # What DOES widen it, when this is left at `self`, is the separate, stricter
+    # `visibility.usageAdminSar` check below — a write verb cluster-reader fails and
+    # cluster-admin passes — so a full administrator is ungated on Usage while the auditor is
+    # not. If you want an admins-only door for the whole dashboard instead, that is
+    # oauthProxy.sar.
+    #
+    # ONE EDGE WORTH KNOWING: with `visibility.enabled=false` the usage tier is not consulted
+    # at all, so this view stays per-person for every reader but one who passes
+    # `visibility.clusterAdminSar` — the top tier, asked in that state too (#322) — and `all`
+    # here is the only thing that widens it for anyone else. That is deliberate and it is the
+    # safe direction — switching off scoping for CLUSTER data must not, as a side effect,
+    # publish presence records to the auditor.
+    visibility: self
+    # Requests are buffered in memory and written once per interval. A write per request
+    # would put every API call behind the SQLite writer lock, contending with the poll's
+    # bulk write — the latency the WAL work exists to prevent. The cost is that an
+    # ungraceful kill loses up to this many seconds of counts; a graceful one flushes.
+    flushSeconds: 60
+    # Aggregation already bounds the table, so this is a backstop for a long-lived
+    # deployment rather than the growth control a request log would need. 0 disables it.
+    retentionDays: 400
+
+  # Computed alerts with a tunable threshold. Every kind /api/alerts serves is derived at
+  # read time from what the poll stored (docs/reference-architecture.md, "Derived, never
+  # stored"); this block holds the ones that carry a number.
+  alerts:
+    # THE GROUP-COUNT CLIFF: a group whose membership fell by dropRatio or more, from a
+    # count of at least minMembers, within windowHours — reconstructed exactly from the
+    # membership events the poll records, so no extra table and no extra RBAC. Kind
+    # `group_count_cliff`, severity warning; gsd_alerts_total{kind="group_count_cliff"};
+    # PrometheusRule GroupSyncGroupCountCliff (rendered only while this is enabled, because a
+    # rule on a kind that is never emitted can never fire).
+    #
+    # DEFAULT ON. Read-only, one indexed query per cluster per read, no side effect. What
+    # keeps ON quiet is the floor: below ten members, half is one or two people — churn,
+    # not a cliff. Raise minMembers or lower dropRatio for a large directory; the values
+    # are refused at render if the ratio leaves (0, 1], the floor drops below 1 or the
+    # window is not positive.
+    #
+    # SILENCING IS READ-ONLY, from two places an administrator controls, and a silenced
+    # cliff is still REPORTED (kind `group_count_cliff_silenced`, `silenced: true`, dimmed on
+    # the Overview) — never hidden:
+    #   1. the Group annotation groupsync-dashboard.io/silence-group-count-cliff, value
+    #      "true" or "until=YYYY-MM-DD" (inclusive, UTC; expired un-silences), e.g.
+    #        oc annotate group app-ocp-rbac-contractors-ns-view \
+    #          groupsync-dashboard.io/silence-group-count-cliff=until=2026-10-31
+    #      The dashboard READS it on every poll and writes nothing back.
+    #   2. `silence` below: exact names or fnmatch globs.
+    groupCountCliff:
+      enabled: true
+      minMembers: 10
+      dropRatio: 0.5
+      windowHours: 24
+      silence: []
+      # e.g.
+      # silence:
+      #   - app-ocp-rbac-contractors-*
+      #   - app-ocp-rbac-seasonal-ns-view
+
+# DEBUG | INFO | WARNING | ERROR | CRITICAL. Case does not matter; anything else refuses to render.
+#
+# EACH LEVEL IS A PROMISE, and the app is instrumented to keep it:
+#   CRITICAL  the process cannot serve truthfully. Exactly one line in the codebase can emit it —
+#             a poll failed AND the store could not record that it failed, so the dashboard reports
+#             healthy while serving frozen data under a stale status. Expect never to see it.
+#   ERROR     an operator must act; something advertised is broken and will not self-heal. RBAC
+#             missing on the Lease, a PVC that cannot support shared memory.
+#   WARNING   degraded but scoped or self-healing: one poll failed, one cluster unreachable, or a
+#             feature configured but inert (capture on without the RBAC to read pod logs).
+#   INFO      one line per completed unit of work or state change, readable at steady state.
+#   DEBUG     THIS APP'S OWN REASONING — what it read, what it skipped, and why a number is the
+#             number. Per-pod login-capture accounting, the poll cycle's timing and the countdown to
+#             the next binding refresh, row counts per read, which replica holds the Lease and how stale its
+#             renewal is, and why a given reader was put on the narrow tier.
+#
+# NOT HTTP REQUEST LINES — THEY HAVE THEIR OWN VALUE NOW (#245). `httpx`'s
+# `HTTP Request: GET <url> "200 OK"` and uvicorn's inbound access lines are governed by
+# `httpLogLevel` below, default WARNING; this value does not raise or lower them. They used to sit
+# at INFO with no setting at all, which at four clusters was 61% of the pod's output. The layer
+# below (`httpcore`, socket and TLS events) is still pinned to WARNING here, because unpinned it was
+# 97% of DEBUG output: 356 lines of framing per 10 of the app's own. Set GSD_DEBUG_HTTP=true to
+# unpin it when diagnosing a handshake against a corporate CA.
+#
+# Login capture reads the audit log at default OAuth verbosity; logLevel is app logging only.
+logLevel: INFO
+
+# The HTTP REQUEST RECORD, separately from this app's own reasoning (#245). Governs `httpx`
+# (outbound: one line per API call the poller makes) and `uvicorn.access` (inbound: one line per
+# request served, including /readyz and /metrics).
+#
+# WHY IT IS ITS OWN VALUE, AND WHY THE DEFAULT MOVED. httpx's `HTTP Request: GET <url> "200 OK"`
+# lines used to sit at INFO, deliberately — they are semantic, and at ONE cluster they cost about 12
+# lines a cycle. MEASURED ON A FOUR-CLUSTER LAB at a 60s refresh: 1 082 of the pod's 1 784 lines in
+# 90 minutes were those URLs — 61%, and roughly 10 000 an hour at forty clusters. The reasoning was
+# not wrong; the fleet outgrew it. The cluster-connection module now logs the facts those lines were
+# a proxy for (which cluster, which phase, what outcome), so the URLs are the same story told worse.
+#
+# WARNING keeps the failures and drops the routine 200s. Set INFO to restore the full per-request
+# record exactly as it was. uvicorn's access lines were previously unreachable by any setting at
+# all — its logger carries propagate=False and its own handler — so this is the first time they can
+# be turned down.
+httpLogLevel: WARNING
+
+# PER-LOGGER OVERRIDES, for raising one concern without raising the fleet (#245). A comma-separated
+# list of `logger=LEVEL`, applied after the two values above.
+#
+#   clusterConfigLogLevels: "gsd.clusterconfig=DEBUG"        one module's reasoning, nothing else
+#   clusterConfigLogLevels: "gsd.clusterconfig=DEBUG,httpx=INFO"   that, plus the request record
+#
+# Before this, diagnosing one cluster's connection meant GSD_LOG_LEVEL=DEBUG, which turns on every
+# module at once across every polling cluster. An unparseable entry is skipped with a warning rather
+# than failing the pod; the last entry wins for a repeated logger.
+#
+# A LEVEL SET HERE OVERRIDES `logLevel` FOR THAT LOGGER, IN BOTH DIRECTIONS: `gsd.clusterconfig=DEBUG`
+# emits at `logLevel: ERROR`, which is the point — and `gsd.poller=ERROR` silences that module at
+# `logLevel: DEBUG`, which is the trap. `root` is refused with a warning: it is every logger at once,
+# and that level is `logLevel`. Set this in a values file rather than with --set, whose comma is a
+# list separator (escape it as `\,` if you must).
+clusterConfigLogLevels: ""
+
+# Timezone for LOG LINES ONLY. Set it to whoever reads the logs at 3am — correlating an
+# incident against a wall clock is easier than doing UTC arithmetic under pressure.
+#
+# It changes nothing that is stored or served. Every timestamp in the application is
+# datetime.now(UTC) and every stored string ends in Z, the API returns UTC, the dashboard
+# renders UTC, and the Usage tab buckets by UTC day. Only the log prefix moves.
+#
+# Log lines carry the OFFSET (%z), so "2026-08-02 17:17:59-0400" is unambiguous against a
+# stored "2026-08-02T21:17:59Z" whatever this is set to. Leave empty for UTC.
+#
+# Requires the zoneinfo database, which the hardened base image ships (/usr/share/zoneinfo)
+# and the Containerfile proves at build time. Its absence fails misleadingly rather than
+# loudly: Python reads TZ as a POSIX spec, takes "America" from "America/New_York" as the
+# zone name, finds no offset, and reports tzname=('America','America') while the clock stays
+# UTC — a New York label over UTC times.
+timezone: "America/New_York"
+
+# ---------------------------------------------------------------------------
+# Dashboard UI modules
+# ---------------------------------------------------------------------------
+# Each optional module has its own switch. The default is chosen per module — on when it is
+# cheap, safe and needs nothing extra; off when it needs a grant, another image, or is a
+# policy the platform team should choose — and the comment on each says which.
+ui:
+  export:
+    # CSV and JSON download of the table on screen: Users, Groups, Access granted, Namespace
+    # audit and Logins. Built IN THE BROWSER from the rows the server already served this
+    # reader, after the page's own filter and sort, so it can never contain a row the reader's
+    # tier withheld; it makes no request and needs no grant, which is why it defaults ON. The
+    # file names the cluster, tab, tier and UTC time, and says when the page was a cut of a
+    # larger set (`_partial` in the name, `truncated` in the JSON) so a spreadsheet never implies
+    # completeness. Exports are not recorded: the Usage tab counts interactions per day, not
+    # actions (docs/DESIGN_export.md). Set false to keep the control off the page.
+    enabled: true
+
+# ---------------------------------------------------------------------------
+# Session idle timeout
+# ---------------------------------------------------------------------------
+# OFF by default: it signs people out, which is a policy the platform team chooses. When on,
+# `minutes` is the whole window of inactivity (no pointer, keyboard or tab-visibility activity)
+# before sign-out; the last `warningSeconds` of that window are a countdown on screen, and at
+# zero the page sends the browser to the proxy's sign_out — the proxy clears the cookie, and re-entry
+# demands credentials (measured; docs/DESIGN_session_and_signout.md). Its OWN keys: the cookie does
+# not slide, so nothing here is derived from `oauthProxy.cookie.expire`, and that cap remains the
+# guarantee for a tab that never reaches sign_out (a closed laptop). Activity in one tab of the
+# same browser defers the timeout in every other tab of it, so an idle tab cannot sign out a
+# colleague mid-task; nothing is persisted, so a re-login starts a fresh clock. While the countdown
+# is on screen the page's own 60 s poll is suspended, so an unattended tab does not keep a session
+# alive with its own requests.
+#
+# Refused at render: enabled without oauthProxy.enabled (no session to end), and an idle window at
+# or beyond oauthProxy.cookie.expire (it could never fire).
+session:
+  idleTimeout:
+    # OFF by default: it signs people out, a session policy the platform team chooses (see above).
+    enabled: false
+    # Whole minutes of inactivity before SIGN-OUT; the countdown opens warningSeconds before
+    # that. At least 1, and shorter than oauthProxy.cookie.expire.
+    minutes: 30
+    # How long the countdown runs. At least 5, and shorter than the idle window.
+    warningSeconds: 60
+
+# Clusters to observe. The default observes the cluster the pod runs on, using its own
+# projected ServiceAccount token — which kubelet rotates and the app re-reads every poll, so
+# there is no long-lived credential to mint or expire.
+#
+# ── SEVERAL CLUSTERS IN ONE INSTANCE: who may see what, PER CLUSTER ─────────────────────────
+# The oauth-proxy authenticates a reader against THIS cluster only — the hosting entry
+# (`dashboardController: true`, else the first enabled one). What that reader may see ABOUT
+# ANOTHER cluster is therefore a decision this file has to make, per entry, and it used to make
+# it silently: the host's tier gated every cluster's rows, so a host cluster-admin saw a remote
+# cluster's membership, bindings and login failures whether or not they held anything there.
+# Two keys per entry now model it (docs/ACCESS_CONTROL.md §11):
+#
+#   visibility:   inherit     the host's tier decides — the old behaviour, and the host's own
+#                             default (the host is the HOSTING entry). On a remote it is
+#                             an explicit choice: "the host's RBAC governs this cluster's data
+#                             too" — a self-only host is self on every cluster it governs, and
+#                             identity is not consulted: a self reader is keyed by the host's
+#                             username there, as before 0.19.0.
+#                 self-only   nobody is ever wide on this cluster. It costs no RBAC, no credential
+#                             and no cluster call, and can only narrow. The default only for a
+#                             remote that states `identity: none` and no visibility. On upgrade to
+#                             chart 0.53.0 a remote that states NEITHER key becomes remote-sar
+#                             (below); set `visibility: self-only` and `identity: none` to keep
+#                             the old view.
+#                 hidden      polled and alerted on (/metrics, the pod log) but never served
+#                             through /api: 404, identical to an unknown cluster id, absent from
+#                             the selector. For watching sync health across a fleet without
+#                             exposing membership.
+#                 remote-sar  that cluster's OWN RBAC decides — THE DEFAULT FOR A REMOTE THAT
+#                             STATES NEITHER KEY (SPEC_D2b): the same SubjectAccessReview as
+#                             visibility.adminSar, created on the remote API with this entry's
+#                             token, naming the reader and the reader's Group memberships READ
+#                             FROM THE REMOTE. Cached per (reader, cluster) for tierTtlSeconds;
+#                             every failure is the self tier. Distinct viewers already in flight
+#                             may each pay that first attempt; after the first failure lands, the
+#                             remote is held for 30 s and probed at most once per hold, whatever
+#                             later traffic. Needs
+#                             `create subjectaccessreviews` and `list groups` on the remote; the
+#                             joining ServiceAccount's ClusterRole carries both
+#                             (group-sync-dashboard-cluster-poller, installed on each remote by
+#                             group-sync-operator-helm). With `identity: none` beside it the
+#                             render refuses. Not allowed on the hosting entry.
+#
+#   identity:     none          the reader's username is not treated as anyone on this cluster:
+#                               under self-only, person-scoped views (groups, users, logins,
+#                               grants) answer 403 there; cluster-level health still shows. The
+#                               default beside an explicit inherit, self-only or hidden; stated
+#                               alone, it keeps self-only.
+#                 same-as-host  the reader is matched on this cluster by OpenShift username — the
+#                               User object's name — so their self views apply here too. The
+#                               default beside remote-sar and for a remote that states neither
+#                               key; required by remote-sar; forced on the hosting entry.
+#
+# The alternative posture — one dashboard per cluster and a fleet report reading each one's
+# API with a token from THAT cluster — needs none of this and is still the recommendation
+# where trust boundaries differ: docs/reference-architecture.md §8a.
+clusters:
+  # EVERY ACCEPTED COMBINATION, AND WHERE EACH REFUSAL FIRES: docs/CLUSTER_STANZA.md — measured, not
+  # described, and held by tests/test_cluster_stanza_matrix.py. Worth reading §5 before a rollout:
+  # seventeen bad stanzas fail `helm template`, but FOUR render cleanly and are refused by the pod at
+  # startup (an unknown key, a duplicate name, an apiUrl with no scheme, insecureSkipVerify together
+  # with caBundleFile) — those fail after a green upgrade. A worked file: example-production.yaml.
+  #
+  # CHANGING `name` ON A RUNNING RELEASE RETIRES THE OLD CLUSTER. The name is the id every
+  # observation table keys on (33 of them: sync events, KPI days, login events, report runs,
+  # membership and binding history), so a rename is a NEW cluster to this dashboard: the old row is
+  # retired (#96), its history stays under the old name, the Cluster Configurations tab shows it as
+  # a retired card, and trends restart from empty. Measured on the reference lab, where one rename
+  # had already happened: 197 sync events and 24 KPI days under the old name, 9 and 8 under the new.
+  # Nothing migrates them. Rename deliberately, or keep the name you have — `dashboardController`
+  # below works whatever the cluster is called.
+  - name: dashboard
+    # THIS POD'S OWN CLUSTER (#249). Declared, not inferred from list order: the controller is the
+    # cluster the oauth-proxy authenticates readers against, whose in-cluster Services the Kyverno
+    # breaker URL names, that `identity: same-as-host` and `visibility: inherit` resolve against,
+    # and on which every visibility tier asks its SubjectAccessReview. Before this flag the host was
+    # whichever entry sorted first and was enabled, so alphabetising this list — or disabling the
+    # first entry for a moment — moved all four at once and looked like nothing.
+    #
+    # Exactly one enabled entry may carry it; two refuse the render's config at startup, naming both,
+    # and a declared-but-disabled one is refused too. Omit it entirely and the first enabled entry is
+    # the host, as before, with the fallback said on the page rather than assumed. A Secret-sourced
+    # cluster is remote by definition, so the cluster-Secret parser REFUSES this key by name.
+    dashboardController: true
+    apiUrl: https://kubernetes.default.svc
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    enabled: true
+  # Every OTHER cluster is a labelled Secret discovered at runtime (#230), not a stanza here — so
+  # adding one needs no redeploy. A second stanza is still honoured for a cluster whose credential
+  # must come from a file the chart mounts.
+  #
+  # CONNECTION MODES (SPEC_S3, #248 — S3a ships the keys; S3b connects). A remote stanza may declare
+  # HOW the dashboard obtains its credential instead of carrying one:
+  #   - name: shared-rnd
+  #     apiUrl: https://api.shared-rnd.example.com:6443
+  #     saTokenLookup: true              # log in as the fleet account, read the poller SA's token (S3b)
+  #     # userSelfLogin: true            # or: poll as the fleet account itself; nothing at rest (S3b)
+  #     # ldapConnectionBootstrap: uid   # OPTIONAL — overrides clusterConfig.fleetAccount.username here
+  # Exactly one mode. A stanza declaring a mode OMITS tokenEnv/tokenFile (a mode beside a credential is
+  # two sources of truth and is refused); ldapConnectionBootstrap without a mode is refused; a mode on
+  # the hosting cluster is refused — this pod's own cluster authenticates with the mounted
+  # ServiceAccount. A saTokenLookup stanza is retrieved on the next discovery cycle (SPEC_S4b): the
+  # dashboard logs in as the fleet account, reads the poller ServiceAccount's token on the target
+  # (clusterConfig.saTokenLookup below) and writes gsd-cluster-<name> here, which discovery then
+  # polls like any other Secret. It needs clusterConfig.secrets.writes.enabled, and its CA must
+  # cover both the API host and the OAuth route. A userSelfLogin stanza polls on its own session, renewed a
+  # fixed margin before it expires (#285); the render refuses it above one replica.
+  # The render refuses each of these exactly as the loader does, so a bad stanza fails
+  # `helm template`, not the pod after a green upgrade.
+
+# ---------------------------------------------------------------------------
+# ArgoCD / GitOps
+# ---------------------------------------------------------------------------
+# Adds Argo-specific annotations. ON by default since chart 0.8.0. They are
+# `argocd.argoproj.io/sync-options` annotations and nothing else — measured by diffing the
+# render with the flag on and off — so outside Argo they are metadata Kubernetes ignores, and
+# a plain `helm install` is unaffected. Inside Argo they are the difference between a release
+# that keeps its data and one that does not (below), and the failure mode of forgetting them
+# is silent until a prune. Turn them off only if the annotations themselves are unwelcome.
+#
+# Two distinct problems, both of which cost you data or sleep if unhandled:
+#
+# 1. PRUNING THE PVC. Argo deletes what leaves the source, and cascades on Application
+#    delete. That volume holds the accumulated sync timeline and membership history, which
+#    the Kubernetes API cannot reproduce — so a routine prune destroys the only
+#    irreplaceable state in the system. `helm.sh/resource-policy: keep` does NOT help here:
+#    Argo does not run Helm's uninstall path, it reconciles manifests.
+#
+# 2. THE INJECTED CA ConfigMap. The chart ships it EMPTY and OpenShift writes
+#    `data.ca-bundle.crt` into it. Argo sees live data the manifest lacks, reports
+#    OutOfSync permanently, and with self-heal on will WIPE the CA bundle the pod depends
+#    on — turning every external cluster unreachable on a sync.
+# -----------------------------------------------------------------------------
+# The secrets-mint hook (templates/secrets-mint.yaml, #212)
+# The generated-once Secrets — the oauth-proxy session key, the report service token and, since
+# 0.69.0, the report ticket key (#392) — are
+# created on the cluster by a hook Job, only if absent, never rendered: Helm's `lookup`, which
+# used to reuse them, is empty under `helm template` (Argo CD, Kustomize), so every render minted
+# fresh values and every sync rotated them. On the first upgrade from a chart before 0.37.0 the
+# hook carries the existing values over into the new names (-oauth-session, -shared-token), so
+# nobody is signed out; the ticket key is always minted fresh. Off = you create the three Secrets
+# under those names yourself (README, "Upgrading to 0.69.0").
+# -----------------------------------------------------------------------------
+secretsMint:
+  enabled: true
+  # `oc` is all the Job needs: Red Hat's published OpenShift CLI image. Supported on OpenShift 4.18 and
+  # above: set `tag` to your cluster's minor (v4.18 … v4.22; both ends pulled and ran the Job's script
+  # on the lab, 2026-09-26). The pull uses the cluster's global pull secret for registry.redhat.io.
+  # The Job is a pre-install/pre-upgrade hook: an image the cluster cannot pull within its 120 s deadline
+  # FAILS the install or upgrade (under Argo, the sync). A cluster that cannot pull registry.redhat.io
+  # (disconnected, OKD, no Red Hat pull secret) sets the image before installing or upgrading, to either
+  #   - its mirror of this image: set `repository` to the mirror, or add an ImageTagMirrorSet for
+  #     registry.redhat.io/openshift4 (the reference is a tag; an ImageDigestMirrorSet does not redirect it);
+  #   - the in-cluster imagestream, the previous default: `repository:
+  #     image-registry.openshift-image-registry.svc:5000/openshift/cli`, `tag: latest`. It needs no
+  #     registry.redhat.io credential, is mirrored with the release payload and follows cluster upgrades,
+  #     but needs the internal image registry (managementState Managed).
+  # The Job's deadline, from its start: scheduling, the image pull and up to two retries count. The work
+  # itself takes seconds (two to four named Secrets in this namespace), but a first pull of ose-cli-rhel9 is
+  # about 450 MB (445 MB at v4.22, 479 MB at v4.18; 21.6 s for v4.18 on the lab). Because the Job is a
+  # pre-install/pre-upgrade hook, running out FAILS the install or upgrade. 300 s matches Helm's own hook
+  # wait (`helm upgrade --timeout`, default 5m): raise both together on a slow link to the registry or its
+  # mirror. Under Argo CD the hook waits for the Job, so this deadline is the limit.
+  activeDeadlineSeconds: 300
+  image:
+    repository: registry.redhat.io/openshift4/ose-cli-rhel9
+    tag: v4.22
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+argocd:
+  enabled: true
+
+  # On both claims — the data claim and the report artefacts claim (0.36.1):
+  # Prune=false     — not removed when it leaves the source
+  # Delete=false    — not removed when the Application itself is deleted (cascade)
+  # PruneLast=true  — if ever pruned deliberately, it goes after the workload, so the pod is
+  #                   not left running with its volume pulled out from under it
+  preservePVC: true
+
+  # NOTE: `compare-options: IgnoreExtraneous` is deliberately NOT used here. Per the ArgoCD
+  # docs it is for resources NOT declared in git — ones "generated by a tool" — and applying
+  # it to a resource the Application itself creates defeats the purpose of tracking
+  # deployment state. Binding drift on the PVC is handled with ignoreDifferences on the
+  # Application instead; see the chart README.
+
+  # ServerSideApply lets the operator keep ownership of the fields it writes. It reduces the
+  # fight but does not end it: Argo still diffs the data it does not know about, so the
+  # Application ALSO needs an ignoreDifferences entry. See the chart README — the chart
+  # cannot set that, because it lives on the Application, not on the resource.
+  serverSideApplyInjectedCA: true
+
+# ---------------------------------------------------------------------------
+# Trusted CA bundle (for EXTERNAL clusters)
+# ---------------------------------------------------------------------------
+# Creates an empty ConfigMap labelled `config.openshift.io/inject-trusted-cabundle: "true"`,
+# which OpenShift fills with the system trust store merged with the corporate CA from
+# proxy/cluster.spec.trustedCA, and mounts it.
+#
+# Needed because an external cluster's API server is usually signed by a corporate CA that
+# is not in Python's default trust store. Without it, verification fails and the cluster
+# renders as unreachable — a TLS problem that looks like an outage.
+#
+# Used only as a FALLBACK: a cluster entry naming its own caBundleFile keeps it, because
+# that is a specific statement about what it trusts.
+#
+# Harmless when observing only the local cluster (the SA's own ca.crt is named explicitly),
+# so it defaults on. Set false on non-OpenShift, where nothing injects it.
+trustedCA:
+  # METHOD 1 — injected. An empty ConfigMap labelled
+  # `config.openshift.io/inject-trusted-cabundle: "true"`, which OpenShift fills with the
+  # system trust store merged with proxy/cluster.spec.trustedCA. Nothing to maintain, but
+  # it only carries CAs the CLUSTER already knows about.
+  injected:
+    enabled: true
+
+  # METHOD 2 — a ConfigMap you supply. For a CA the cluster has not been told about: a
+  # partner's internal CA, a lab signer, or an external cluster whose CA is not in your
+  # corporate bundle. Create it yourself, out of band:
+  #
+  #   oc create configmap enterprise-ca --from-file=ca-bundle.crt=/path/to/ca.pem \
+  #     -n <namespace>
+  #
+  # Deliberately NOT templated into the chart: certificates in values.yaml end up in git,
+  # in `helm get values`, and in every CI log that echoes them.
+  # Stays false under the 0.14.0 on-by-default rule: this switch needs the name of a ConfigMap you
+  # created, so there is nothing a default could turn on.
+  existingConfigMap:
+    enabled: false
+    name: enterprise-ca
+    key: ca-bundle.crt
+    # Optional: the CA's OpenSSL subject hash, eight hex digits from
+    #   openssl x509 -noout -subject_hash -in /path/to/ca.pem
+    # When set, the same ConfigMap is ALSO mounted as /etc/pki/tls/certs/<hash>.0 — an entry
+    # in OpenSSL's hashed directory, the shape Hummingbird's Python guidance calls "Approach
+    # 2" — so curl in the pod (through the mounted .curlrc's capath), urllib, and the
+    # dashboard's fallback context all trust it. The dashboard needs none of this for itself
+    # (it reads the bundle by path); this is for the `oc exec … curl` that would otherwise
+    # refuse the corporate-signed URL. One CA per hash:
+    # a bundle of several CAs under one hash is only ever looked up by the first subject. The
+    # image already holds ~290 entries for the public CAs; if yours collides with one of them,
+    # give OpenSSL's collision suffix (`c275f070.1`) rather than shadow the base's `.0`.
+    subjectHash: ""
+
+  # #244: which certificate is this estate's root, and when to warn that it will expire.
+  # A CA is public PKI. The pin is the SHA-256 of the DER certificate (`openssl x509
+  # -noout -fingerprint -sha256`), 64 hex digits, colons optional. Empty: the page
+  # still shows subject, issuer and dates, and does not claim any certificate is
+  # the enterprise root. subject is the fallback when only a DN is known; two CAs
+  # can share a subject, so the fingerprint is the one that names one certificate.
+  # Do not reuse existingConfigMap.subjectHash: that is OpenSSL's 8-hex hashed
+  # directory name for curl, not an identity pin.
+  enterpriseRoot:
+    sha256: ""
+    subject: ""
+  # Days before notAfter at which a ca-expiring warning is emitted. 30 is Let's
+  # Encrypt's neighbourhood and the common operational default. A ten-year root
+  # still gets a month of notice. The warning fires at this many days remaining,
+  # not the day before (31 days with the default).
+  expiryWarningDays: 30
+
+  # BOTH may be enabled at once. They are concatenated into one bundle at startup, in the
+  # order injected-then-manual, because a bundle is just a list of PEM blocks and there is
+  # no reason to make the operator choose. Enabling neither falls back to Python's default
+  # trust store.
+  #
+  # curl in the pod is told about these through its own configuration file (a mounted
+  # .curlrc, found via CURL_HOME): the injected bundle as `cacert`, the hashed directory as
+  # `capath`, so an `oc exec … curl` against a corporate-signed URL verifies the way the
+  # application does. The manual ConfigMap never becomes curl's `cacert` — it carries only the
+  # extra CA — but reaches curl through the hashed directory when subjectHash is set.
+  mountPath: /etc/pki/ca-trust/extracted/pem
+
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
+# The accumulated sync timeline and membership history are the ONLY things that cannot be
+# re-fetched from the API (PLAN §2). An emptyDir would silently reset them on every restart,
+# so persistence defaults to on.
+persistence:
+  enabled: true
+  size: 1Gi
+  # ReadWriteMany, so the volume never has to be recreated to scale and so it works on the
+  # shared storage most clusters actually provide.
+  #
+  # This trades away an ENFORCED guarantee for an advisory one, and that is worth knowing.
+  # ReadWriteOncePod makes two pods on one database structurally impossible — the scheduler
+  # refuses the second. RWX does not: nothing stops two pods mounting this volume. At one
+  # replica they would share a single /data/gsd.db, which is the case SQLite must not be in.
+  # Three things keep that from happening, none of them enforced by storage:
+  #   * strategy Recreate at one replica, so the outgoing pod is gone before the incoming one
+  #     starts (this is why the derived strategy matters more under RWX than it did before),
+  #   * leader election, so only the lease holder polls, and
+  #   * config.sqlite.busyTimeoutMs, so a rollover overlap waits for the lock instead of
+  #     failing on it.
+  # Above one replica the shared-file problem disappears anyway: each pod gets its own
+  # /data/$POD_NAME/gsd.db.
+  #
+  # WATCH THE FILESYSTEM UNDERNEATH. RWX in practice usually means NFS, and SQLite refuses
+  # WAL there — it coordinates through an mmap'd -shm file that assumes one host. The switch
+  # fails SILENTLY and readers then block on every write. The chart reads the mode back and
+  # alerts on it (GroupSyncDashboardWalDisabled, gsd_sqlite_wal_enabled); do not ignore it.
+  # Block storage or a CSI RWX filesystem with real POSIX locking is fine. NFS/EFS/SMB is not.
+  #
+  # Set ReadWriteOncePod to get the enforced single-pod guarantee back at one replica.
+  # Empty derives it: ReadWriteMany above one replica, ReadWriteOncePod at one.
+  accessMode: ReadWriteMany
+  storageClass: ""     # "" -> cluster default
+  existingClaim: ""    # set to reuse a claim instead of creating one
+
+# ---------------------------------------------------------------------------
+# Off-volume backup — the OTHER half of config.backup
+# ---------------------------------------------------------------------------
+# config.backup (under config: above) writes VACUUM INTO copies to the SAME volume they
+# protect. This CronJob mounts that volume read-only and carries the newest copy somewhere
+# else: a second claim, or object storage. Together they are the whole answer; either alone
+# is half. Restore, and how to verify a copy without restoring: docs/RUNBOOK_backup_restore.md.
+#
+# ON WHEREVER IT CAN WORK. `enabled` is read as a word, one of three:
+#   ""     (the default) on, unless the copy cannot work here; then nothing renders and nothing
+#          fails. It cannot work with: persistence off; config.backup off, or an empty
+#          config.backup.dir (the app reads that as backups disabled); a config.backup.dir outside
+#          /data/; persistence.existingClaim without persistence.accessMode; a ReadWriteOncePod
+#          data volume (below).
+#   true   on, and the render REFUSES each of those with the reason.
+#   false  off. A quoted "false" is off too; any other word refuses the render.
+# Set it in this release's values file and roll it out through the release's deployment pipeline.
+# The CronJob and its two alerts follow the same decision.
+#
+# The default destination is a second claim on the cluster's DEFAULT StorageClass: off the volume,
+# not necessarily off the storage (on CRC the default class is the data claim's own). Name a
+# different class in destination.pvc.storageClass for that. A cluster with no default class leaves
+# the claim Pending, and the bind Job below fails after its 600 s deadline, until one is named.
+# Once on, nothing is optional: the copy is hashed, opened and integrity-checked BEFORE it counts,
+# and the Job exits non-zero on any of those.
+#
+# THE PRE-UPGRADE COPY TOO. At replicaCount 1, with the pvc destination, the same run also ships the
+# newest copy the dashboard takes before a schema upgrade (/data/pre-upgrade; see config.backup
+# above) to /offsite/pre-upgrade, checked against its .sha256, keeping three. No such copy yet is
+# not a failure. The s3 destination ships the six-hourly copy only.
+#
+# WHO RUNS IT. The dashboard image, with a Python-stdlib script the chart ships as a
+# ConfigMap (scripts/offsite_backup.py, mounted at /scripts). The image has no tar, rsync or
+# aws on purpose (docs/DESIGN_hardened_image.md §10), and a shell copy could not verify what
+# it copied; the sqlite3 module is exactly what PRAGMA integrity_check needs.
+#
+# MOUNTING THE DATA CLAIM TWICE. The dashboard pod holds it.
+#   ReadWriteMany     the CronJob pod mounts it anywhere; no affinity.
+#   ReadWriteOnce     the claim binds to one NODE, so the chart pins the CronJob pod to the
+#                     dashboard's node with a required podAffinity. A dashboard scaled to zero
+#                     then leaves the Job Pending until activeDeadlineSeconds fails it — the
+#                     honest outcome: no dashboard, no new copy to ship.
+#   ReadWriteOncePod  exactly one pod, ever. The default renders no CronJob; `true` REFUSES to
+#                     render rather than ship a Job that can never schedule.
+#
+# ALERTING. The app cannot see this Job. With monitoring.prometheusRule.enabled the chart adds
+# two rules on kube_cronjob_status_last_successful_time (kube-state-metrics): stale, and
+# never-observed. Where kube-state-metrics is not scraped the second one fires and stays
+# firing — an alert that can never fire would be indistinguishable from healthy.
+#
+# NOT `backup.enabled`. That key does not exist and the chart refuses it: the on-volume
+# switch is config.backup.enabled, this one is backup.offsite.enabled.
+#
+# THE CLAIM BINDS AT ONCE, BY A THROWAWAY POD. On a StorageClass with volumeBindingMode
+# WaitForFirstConsumer (the common default) a claim stays Pending until a pod mounts it, and the
+# CronJob may not run for six hours — `helm upgrade --wait` timed out on exactly that (measured on
+# the reference cluster, 2026-09-05), and a timed-out upgrade is a FAILED revision whose objects
+# Helm does not own. So, when the chart creates the claim, it also renders a one-shot bind Job
+# that mounts it and exits: --wait succeeds in seconds. Under Argo CD the bind Job is a Sync hook
+# in the claim's wave (0), deleted once it succeeds, so the wave turns healthy as soon as the claim
+# binds and the CronJob follows in wave 1. With destination.pvc.existingClaim the claim is yours
+# and no bind Job renders.
+backup:
+  offsite:
+    enabled: ""    # "" on wherever it can work | true on, refusing what cannot work | false off
+    # Cron, in the controller manager's time zone. Every six hours, to match
+    # config.backup.intervalHours. There is nothing to align to: the app's backups run on a
+    # timer from pod start, not the clock, so any offset is arbitrary and :15 is as good as any.
+    schedule: "15 */6 * * *"
+    # Forbid: a slow copy must not overlap the next one on the same destination.
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    # A slot missed by more than this is skipped rather than run late into the next one.
+    startingDeadlineSeconds: 900
+    # Wall clock on the whole attempt, Pending included — see the ReadWriteOnce case above.
+    activeDeadlineSeconds: 1800
+    # One retry. The script is idempotent (a copy that already matches its sidecar is skipped).
+    backoffLimit: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    destination:
+      # pvc | s3
+      type: pvc
+      pvc:
+        # Empty: the chart creates <fullname>-backup-offsite with helm.sh/resource-policy: keep
+        # (and the Argo annotations), like the data claim. Set to reuse a claim — one that is
+        # NOT the data claim; the chart refuses that, because it would not be off the volume.
+        existingClaim: ""
+        # keep x (roughly the database size). The data claim is 1Gi and holds the database
+        # plus config.backup.keep copies, so one copy is well under 200Mi in practice.
+        size: 5Gi
+        # A DIFFERENT class from persistence.storageClass is the point: a second claim on the
+        # same failing storage is not off it. "" -> cluster default.
+        storageClass: ""
+        # Empty derives ReadWriteOnce: one Job at a time (concurrencyPolicy) needs no more,
+        # and RWO is what every StorageClass provides.
+        accessMode: ""
+        # Copies kept at the destination, newest first; 0 keeps everything. 14 x 6h = three
+        # and a half days of six-hourly copies. The .sha256 sidecars go with their copies.
+        keep: 14
+      s3:
+        # A Secret YOU create; the chart never renders credentials. Keys:
+        #   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET          required
+        #   S3_ENDPOINT (MinIO / ODF / RGW), S3_PREFIX, AWS_DEFAULT_REGION, AWS_CA_BUNDLE   optional
+        # Give the credential PutObject and NOTHING ELSE, and prune with a bucket lifecycle
+        # rule. A write-only credential is what makes a leaked one unable to delete the history
+        # it exists to protect — which is also why the chart does not do S3 in the stdlib script
+        # (pruning would need List and Delete) and why there is no `keep` here.
+        existingSecret: ""
+        # An image with an S3 CLI. The default upload command is written for the AWS CLI
+        # (for example repository: public.ecr.aws/aws-cli/aws-cli); set `command` for mc or
+        # rclone. Refused empty: the dashboard image ships no such tool.
+        image:
+          repository: ""
+          tag: ""
+          pullPolicy: IfNotPresent
+        # Replaces the default upload command (a list). The verified copy and its .sha256
+        # sidecar are under /stage; the Secret's keys are in the environment.
+        command: []
+        # emptyDir holding the verified copy between the two containers. Must exceed one copy,
+        # which persistence.size bounds.
+        stagingSizeLimit: 2Gi
+
+# ---------------------------------------------------------------------------
+# Deleting reports and database copies from the page (#542, docs/specs/SPEC_H1_gui_cleanup.md)
+# ---------------------------------------------------------------------------
+# A cluster administrator (visibility.clusterAdminSar, #322) deletes a report run from the Library
+# tab's run drawer, a database copy from the KPI page, or cleans either up once with a tighter bound
+# picked on the page: a preview of exactly what goes, then a confirm. NOTHING IS SAVED: the standing
+# policy is still reporting.retention and config.backup in this values file. Every deletion is one
+# audit log line naming the person, and gsd_housekeeping_deleted_total counts them by kind, no names.
+#
+# What can go: report runs that finished (never one queued or running), and the copies in three
+# directories on the data volume — config.backup.dir, and pre-upgrade/ and pre-restore/ beside the
+# database. The newest copy in each of the three is always kept (the newest backup, the newest
+# pre-upgrade copy, the newest pre-restore set), so a restore always has a copy and a way back.
+# Never the report service's snapshot (/data/report), the live database or anything else.
+#
+# DEFAULT ON (the chart's defaults rule): no RBAC, no credential, no second image — the deletion is
+# file work in the pods' own volumes, the report run deleted by the report service at the
+# dashboard's request with the token both pods already mount. It needs a proxy-verified identity, so
+# with oauthProxy.enabled or visibility.enabled false every deletion is refused. Set
+# `housekeeping.enabled: false` in this release's values file and roll it out through the release's
+# deployment pipeline where only the standing retention may remove evidence: the page then shows no
+# control and neither pod registers a delete route.
+housekeeping:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Reporting — the report service (docs/specs/SPEC_C3_reporting_microservice.md)
+# ---------------------------------------------------------------------------
+# A SECOND POD, on its own image, that renders evidence documents — the namespace access report
+# and ten more (users, groups, bindings, privileged access, dormant access, login activity,
+# GroupSync health, a compliance snapshot, an access-certification pack) — as self-contained HTML
+# and PDF/A, from a READ-ONLY COPY of this dashboard's database that the dashboard's leader writes
+# every `snapshot.intervalSeconds` under /data/report (a `VACUUM INTO`, the backup mechanism on a
+# report cadence). Never the live gsd.db: SQLite's WAL is one host's shared memory and cannot be
+# shared across pods (values.yaml under `persistence`, "WATCH THE FILESYSTEM UNDERNEATH").
+#
+# HOW A READER REACHES IT. The oauth-proxy in the dashboard pod gains a second upstream routed by
+# path: /report/** goes to the report Service, with the same login and the same X-Forwarded-User.
+# The dashboard decides the tier (the wide tier, the same SubjectAccessReview as /bindings/findings)
+# and hands the browser a short-lived signed ticket (GET /api/report/ticket); the report service
+# verifies the ticket against the token both pods mount and binds it to the proxy's identity
+# header. The report service holds NO cluster credential and NO RBAC.
+#
+# HOW THE DASHBOARD LEARNS WHAT WAS GENERATED. It PULLS GET /report/api/usage on its poll thread
+# with the same token and records the runs (Usage tab → "Reports", the usage tier). The
+# dashboard's API stays GET-only.
+#
+# DEFAULT ON. The chart supplies everything: the image (same appVersion as image.*, published by
+# the same workflow), a PVC for artefacts, the token Secret (minted on the cluster by the
+# secrets-mint hook, only if absent — never rendered), the Service,
+# the NetworkPolicy, the TLS certificate (service-ca). Refused at render with oauthProxy.enabled=false
+# (no proxy, no route in, no trusted identity), persistence.enabled=false (nothing a second pod can
+# mount), replicaCount>1 (each replica holds its own history), rbac.bindings=false (nine of eleven
+# reports are the binding surface) and a ReadWriteOncePod data claim (the report pod cannot mount it).
+reporting:
+  enabled: true
+
+  # Namespace metadata capture and selection (docs/DESIGN_reporting_auditors_and_ns_selector.md §3).
+  # BOTH empty by default, and enabling them also needs rbac.namespaces=true (the poll only lists
+  # Namespace objects with that grant). The render refuses a selector that names a key the poll does
+  # not capture, and labels set while the grant is off.
+  namespaceMetadata:
+    # Label keys the poll captures per namespace (bounded — only these, never the whole label map). You
+    # name the KEYS here; the form's dropdown VALUES are auto-discovered from the namespaces themselves.
+    # Add keys (environment, owner, cost-centre) with no migration.
+    #
+    # These are ENTERPRISE-SPECIFIC. On a real/remote cluster set them to YOUR namespace-metadata label
+    # keys — the company.net/* below are examples, not defaults. e.g.
+    #   labels:
+    #     - company.net/mnemonic            # <- replace with your enterprise's actual metadata labels
+    #     - company.net/app-environment
+    labels: []
+  # The Namespace label that pins an EXACT group (#149 R7) — carried by some namespaces only, the ones
+  # that name the group governing them. The report forms resolve a business mnemonic to that group
+  # through it (a naming convention was measured unreliable: beta → app-ocp-rbac-spar-ns-audit, alpha →
+  # bda-rbac-trino-alpha-users), and offer the captured values as a direct group lookup. The poller
+  # captures it as a third namespace label whether or not it is listed under namespaceMetadata.labels.
+  # "" hides the mnemonic and exact-group lookups. ENTERPRISE-SPECIFIC, like the labels above.
+  namespaceGroupLabel: ""
+  namespaceSelector:
+    # The captured DIMENSIONS the namespace-access report offers (P2, multi-dimension). Each MUST be one
+    # of namespaceMetadata.labels; the form renders one multi-select per entry, AND'd across, OR within.
+    # [] hides the selector.
+    #
+    # ORDER MATTERS: the FIRST entry is the business mnemonic — the "mnemonics" lookup lists its values,
+    # access-certification resolves group_mnemonic through it (with namespaceGroupLabel), and
+    # namespace-access's group_by "mnemonic" groups by it; the SECOND is the app environment
+    # (group_by "app-environment"). Listed the other way round, a mnemonic resolves environments.
+    #
+    # Same ENTERPRISE-SPECIFIC keys as namespaceMetadata.labels — set to your cluster's real metadata
+    # labels on a remote/production cluster, NOT the company.net/* examples. e.g.
+    #   labels:
+    #     - company.net/mnemonic            # <- replace with your enterprise's actual metadata labels
+    #     - company.net/app-environment
+    labels: []
+
+  image:
+    repository: quay.io/ephico2real/group-sync-dashboard-report
+    tag: ""        # empty resolves Chart.appVersion — the dashboard's version, deliberately (§3.3)
+    digest: ""     # wins over tag, like image.digest
+    pullPolicy: Always
+
+  # HTTPS between the proxy and the report pod, and between the dashboard's poller and it, with the
+  # service-ca certificate (the same mechanism as the proxy's own -tls-cert). The proxy verifies
+  # with -upstream-ca against the openshift-service-ca.crt ConfigMap, which every OpenShift
+  # namespace carries and the ServiceMonitor already trusts. Off = plain HTTP on the pod network;
+  # the ticket and the NetworkPolicy still hold. PRE-FLIGHT: the shipped ose-oauth-proxy must have
+  # -upstream-ca (`oauth-proxy --help | grep upstream-ca`); if it does not, set this false.
+  tls:
+    enabled: true
+
+  # Restrict ingress to the report pod: the dashboard pod (its proxy makes the connection), the
+  # schedule Jobs, and — only with monitoring.serviceMonitor.enabled — Prometheus pods
+  # (app.kubernetes.io/name: prometheus, the label both OpenShift monitoring stacks carry) in the
+  # configured monitoring namespaces. Kubelet probes come from the pod's own node and stay admitted.
+  # A core object every OpenShift CNI enforces (OVN-Kubernetes). Off where the CNI does not.
+  networkPolicy:
+    enabled: true
+    monitoringNamespaces: [openshift-user-workload-monitoring, openshift-monitoring]
+
+  pdf:
+    enabled: true
+    # "" plain PDF | pdf/a-1b | pdf/a-2b | pdf/a-2u | pdf/a-3b | pdf/a-3u | pdf/a-4. The
+    # archival default is 2b; 3b embeds the report's canonical .json inside the PDF. Refused at
+    # render for any other value. Validate a produced file with veraPDF if a records system
+    # demands proof of conformance — fpdf2 ENFORCES the profile while writing, it does not certify.
+    variant: pdf/a-2b
+
+  # Where artefacts live. A PVC from the default StorageClass; NO keep annotation, unlike the
+  # data claim — every artefact is regenerable from a snapshot. Off = emptyDir (lost on restart).
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    existingClaim: ""
+
+  # The read-only copy for the report pod: how often the dashboard's leader writes it under
+  # /data/report and how many to keep (the newest is read; the previous covers the moment a new
+  # one is being written). 300s, its own timer. Below 60 refuses the render: a VACUUM INTO
+  # holds a read transaction for its duration (3.2 s measured on a 61 MB, 520k-row store).
+  snapshot:
+    intervalSeconds: 300
+    keep: 2
+
+  # The global reporting window (design §5): gate AUTOMATED report runs (schedules, and any service-token
+  # caller) to a time-of-day range on chosen weekdays, in a chosen timezone. A human's manual run from the
+  # Reports tab is NEVER gated — this is an operational rail, not access control. Off by default.
+  #   - A refused run answers 409; the schedule Job treats that as a SKIP (exit 0), not a failure, so the
+  #     CronJob is not marked failed and does not retry into the window.
+  #   - timezone defaults to .Values.timezone (the report pod's TZ) when left empty. When window.enabled,
+  #     the schedule CronJob's spec.timeZone is set to this same zone so the cron and the window agree —
+  #     otherwise Kubernetes runs the cron in the CONTROLLER's timezone and every run is 409-skipped.
+  #     spec.timeZone is GA on Kubernetes 1.27 / OpenShift ~4.14; on older it is silently pruned and the
+  #     cron falls back to the controller's timezone (document the estate's version before relying on it).
+  #   - start/end are HH:MM (24h) and must differ. A wrap window (start > end, e.g. 22:00-06:00) is a night
+  #     window: the post-midnight part belongs to the previous day. A window entirely inside the DST
+  #     spring-forward hour never opens — avoid 02:00-03:00 in a zone that springs forward there.
+  #   - days is a non-empty, duplicate-free subset of Mon..Sun. Malformed = a render failure (and a report
+  #     service startup failure): an enabled-but-broken window never silently disables gating.
+  window:
+    enabled: false
+    timezone: ""
+    start: "22:00"
+    end: "06:00"
+    days: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+
+  # Artefact retention — two tiers so a burst of manual (on-demand) runs can never evict a scheduled
+  # report (a bound of 0 is disabled). A scheduled run is kept while within the newest keepPerSchedule
+  # per (schedule, cluster) OR younger than days, and is EXEMPT from the manual run-count cap. A manual
+  # run is kept days (short) and at most maxRuns, whichever prunes first.
+  #
+  # DAYS ARE MEASURED FROM COMPLETION — when the artefact came into existence (the run's finished_at),
+  # not from when it was requested — and "newest" for both keepPerSchedule and maxRuns means most
+  # recently completed. A run that waited in the queue or rendered slowly is as old as its file, not as
+  # old as its ticket (#163). Ages round conservatively: finished_at is kept to whole seconds and a run
+  # is aged from the END of its second, so rounding can only keep an artefact a moment longer. A run
+  # that never completed (the pod died under it) has no finished_at and ages from the request time
+  # its id encodes — a failure record, never a servable artefact.
+  #
+  # NOTE — keepPerSchedule is a FLOOR (always keep the newest K), not a ceiling. Setting
+  # scheduled.days: 0 disables the age bound, and since keep only ever PROTECTS runs, that disables
+  # scheduled deletion entirely: it does NOT mean "keep only the newest K". Scheduled artefacts then
+  # grow without limit on the PVC. To bound them, set a non-zero scheduled.days.
+  retention:
+    scheduled:
+      keepPerSchedule: 2
+      days: 90
+    manual:
+      days: 3
+      maxRuns: 500
+
+  # How long a minted ticket is valid; the page re-mints on expiry. 30..3600.
+  ticket:
+    ttlSeconds: 300
+
+  # Printed as the first line of every report and in the PDF's running header.
+  marking: "Handling: internal — access review evidence"
+
+  # A budget on the one report replica governs drains, not availability, exactly as the dashboard's
+  # (see podDisruptionBudget above): maxUnavailable: 1 lets a drain proceed; minAvailable: 1 blocks it.
+  # Selects the report Deployment's pods only — never the schedule CronJob pods, whose owner has no
+  # scale subresource and would fail the budget (SyncFailed, DisruptionAllowed=False).
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+    minAvailable: ""
+
+  # Probes
+  # -------------------------------------------------------------------------
+  # THE SAME REASONING AS THE DASHBOARD'S `probes` BLOCK ABOVE, applied to this service — which it
+  # was not before: these periods were hard-coded, and liveness ran five times more often here than
+  # on the dashboard for the same cost profile.
+  #
+  # What each probe costs when it is WRONG decides its period. A failed readiness takes the pod out
+  # of the Service and puts it back — cheap. A failed liveness destroys in-flight state (a render in
+  # progress) and forces a container restart — expensive. So liveness is 300s with failureThreshold
+  # 2 (10 minutes of sustained failure before a wedged pod is restarted), matching the dashboard.
+  #
+  # Readiness is 30s here rather than the dashboard's 15s, for a cost the dashboard does not have:
+  # `/report/readyz` performs a SQLite READ, and every probe contends for the same lock the poller's
+  # writer holds — which is why `sqlite.readerBusyTimeoutMs` is deliberately shorter than the
+  # writer's. Halving the probe rate halves that contention.
+  #
+  # The 1s Kubernetes default timeout is deliberately not used: on a host that suspends and resumes,
+  # every in-flight probe fails with "context deadline exceeded" and liveness kills a healthy
+  # process (observed on the dashboard; it cascaded into a ~4h outage).
+  #
+  # These probes no longer write a log line apiece: the per-request record is at WARNING by default
+  # (`httpLogLevel`), which this service now honours as the dashboard already did.
+  probes:
+    liveness:
+      initialDelaySeconds: 10
+      periodSeconds: 300     # 5 min — see the threshold note before raising this
+      timeoutSeconds: 5
+      failureThreshold: 2    # 2 x 300s = 10 min to restart a wedged pod
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 30      # /report/readyz reads SQLite; each probe contends for the lock
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+  # Each report is a module. Nine need nothing but the snapshot and are on. loginActivity FOLLOWS
+  # loginCapture.enabled by default ("" = follow); `true` with capture off is refused — a report
+  # over a table nothing writes. dormantAccess works without capture (User objects) and gains a
+  # last-login column with it.
+  reports:
+    namespaceAccess: {enabled: true}
+    accessMatrix: {enabled: true}
+    privilegedAccess: {enabled: true}
+    bindingFindings: {enabled: true}
+    groups: {enabled: true}
+    users: {enabled: true}
+    loginActivity: {enabled: ""}
+    dormantAccess: {enabled: true}
+    groupsyncHealth: {enabled: true}
+    complianceSnapshot: {enabled: true}
+    accessCertification: {enabled: true}
+
+  # Which formats a run stores when the request names none — by ORIGIN (#149 R3). A schedule fires
+  # unattended: scheduled defaults and each schedule's formats refuse pdf at render time; use html, json
+  # or csv instead — print the HTML for a paper or PDF copy. PDF is for manual runs.
+  # json is always written. A defaulted manual pdf is dropped where pdf.enabled is false.
+  # csv (#106) is allowed in either list and off by default: one file per run with the report's tables,
+  # its sha256 and page one, each cell written as the dashboard's table export writes it.
+  formats:
+    scheduled: [html, json]
+    manual: [html, json, pdf]
+
+  # Unattended runs. Each entry is a CronJob on the report image that POSTs one run with the
+  # service token and waits for it (exit status = run status). The artefact lands in the artefact
+  # store like any other; nothing is mailed. `report` must be an enabled catalogue name.
+  # A schedule is CLUSTER-AGNOSTIC (#149 R1): the service resolves every enabled cluster from its
+  # snapshot and produces one run per cluster, each tagged schedule:<name>; `cluster:` pins one.
+  # `enabled: false` keeps the CronJob and suspends it (R4) — its definition, history and audit
+  # stay, nothing fires; remove the entry to retire it. `formats:` overrides the scheduled default.
+  # e.g.
+  # schedules:
+  #   - name: quarterly-compliance
+  #     schedule: "0 6 1 1,4,7,10 *"
+  #     report: compliance-snapshot
+  #   - name: biweekly-namespace-access
+  #     schedule: "0 6 1,16 * *"
+  #     report: namespace-access
+  #     params: {}
+  #     enabled: false
+  #
+  # `deliver` (#109, docs/specs/SPEC_F4_webhook_delivery.md): kind none (the default, today's CronJob) or
+  # webhook. With webhook, each finished run of the fan-out is POSTed as one CloudEvent (the run's facts:
+  # report, cluster, run id, status, schedule, sha256, finished_at, sizes) to the URL held in a Secret you
+  # create (`oc create secret generic team-hook --from-literal=url=https://...`), mounted read-only into the
+  # Job and never printed. attach: none|html|csv adds that artefact, base64, up to 5 MiB; it must be a
+  # format the schedule stores. attach: pdf refuses rendering: PDF is for manual runs — print the HTML
+  # for a paper or PDF copy. Up to 4 attempts, with backoff, for 408, 429, 500, 502, 503, 504 and network
+  # errors; a run not delivered fails the Job like a failed run. The Job's egress to the receiver: chart README.
+  #   - name: weekly-groups
+  #     schedule: "0 23 * * 0"
+  #     report: groups
+  #     deliver:
+  #       kind: webhook
+  #       webhookUrlSecret: {name: team-hook, key: url}
+  #       attach: html
+  schedules: []
+
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 768Mi}
+  # The report pod's own affinity/tolerations/nodeSelector. Nothing is derived from the data
+  # claim's access mode: reporting requires ReadWriteMany (gsd.reportingGuards refuses the rest).
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # The report pod's scheduling priority. Empty = the cluster default (priority 0). #97 saw THIS pod
+  # preempted 29x in ~3h at 99% node CPU (OLM collect-profiles / marketplace pods); a PDB does not stop
+  # preemption, so set a PriorityClass name here to protect a report run in flight. Rendered only when set.
+  priorityClassName: ""
+
+# ---------------------------------------------------------------------------
+# RBAC
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  # Creates a ClusterRole + binding granting get/list on groupsyncs, groups, users,
+  # rolebindings and clusterrolebindings. No watch, and no write verb in it. The dashboard's
+  # Lease write (get/create/update on its own Leases) is the `<fullname>-leases` Role and
+  # RoleBinding in the release namespace, rendered when leaderElection.enabled or a fleet
+  # account is in use (#420). With false, none of them renders: apply that Role and
+  # RoleBinding yourself beside the ClusterRole (the chart README lists both).
+  create: true
+
+  # RoleBindings/ClusterRoleBindings power the "Access granted" view and dangling-binding
+  # detection. Disable to drop that grant; the dashboard degrades to group data only.
+  bindings: true
+
+  # The User objects are the SOURCE of the Users tab: OpenShift creates one at a person's first
+  # login through an identity provider and never before, so the tab's rows — and its headline,
+  # how many people have logged in to the cluster — come from here (docs/DESIGN_users_tab_logins.md).
+  # (A User created by hand has no identity; it is listed as a manual account and not counted.)
+  # Read off each object: the name, fullName (shown as "alice.cooper · Alice Cooper" on every member
+  # surface, absent is ordinary), the creation time (first login), and the identity-provider prefix
+  # of each identities[] entry. Group membership is NOT read from it; that comes from the Group
+  # objects granted above, exactly as before. Measured on the reference cluster: 62 User objects,
+  # 11 distinct synced members, 8 of whom have logged in.
+  #
+  # Still switchable off, and still safe to upgrade the image without re-applying RBAC — the list
+  # call 403s and the poll succeeds — but the cost is no longer cosmetic: the Users tab has no
+  # source and says so by name ("not permitted to list users.user.openshift.io"), rather than
+  # showing an empty list that would read as "nobody has logged in". Members still show bare ids.
+  users: true
+  # Namespace objects, get/list, core group. OFF by default: extra RBAC. On, the poller reads them
+  # on the binding cadence and the namespace report can say "this namespace exists and has no
+  # grants" (attesting ABSENCE) and "this namespace no longer exists". Off, every report's coverage
+  # block says absence is not attested.
+  namespaces: false
+  # Identity objects: one per (provider, id). With mappingMethod claim or add OpenShift creates it
+  # at the first successful login through that provider, so its creation time IS that first login,
+  # where the User's is only the first login for a provider-created User; with mappingMethod lookup
+  # an administrator creates it beforehand, and the page says so (the chip reads "identity", never
+  # "exact"). OFF by default: it is a grant the chart does not otherwise
+  # need (the 0.14.0 rule keeps RBAC-costing switches off), and the Users tab is honest without it
+  # (it labels the User time "approx."). This value is BOTH the grant and the read switch
+  # (identitiesReadEnabled in the ConfigMap): the app cannot see its own RBAC, and a refused read
+  # every poll would put a 403 a minute in the audit log. Requires rbac.users. With
+  # rbac.create=false it is only the read switch.
+  identities: false
+
+# ---------------------------------------------------------------------------
+# Kyverno policy module  (#165, #170) — the CEL policy family, read through the policy reports
+# ---------------------------------------------------------------------------
+kyverno:
+  # Grants list on the policy reports (wgpolicyk8s.io, openreports.io) and the five CEL policy kinds
+  # with their namespaced twins (policies.kyverno.io), and turns the poller's read on. Auto-detected per cluster: a cluster
+  # serving no policy-report API group records "not installed" and the page says so — never zero
+  # results. Read-only; no /status, no write verb. The deprecated ClusterPolicy/Policy family is
+  # not read (the API says it will be removed in a future release); its results are counted so the
+  # page can say they exist.
+  enabled: true
+  # The metrics endpoints the dashboard pod can reach, for the report breakers
+  # (kyverno_breaker_total / kyverno_breaker_drops): reports a breaker dropped are results the page
+  # cannot show, so the truncation is a state, not a clean cluster. There are THREE circuits, one per
+  # controller, each on its own endpoint — name them all, comma-separated, in-cluster on the host
+  # cluster: http://kyverno-svc-metrics.kyverno.svc:8000/metrics (admission reports),
+  # http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics (background scan reports),
+  # http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics (background-scan reports).
+  # "" leaves the truncation state unknown (said on the page). One GET per endpoint per poll, for the
+  # host cluster only: a remote cluster's breaker is unmeasured, and the page says so.
+  metricsUrl: ""
+  # The appeared/cleared history of problem results, pruned like the other event tables (days;
+  # 0 keeps forever). Reports carry no history of their own — a report dies with its resource.
+  eventsRetentionDays: 90
+
+# ---------------------------------------------------------------------------
+# Which namespaces are the PLATFORM'S rather than a workload's  (#255)
+# ---------------------------------------------------------------------------
+# The Namespace audit hides these by default and says how many it hid; the Home page uses the same
+# answer. The shipped rule is OpenShift's and Kubernetes' own conventions — and it is not enough for
+# a real estate. MEASURED on the reference cluster: of 106 namespaces it classifies 67, and the 39 it
+# calls workloads include `cert-manager`, `cert-manager-operator`, `group-sync-operator`,
+# `group-sync-dashboard`, `hostpath-provisioner`, `kyverno` and `namespace-configuration-operator` —
+# seven pieces of platform listed as somebody's application.
+#
+# THREE AXES, because no two of them are enough. On that same cluster `-operator` catches three,
+# `-manager` one, `-provisioner` one, and `kyverno` and `group-sync-dashboard` match no pattern at
+# all and have to be named. Prefix matching alone misses all seven.
+#
+# Plain prefix / suffix / exact-name matching, deliberately — no globs and no regular expressions: a
+# regex in a values file is an injection surface and a diff nobody can review, and these three cover
+# every case measured.
+#
+# `prefixes`, `suffixes` and `names` REPLACE the shipped defaults. The `additional*` three APPEND to
+# them, which is what an estate actually wants: add the operators you install without restating a Red
+# Hat list that changes between releases. A key that is not one of the six is refused by name at
+# startup — a typo must not be a silent no-op.
+#
+# The classification is never silent: the page says "67 platform namespaces hidden" with a control to
+# show them, a hidden row stays counted, exportable and drillable, and where a hidden namespace holds
+# a direct grant the page says that too.
+#
+# `existingConfigMap` keeps the same six keys in a ConfigMap you own instead (#255), for an estate that
+# maintains its platform list outside this chart: a ConfigMap in the release namespace, delivered by your
+# own pipeline, whose key (`platform-namespaces.yaml` by default) holds the stanza as YAML, for example
+#   additionalSuffixes: ["-operator", "-manager"]
+#   additionalNames: ["kyverno"]
+# It is mounted as a file (no new permission; the pod does not start while the ConfigMap is missing)
+# and read ONCE, at start. The chart cannot see inside it, so editing it changes nothing until the pod
+# restarts: after an edit, change `existingConfigMap.revision` to any new text in this release's values
+# file and roll the release out through its deployment pipeline — the revision is rendered into the
+# settings file, whose checksum rolls the pod. A typo inside the ConfigMap is refused when the pod
+# starts, by the ConfigMap's name and key, because a render has no cluster to read it from. Setting it
+# beside any list here is refused at render: one source per list.
+# PLATFORM-CLASSIFICATION (#255, #353): the estate's own additions to "which namespaces are the platform's" (#255). What
+# this decides: the namespace index and Home hide these namespaces by default, and since #353 a ServiceAccount
+# in one of them is the platform's own — silent under the built-in tier, never an unmanaged finding.
+platformNamespaces:
+  # Uncomment to replace the shipped defaults outright (rarely what you want):
+  # prefixes: ["openshift-", "kube-"]
+  # suffixes: []
+  # names: ["default", "openshift", "kube-system", "kube-public", "kube-node-lease"]
+
+  # What THIS estate adds for itself. The examples below are the reference cluster's answer.
+  additionalPrefixes: []
+  additionalSuffixes: []    # e.g. ["-operator", "-manager", "-provisioner"]
+  additionalNames: []       # e.g. ["kyverno", "group-sync-dashboard"]
+
+  # OR all of the above from a ConfigMap you own (see the comment above). Off: it needs a name.
+  existingConfigMap:
+    enabled: false
+    name: ""
+    key: platform-namespaces.yaml
+    revision: ""      # change after editing the ConfigMap and roll the release out: the pod re-reads it
+
+# ---------------------------------------------------------------------------
+# Which USERS are the platform's rather than a person's  (#255)
+# ---------------------------------------------------------------------------
+# A platform user's direct grants are never a finding: the Namespace audit counts them as excluded
+# ("24 platform identities excluded") instead of listing them in the worklist and the direct-user
+# alert, and the unmanaged finding counts them as built-in. Which users those are differs by estate —
+# a break-glass account, a bind account, a fleet login — so the list is yours, built like
+# `platformNamespaces` above.
+#
+# The shipped defaults are the rule of 2.0.0 plus `kube:admin`: the prefix `system:` (Kubernetes reserves it
+# "for Kubernetes system use") and the names below. `prefixes` and `names` REPLACE them; the `additional*`
+# two APPEND, which is what an estate usually wants. Plain prefix and exact name only — no suffix, glob
+# or regular expression, and every value is a list: a user name may contain a comma
+# (`cn=jdoe,ou=People`), so a string is never split. A key that is not one of the four is refused by
+# name at render and at start.
+#
+# `kubeadmin` and `kube:admin` are one trusted admin identity, both shipped: outside CRC the break-glass
+# login `kubeadmin` signs in as the user `kube:admin` (openshift/library-go, bootstrapauthenticator), on CRC
+# an HTPasswd `kubeadmin` signs in under its own name (the operator's ruling of 2026-10-01, #255).
+#
+# Never silent: the page states how many grants it excluded, names where this list comes from, and
+# reports an `additional*` entry no User subject on a binding in that cluster currently matches — a
+# pre-staged entry may be intentional, and the page asks the reader to check unexpected ones. A listed
+# person's own grants also leave their self view of the Namespace audit, exactly as kubeadmin's do; Home
+# still lists them.
+# PLATFORM-CLASSIFICATION (#255, #353): the estate's own platform users. What this decides: the direct-user rows, their
+# alert and their excluded count, and the unmanaged finding's built-in tier for a User subject.
+platformUsers:
+  # Uncomment to replace the shipped defaults outright (rarely what you want):
+  # prefixes: ["system:"]
+  # names: ["kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler", "kube-proxy", "kubeadmin", "kube:admin"]
+
+  # What THIS estate adds for itself.
+  additionalPrefixes: []
+  additionalNames: []       # e.g. ["breakglass-admin"]
+
+  # OR all of the above from a ConfigMap you own, as YAML under one key, with the same rules as
+  # platformNamespaces.existingConfigMap: mounted, read at start, `revision` changed and the release rolled
+  # out after an edit, refused beside an inline list. Off: it needs a name.
+  existingConfigMap:
+    enabled: false
+    name: ""
+    key: platform-users.yaml
+    revision: ""
+
+# ---------------------------------------------------------------------------
+# Cluster configuration as labelled Secrets  (#230, docs/specs/SPEC_S1_cluster_secrets.md)
+# ---------------------------------------------------------------------------
+# Argo CD's model: a Secret in THIS namespace labelled `groupsync-dashboard.io/secret-type: cluster`
+# is a cluster — `name` (the id the dashboard shows), `server`, `config` (JSON: bearerToken or
+# oauth{username,password}; tlsClientConfig{caData,insecure}), and the D2 options `visibility`,
+# `identity`, `enabled`. The dashboard LISTs them by that label on discoveryIntervalSeconds and polls
+# each like a `clusters[]` entry; written by hand, by the Cluster Configurations tab (S2) or by any
+# GitOps process, the app sees the same object. `clusters[]` above stays the bootstrap source and
+# the host is ALWAYS clusters[0]: a Secret naming the host is refused as a finding. A Secret that
+# does not parse is a finding on the tab, never a crashed pod; one that vanishes disables its
+# cluster and keeps its history.
+#
+# The grant is a namespaced Role: get, list, watch on secrets in the release namespace ONLY (the
+# writes the tab needs are S2's, behind their own switch). The credential never leaves the Secret and
+# the process's memory — not the database, not a log line, not a response, not /metrics.
+clusterConfig:
+  secrets:
+    # Discovery includes ConfigMaps labelled config-type: onboard or sideload in this namespace.
+    # They contain data.clusters.yaml with values-shaped clusters, never credentials (#293, SPEC_S5).
+    # The existing switch controls the whole discovery stage; no ConfigMap is written by the app.
+    enabled: true
+    # The Cluster Configurations tab's writes (#230 S2, docs/specs/SPEC_S2_cluster_configurations_tab.md):
+    # an administrator adds a cluster from the tab — the same labelled Secret a GitOps process would
+    # write —, rotates its token in place, or deletes it. OFF by default, a stated exception to the
+    # on-by-default rule (tests/test_values_defaults.py): a write path on Secrets widens the dashboard's
+    # read-only posture (its only write anywhere is its own leader Lease), so it stays off until the
+    # operator turns it on — the default is pending the operator's A/B call of 2026-09-20; B flips it
+    # and removes the exception. Turning it on is the decision to let the dashboard WRITE cluster
+    # Secrets — the one grant, with two consumers that each declare their own intent: a person on
+    # the tab (an identity and clusterconfig:manage), and the saTokenLookup lookup (a stanza that
+    # says so, per cluster; SPEC_S4b), including ConfigMap onboarding (SPEC_S5): creates, policy
+    # updates and repeated cleanup of displaced generated Secrets all require this switch.
+    # ConfigMap writers in this namespace can initiate a fleet lookup; limit that RBAC to platform
+    # operators. It does not split, because a second switch would gate the
+    # same verbs twice and decide nothing the stanza does not. On, the Role above
+    # gains create, update and delete on secrets in the release namespace and the four write routes
+    # exist (the app still touches only Secrets carrying the label, in its own namespace, only for a
+    # reader the cluster-admin tier admits — visibility.clusterAdminSar, #322 — with a proxy-verified
+    # identity, one audit log line per write); off, no write route is registered and the tab
+    # is read-only — the form still produces the Secret's YAML for a GitOps process to apply. The
+    # credential never reaches a response, a log line, the database or /metrics either way.
+    writes:
+      enabled: false
+  # The fleet account (SPEC_S3 §3.1, #248): the LDAP account the dashboard logs in AS when a cluster
+  # stanza — or a cluster Secret's config — declares a connection mode (saTokenLookup / userSelfLogin).
+  # One account for the fleet; a stanza overrides the username with ldapConnectionBootstrap. S3a
+  # records the setting; S3b reads it at connect time and nowhere else. Where neither names a username,
+  # or the password Secret is unreadable, the cluster is a finding on the tab, not a crashed pod.
+  fleetAccount:
+    # The username. Empty = every mode stanza must name its own ldapConnectionBootstrap.
+    username: ""
+    # Its password: never a literal in values — a Secret reference, read at connect time only. The
+    # chart does not CREATE it (it holds a credential this release does not own); it only grants the
+    # dashboard permission to RETRIEVE it. The value never reaches a log line, the database, a
+    # response or /metrics (the redaction pin covers it).
+    passwordSecret:
+      # Where the Secret lives. Empty = this release's own namespace. Set it to read a Secret that
+      # already exists elsewhere — `openshift-config` is the usual answer, because that is where a
+      # cluster's LDAP bind password already sits and an estate would rather not copy it.
+      #
+      # THE GRANT IS RENDERED FOR YOU, and it is the narrowest one that works: `get` on THIS ONE
+      # Secret by `resourceNames`, never `list` (which resourceNames cannot restrict — a list grant
+      # would return every Secret in the namespace) and never a ClusterRole. See
+      # templates/fleet-account-rbac.yaml.
+      #
+      # A namespace OTHER than this release's means the chart writes a Role and RoleBinding into a
+      # namespace it does not own. Whoever runs `helm install` must be allowed to do that — on a
+      # cluster that refuses it, set `rbac.create: false` below, have a cluster administrator apply
+      # the two objects once, and the release installs unchanged.
+      #
+      # REPLICATING THE SECRET INSTEAD is the better end state, and this field is how you migrate to
+      # it without a chart change. Have Kyverno (or any replicator) copy the Secret into this
+      # release's namespace, then clear `namespace` here: the grant re-renders against the local
+      # copy, the cross-namespace Role is pruned, and the chart stops writing anywhere it does not
+      # own. The dashboard reads the same key either way and needs no restart beyond the upgrade —
+      # it reads the password at connect time, not at boot.
+      namespace: ""
+      name: gsd-fleet-account
+      key: password
+      # Render the Role and RoleBinding. Off = you grant it yourself; the dashboard still reads the
+      # Secret at connect time, and reports `fleet-credential-missing` naming the namespace, the
+      # Secret and the key if the grant is absent — it does not crash.
+      rbac:
+        create: true
+    # THE DAILY PING (SPEC_S4c §3.4, #285): once per account per interval the dashboard logs in as
+    # the fleet account and reads the poller ServiceAccount's token on ONE cluster the lookup retrieved,
+    # stores nothing, and records on the account's Lease the instant it last succeeded. One bind per
+    # interval for the whole fleet — never one per cluster. It stands down on a refusal (a wrong
+    # password is sent once, not daily), and it rides config.discoveryIntervalSeconds, so it never
+    # runs more often than discovery does.
+    ping:
+      enabled: true
+      # Daily. Shorter buys little — a credential rarely breaks between two mornings — and every
+      # increment multiplies the bind rate at a directory that is counting (SPEC_S3 §9.3.6).
+      intervalSeconds: 86400
+  # WHAT `saTokenLookup` READS on every target (SPEC_S4b, #284): the poller ServiceAccount's permanent
+  # token, held in a `kubernetes.io/service-account-token` Secret the operator chart creates beside
+  # the ServiceAccount. One convention for the fleet — the operator chart provisions the same names
+  # on every cluster — so the defaults are its names and a default install needs nothing here.
+  #
+  # AN ONBOARDING PRECONDITION, NOT AN ASSUMPTION. Kubernetes stopped creating token Secrets in 1.24
+  # and OpenShift 4.16 stopped generating them for the registry, so on a modern target the Secret
+  # exists only because someone created it (type kubernetes.io/service-account-token, annotated
+  # kubernetes.io/service-account.name=<the ServiceAccount>; the control plane fills it). When it is
+  # absent the tab says so in those words: `sa-token-secret-missing` — create the token Secret on
+  # the target. The fleet account needs `get` on that ONE Secret there (resourceNames), never list.
+  #
+  # THE STANZA'S CA MUST COVER TWO HOSTS. The login touches the API host (the OAuth discovery
+  # document) AND the OAuth route (/oauth/authorize), and an estate whose ingress is re-signed by an
+  # enterprise PKI signs them differently. `caBundleFile` on a saTokenLookup stanza (or the trusted
+  # bundle, when the stanza names none) must verify BOTH, and the finding names which host failed.
+  # A green run on CRC proves nothing about this: its API bundle already carries the ingress CA.
+  # The Secret the lookup writes carries the DECLARED trust, so a later re-login has what worked.
+  #
+  # NEEDS clusterConfig.secrets.writes.enabled (above): the lookup writes gsd-cluster-<name>, and
+  # create/update on Secrets is the grant that switch renders. A stanza with it off fails
+  # `helm template`; a Secret-declared mode with it off is a `fleet-write-disabled` finding.
+  saTokenLookup:
+    sourceNamespace: group-sync-operator
+    sourceServiceAccount: group-sync-dashboard-cluster-poller
+    # The token Secret's name on the target. Empty = <sourceServiceAccount>-token.
+    tokenSecretName: ""
+
+# ---------------------------------------------------------------------------
+# Login capture  (reads the oauth-server's audit log)
+# ---------------------------------------------------------------------------
+# Grants the dashboard get nodes/proxy, plus list nodes unless auditLog.nodeNames is set.
+# This is read access to everything the kubelet serves over GET on those nodes, including
+# other containers' logs and the journal. Set enabled=false if that grant is unacceptable.
+# Audit capture names the person at default OAuth verbosity, with no OAuth rollout.
+# It records allow/deny/error, but no LDAP result code or AD sub-code (such as account locked).
+# First read backfills available rotated files within retentionDays; pin nodeNames to narrow RBAC.
+# Stored pod-log rows and their causes remain readable and are linked to matching audit events.
+# See docs/AUDIT_LOG_CAPTURE.md for the local/remote grant and worked example.
+loginCapture:
+  enabled: true
+  # The only supported source. Old pod-log values fail with migration guidance.
+  source: audit-log
+
+  auditLog:
+    # Which nodes hold the file: the control-plane nodes. A label selector, listed each cycle.
+    nodeSelector: "node-role.kubernetes.io/master="
+    # OR the names, pinned. Set this and the chart grants nodes/proxy on exactly these names and
+    # drops the list grant. Names are cluster-specific, so it cannot be a default:
+    #   nodeNames: [master-0, master-1, master-2]
+    nodeNames: []
+    # Which identity providers a typed username may resolve to (identity_match on each row). Empty:
+    # every provider configured on oauth.config.openshift.io/cluster, read each cycle — so an
+    # Identity left behind by a provider since removed from the CR does not count as a match.
+    providers: []
+    # Identities that are not people, matched case-insensitively against the Identity's
+    # providerUserName and the decoded suffix of its name (an LDAP provider encodes the DN there).
+    # Measured on the reference cluster: an LDAP bind service account in ou=TrustedApplications
+    # produced allows and denies through the challenging client; a service identity's failures are
+    # not personnel events either, so the whole identity is dropped, every decision of it.
+    ignoreIdentityPatterns: ["ou=TrustedApplications"]
+
+  # Provider NAMES that are local HTPasswd accounts rather than directory identities.
+  #
+  # The log line carries the provider's name and nothing about its type, so without this list a
+  # success on `developer` looks exactly like a directory login. These are break-glass accounts —
+  # `kubeadmin` and whatever your HTPasswd IdP is called — and the point of naming them is that they
+  # are excluded from "accounts in no synced group": there is nowhere to migrate them to, so leaving
+  # them in that list is permanent noise on the one finding worth reading.
+  #
+  # Match the `name:` of the identity provider in `oauth.config.openshift.io/cluster`, not the
+  # username. `kubeadmin` is a special case OpenShift does not serve through a named provider, so it
+  # does not need to be listed here.
+  htpasswdProviders:
+    - developer
+
+  # How long a login attempt is kept. 400 days rather than 365 so a year-over-year access review can
+  # still see the previous cycle; 0 disables pruning entirely and lets the table grow without bound.
+  #
+  # Pruned a bounded chunk per poll on the writer thread, so a long backlog shortens over several
+  # cycles instead of holding the write lock through one enormous DELETE.
+  retentionDays: 400
+
+# ---------------------------------------------------------------------------
+# Cluster access — the login-gate group
+# ---------------------------------------------------------------------------
+# WHAT THIS ANSWERS. Holding RBAC access and being able to LOG IN are two different things, and a
+# cluster that gates authentication on group membership can grant somebody a role they can never use.
+# Measured on the reference cluster: 10 people held access through synced groups, 7 were in the gate
+# group, so 3 held access they physically could not exercise. Nothing else in this dashboard sees that,
+# because every other view starts from RBAC.
+#
+# It also settles the one thing the oauth log cannot. A refused login logs `no entries matching
+# (<filter>)` whether the account is outside the gate group or does not exist — the filter carries the
+# group, so the two are byte-identical. With the gate group's membership known, a refusal for somebody
+# who IS in a synced group is definitively "a real person, not gated".
+#
+# ── PREREQUISITE, AND IT IS NOT THIS CHART'S JOB ──────────────────────────────────────────────────
+# The gate group has to be synced into OpenShift as a Group object, by the group-sync-operator, with
+# its OWN GroupSync CR. This chart does NOT create that CR and should not: GroupSync CRs are the
+# platform team's, and a dashboard that starts writing them is the same overreach as managing
+# proxy/cluster's trustedCA. A worked example is in docs/examples/clusteraccess-groupsync.yaml.
+#
+# Its own CR rather than a widened filter on the existing one, because the sync-provider label is
+# <cr-name>_<provider-name>: a separate CR gets its own label, so the group is distinguishable from
+# the RBAC groups everywhere the dashboard groups by owner, and `prune: true` stays scoped to it.
+#
+# WATCH THE MEMBERSHIP ATTRIBUTE. A gate group is often objectClass groupOfUniqueNames with
+# `uniqueMember`, while RBAC groups are groupOfNames with `member`. Copying the RBAC CR's rfc2307
+# block verbatim syncs the group with ZERO members and looks like a working sync.
+clusterAccess:
+  # The FULL DN of the gate group. A DN, not a name: it is what a synced Group carries in its
+  # `openshift.io/ldap.uid` annotation, so the match is exact, and matching on `cn` would break the
+  # moment two branches of a directory both had a `cluster-access` group.
+  #
+  #   group: "cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com"
+  #
+  # EMPTY DISCOVERS IT from the OAuth CR's LDAP identity provider, whose search filter names the
+  # group. Both spellings are read — `memberOf` (OpenLDAP, Active Directory) and `isMemberOf`
+  # (389-ds, Oracle/Sun DSEE) — because neither is standardised and a parser that knows one would
+  # report "no gate configured" on half the directories in the world.
+  #
+  # Set it explicitly when the gate is not in that filter, or when this chart may not read the OAuth
+  # CR. Discovery is the convenience; this value is the contract.
+  group: ""
+
+  # Grant `get` on oauths.config.openshift.io/cluster, which is what makes discovery possible.
+  #
+  # Narrowed with resourceNames to the single object `cluster` — honoured by Kubernetes for `get`,
+  # unlike `list`. Declining it is a supported choice: without the grant the read 403s, the discovery
+  # returns nothing, and the feature reports that it needs `clusterAccess.group` set rather than
+  # failing. Pointless to grant when `group` is set, and the chart does not force the pairing because
+  # an operator may want discovery available as a fallback.
+  discoverFromOAuth: true
+
+# ---------------------------------------------------------------------------
+# Networking
+# ---------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 8080
+
+# WHAT EXPOSES THE DASHBOARD: a Route (the default), an Ingress, or neither. Two flags,
+# because they are two different objects with two different requirements, and the difference
+# is exactly WHEN the hostname has to be known.
+#
+#   route.enabled    (default true)  an OpenShift Route the chart owns, named like the
+#                    Service. Needs NO host at render time: it emits spec.subdomain=<fullname>
+#                    and the ROUTER composes <fullname>.<apps domain> — the release name,
+#                    never the namespace — and reports it in status. The ServiceAccount's
+#                    OAuth callback references the Route by name. Renders anywhere, including
+#                    ArgoCD, Flux and a plain `helm template`, with no cluster connection and
+#                    no per-cluster value.
+#
+#   ingress.enabled  (default false) an Ingress the ingress-to-route controller converts into
+#                    a Route. Portable to plain Kubernetes. Needs a host AT RENDER TIME — a
+#                    hostless Ingress yields no Route at all — so it takes ingress.host or
+#                    reads the cluster's apps domain with `lookup`, and REFUSES TO RENDER when
+#                    it can do neither, which is every GitOps renderer.
+#
+# Both enabled fails the render, as a policy: one front door. With default hosts both would
+# derive the same hostname and the router admits one claim per host and path, so the second
+# would sit refused in its status after an install that reported success; with two different
+# explicit hosts you would have two doors to keep in step. Neither enabled is allowed — bring
+# your own exposure — but with the proxy on the ServiceAccount still needs a literal callback
+# URL, so ingress.host must then be set or derivable.
+#
+# WARNING: with oauthProxy.enabled=false there is NO authentication and the dashboard
+# exposes group membership. Do not expose it on a shared cluster that way.
+route:
+  enabled: true
+  # LEAVE EMPTY to let the router name it <fullname>.<apps domain>:
+  #
+  #   group-sync-dashboard.apps-crc.testing
+  #
+  # <fullname>, NOT <fullname>-<namespace>. OpenShift's own auto-generation for a hostless
+  # Route appends the namespace so that two namespaces cannot claim one hostname. Here the
+  # usual install is one dashboard per cluster with release and namespace both
+  # `group-sync-dashboard`, so that produced a URL that said the same word twice.
+  # spec.subdomain is how the chart asks the router for the short form without knowing the
+  # domain. Measured on OpenShift 4.18.2: with subdomain set, spec.host stays EMPTY and the
+  # host appears only in status — so there is no server-written spec field for ArgoCD to
+  # report as drift, which a hostless Route would have (its spec.host is filled on create).
+  # subdomain needs a router that honours it — OpenShift 4.11 and later; the Route API says an
+  # older server populates spec.host itself instead, which works but reintroduces that drift.
+  #
+  # The trade: a second release in ANOTHER namespace requests the same subdomain and is
+  # refused with HostAlreadyClaimed. That is written into the refused Route's status, NOT
+  # reported by Helm — the install still says success — so check `oc get route`. The fix is
+  # to set this on one of them.
+  #
+  # SET IT to pin the hostname exactly. The Route then carries spec.host, and the router admits
+  # it as given provided it is valid and unclaimed; the OAuth callback still resolves through
+  # the Route, so nothing else needs to change.
+  #
+  # An `ingress.host` left over from an older values file is honoured here too, so an upgrade
+  # never silently moves a URL somebody pinned. THE EDGE OF THAT: the chart cannot tell a host
+  # that was pinned on purpose from one that was set only because the Ingress demanded one —
+  # a plain-Kubernetes values file, say — and the latter, carried onto an OpenShift Route, is a
+  # hostname the router does not own. So the fallback is not silent: NOTES says where the host
+  # came from and what to do (move it here, or clear it). Both reviewers of #45 named this edge.
+  host: ""
+  annotations: {}
+  # Real Route fields, unlike the Ingress where they ride as annotations. termination is
+  # overridden to reencrypt automatically whenever the proxy is enabled: the proxy terminates
+  # TLS itself with the service-ca certificate, so the router must re-encrypt to it.
+  termination: edge
+  insecureEdgeTerminationPolicy: Redirect
+
+# The Ingress alternative. On OpenShift the ingress-to-route controller converts it into a
+# Route automatically (ingressClassName: openshift-default). On plain Kubernetes it is the
+# only option: set route.enabled=false and this to true.
+ingress:
+  enabled: false
+  className: openshift-default
+  # LEAVE EMPTY. It is auto-detected as <fullname>.<cluster apps domain>, reading the domain
+  # from the cluster's own ingresses.config/cluster object, so a plain `helm install` needs no
+  # flag and no knowledge of the cluster. NOTE that with the Ingress off and the Route on, a
+  # value here is still read — by the Route, as its pinned host (see route.host above) — so do
+  # not leave a plain-Kubernetes hostname behind when moving a values file to OpenShift:
+  #
+  #   group-sync-dashboard.apps-crc.testing
+  #
+  # Not <fullname>-<namespace>, which is OpenShift's Route auto-generation convention. That
+  # exists so two namespaces cannot claim one hostname, and it is the right default for
+  # arbitrary app Routes — but here the release and the namespace are both
+  # `group-sync-dashboard`, so it produced a URL that said the same word twice. A host a
+  # human can type, and read out in a review meeting, is worth more.
+  #
+  # The trade, because it is real: two releases in DIFFERENT namespaces derive the SAME host
+  # and the second Route is refused with HostAlreadyClaimed — in its status, not as a Helm
+  # error — and the fix is to set this explicitly on the second one.
+  #
+  # It cannot simply be omitted: a Route auto-generates its host, but an Ingress does not,
+  # and OpenShift's ingress-to-route controller silently creates NO Route for a hostless
+  # Ingress. That made a default install unreachable with nothing reporting an error — the
+  # Ingress existed, the pod was healthy, and no Route was ever created.
+  host: ""
+  annotations: {}
+  tls: []
+  # Carried as route.openshift.io annotations, since Ingress has no field for either.
+  # Overridden to reencrypt automatically whenever the proxy is enabled.
+  termination: edge
+  insecureEdgeTerminationPolicy: Redirect
+
+# ---------------------------------------------------------------------------
+# OpenShift OAuth proxy
+# ---------------------------------------------------------------------------
+# Puts cluster login in front of the dashboard. ON by default, because this exposes group
+# membership and the Ingress is reachable by anyone who can resolve the cluster's apps
+# domain — an unauthenticated default would be the wrong way round. Turn it off only for a
+# local single-user cluster, or where something in front already authenticates the route.
+#
+# ACCESS MODEL for the UI: authentication, not authorization. Anyone who can log into the
+# cluster can view. That is the documented default of the OpenShift provider ("defaults to
+# allowing any user that can log into the OpenShift cluster").
+#
+# BE PRECISE ABOUT WHAT THAT EXPOSES. This comment used to claim the dashboard "shows nothing
+# a user could not already read with `oc get groups`", and that is true of the Groups tab and
+# nothing else. The dashboard reports the cluster's whole RBAC BINDING surface — every
+# ClusterRoleBinding and RoleBinding, the role each grants, and which subjects hold it —
+# which reading Groups does not give you. The same mistake had been made in the /api review
+# and was a measured privilege escalation; see apiTokenAccess below.
+#
+# So treat UI access as equivalent to cluster-wide RBAC read. If that is not who should be
+# looking, set `sar` — e.g. to require `list clusterrolebindings`, matching what the API
+# review demands.
+oauthProxy:
+  enabled: true
+
+  # The RHEL9 oauth-proxy from Red Hat's registry, explicitly versioned.
+  #
+  # This was previously the cluster's own imagestream
+  # (image-registry.openshift-image-registry.svc:5000/openshift/oauth-proxy:v4.4), chosen
+  # because registry.redhat.io had no tag newer than v4.14.0 at the time and the internal
+  # one needed no credentials. `ose-oauth-proxy-rhel9:v4.15` has since been published and
+  # is the better default: an explicit, auditable version on a RHEL9 base, rather than a
+  # `v4.4` tag whose digest silently tracked whatever the cluster's release payload held.
+  # A pinned name a human can look up beats a stable-looking tag that means something
+  # different on every cluster.
+  #
+  # PULL CREDENTIALS. registry.redhat.io needs authentication, where the internal registry
+  # did not. On a normal OpenShift cluster this is already covered: the global pull secret
+  # in openshift-config carries registry.redhat.io, and the MCO distributes it to every
+  # node, so no per-namespace imagePullSecret is required. Verified on the reference
+  # cluster before this became the default. Check yours with:
+  #   oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' \
+  #     | base64 -d | python3 -c 'import json,sys; print(*sorted(json.load(sys.stdin)["auths"]))'
+  #
+  # If registry.redhat.io is absent there, or the cluster is disconnected, override:
+  #   --set oauthProxy.image=<your-mirror>/openshift4/ose-oauth-proxy-rhel9:v4.15
+  #   --set oauthProxy.image=image-registry.openshift-image-registry.svc:5000/openshift/oauth-proxy:v4.4
+  # The second is the old internal-registry path, still valid and still credential-free.
+  #
+  # What your cluster's own release recommends, for comparison:
+  #   oc adm release info --image-for=oauth-proxy
+  image: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15
+  imagePullPolicy: IfNotPresent
+  port: 8443
+
+  # Cookie signing key. Leave empty (the default) and the secrets-mint hook creates
+  # <fullname>-oauth-session ON THE CLUSTER, once, only if absent — never in a manifest, so no
+  # renderer (Helm, Flux, Argo CD, Kustomize) rotates it. A value here renders that Secret plainly
+  # instead — deterministic, so it does not drift either — and the mint is skipped for it. The
+  # rendered Secret carries helm.sh/resource-policy: keep (and Prune=false,Delete=false under Argo),
+  # so clearing the value later leaves the Secret — and every session — in place: the hook finds it
+  # and keeps it. The other way round, giving a value to a release whose key the hook minted, needs
+  # `oc delete secret <fullname>-oauth-session` first under Helm (Helm cannot adopt an object it did
+  # not create); the key changes, so every session is signed out once.
+  cookieSecret: ""
+
+  # Session lifetime: ONE absolute number, measured from login, deliberately NOT sliding.
+  #
+  # There is no `refresh` key and no -cookie-refresh flag, and that is a MEASUREMENT rather
+  # than a preference. With provider=openshift the proxy's refresh-time revalidation sends
+  # the token as a QUERY PARAMETER to /apis/user.openshift.io/v1/users/~, which the API
+  # server ignores — it answered 403 naming the caller system:anonymous — so every refresh
+  # interval would CLEAR the session instead of extending it: a forced-logout timer wearing
+  # a keep-alive's name. The cluster-logging operator ships Kibana's oauth-proxy the same
+  # way on this same provider, -cookie-expire with no -cookie-refresh. Setting `refresh`
+  # here fails the render rather than quietly logging everyone out at the interval.
+  #
+  # Because it cannot slide, this cap applies to an ACTIVE reader too: at 4h everyone
+  # re-authenticates, mid-task or not. Measured on the reference cluster, re-entry asks for
+  # credentials — the OAuth server keeps no reusable session for this client — so the cap is
+  # a real forced re-login rather than a redirect flicker. Raise it if that bites during a
+  # long incident; the lever is this number, not the design.
+  #
+  # Go duration: "4h", "90m", "1h30m". A bare number has no unit and is refused at render.
+  cookie:
+    expire: 4h
+
+  # The proxy's own URL prefix. Everything it serves lives under it — /sign_in, /sign_out,
+  # /callback, /auth — and the app composes its sign-out link from this rather than
+  # hardcoding "/oauth", so the two cannot drift. Changing it also changes the callback
+  # path, which must keep matching the ServiceAccount's redirect-uri annotation.
+  proxyPrefix: /oauth
+
+  # Where the proxy sends the browser after clearing its cookie. The default is this
+  # dashboard's own unauthenticated /signed-out page, RELATIVE on purpose: the browser
+  # resolves it against whichever host served the redirect, so rendering needs no cluster
+  # lookup and a changed route cannot strand it.
+  #
+  # It must land OUTSIDE the proxy, or sign-out is a no-op that returns the reader signed
+  # in — which is why /signed-out is in skipAuthRegex below, and why a render guard refuses
+  # to let it be dropped from there while this stays empty.
+  logoutUrl: ""
+
+  # Paths served without authentication. The health endpoints MUST be here or kubelet
+  # probes receive a 302 to the login page and the pod is killed as unhealthy. /metrics is
+  # included so a ServiceMonitor can scrape it; the exporter emits counts and states only,
+  # never a group or user name, precisely because it is reachable unauthenticated.
+  #
+  # /signed-out is the logout landing page and must be here: behind the proxy it would start
+  # a fresh OAuth flow and return the reader signed in, the opposite of what they clicked. It
+  # links app.css and favicon.svg, so those are admitted too — the page carries no <style>
+  # block by contract, so without the stylesheet it renders unstyled. The vendored FONTS stay
+  # authenticated, so it deliberately falls back to system fonts rather than widening the
+  # unauthenticated surface further.
+  skipAuthRegex: '^/(healthz|readyz|metrics|signed-out|static/(app\.css|favicon\.svg))$'
+
+  # Empty means authentication only. To also require a permission, put a SubjectAccessReview
+  # here, e.g. to admit only those who could read the underlying data anyway:
+  #   sar: '{"resource":"groups","resourceAPIGroup":"user.openshift.io","verb":"list"}'
+  sar: ""
+
+  # ---------------------------------------------------------------------------
+  # Direct API access with a bearer token
+  # ---------------------------------------------------------------------------
+  # Lets `curl -H "Authorization: Bearer <token>" https://<host>/api/...` work, which is what
+  # an external aggregator needs — see docs/api-access.md.
+  #
+  # WHY IT IS OFF WITHOUT THIS. The proxy authenticates BROWSER sessions with a cookie. A
+  # request carrying a bearer token and no cookie is simply unauthenticated as far as it is
+  # concerned, so /api returns 403 with the login page as the body — confusing, because the
+  # token is perfectly valid.
+  #
+  # -openshift-delegate-urls is the flag that changes it. Per upstream it applies ONLY to
+  # requests carrying `Authorization: Bearer` or a client certificate, so browser sessions
+  # keep the cookie flow untouched and only the machine path is affected. It also needs
+  # system:auth-delegator on the PROXY's ServiceAccount, which the chart binds — the proxy is
+  # the party that calls TokenReview and SubjectAccessReview. Callers do NOT need that role.
+  #
+  # ---------------------------------------------------------------------------
+  # THE REVIEW MUST MATCH WHAT /api EXPOSES. Read this before changing it.
+  # ---------------------------------------------------------------------------
+  # This was `list groups` and that was WRONG — a privilege escalation, proven on the
+  # reference cluster. An account granted only `list groups`:
+  #
+  #     oc list clusterrolebindings        -> no
+  #     oc list rolebindings -A            -> no
+  #     GET /api/.../bindings/findings     -> 229 bindings, including
+  #                                           app-ocp-rbac-alpha-cluster-admin-crb
+  #
+  # /api is not a group-membership API. It reports the cluster's entire RBAC binding surface:
+  # every ClusterRoleBinding and RoleBinding, which role each grants, and which subjects hold
+  # it. Gating that on `list groups` let an identity learn through the dashboard what it could
+  # not learn with `oc`.
+  #
+  # So the review demands cluster-wide RBAC read, which is the honest floor for this data.
+  # If you narrow it, narrow what /api returns first.
+  #
+  # SCOPED TO /api DELIBERATELY. The prefix map does not cover "/", so the UI keeps its
+  # browser-only door and a token cannot be used to drive the HTML.
+  #
+  # ---------------------------------------------------------------------------
+  # GRANTING A REPORTING ACCOUNT — deliberately NOT a chart value
+  # ---------------------------------------------------------------------------
+  # An earlier version had an `apiTokenAccess.readers` list that created the grant from here.
+  # It was removed, and the reason matters: with the correct review the required permission is
+  # cluster-wide RBAC read, so a chart value that hands it out makes anyone who can edit a
+  # values file able to grant themselves that read. A Helm value is the wrong control for a
+  # cluster-level privilege.
+  #
+  # Grant it through your normal RBAC process instead. The stock role already exists:
+  #
+  #   oc adm policy add-cluster-role-to-group cluster-reader <ldap-group-for-reporting>
+  #   oc adm policy add-cluster-role-to-user  cluster-reader system:serviceaccount:<ns>:<sa>
+  #
+  # Prefer the GROUP form. It is the argument the Namespace audit tab makes about the cluster,
+  # applied here: a grant naming a person survives their departure, one naming a group is
+  # revoked when the directory removes them from it.
+  #
+  # ON by default since chart 0.14.0. The switch grants nothing on its own: a bearer token reaches
+  # `/api` only after the proxy's SubjectAccessReview confirms its holder already has the
+  # cluster-wide read named in delegateUrls. What it buys is scripts and reporting tooling using a
+  # ServiceAccount token instead of a browser cookie. Set false for cookie sessions only.
+  apiTokenAccess:
+    enabled: true
+    delegateUrls: '{"/api":{"resource":"clusterrolebindings","group":"rbac.authorization.k8s.io","verb":"list"}}'
+
+  # The interstitial page that offers exactly one login choice.
+  #
+  # true skips it and redirects straight to the cluster's OAuth server. That is one fewer
+  # click, but when anything goes wrong mid-flow the first thing a user sees is the proxy's
+  # own error page — headed "403 Permission Denied", which reads as "you are not allowed
+  # in" rather than "your session expired, sign in again". Observed on this deployment:
+  # a rollout landed between the redirect and the callback, the CSRF cookie no longer
+  # matched, and the 403 page was indistinguishable from a permissions failure.
+  #
+  # false shows an explicit Log In button instead. One extra click, and the unauthenticated
+  # state is a page that says sign in.
+  #
+  # Stays false under the 0.14.0 on-by-default rule by operator decision (2026-09-05): people
+  # should log in from the OpenShift login screen, and the explicit button is the state that
+  # gives them that screen and the friendlier failure page. This is a product choice, not a
+  # feature switch, so the rule does not move it.
+  skipProviderButton: false
+  # Stays false under the 0.14.0 on-by-default rule, as a confidentiality cost found in review:
+  # oauth-proxy's request logger writes the complete request URI, query string included, and
+  # excludes nothing (logging_handler.go formats url.RequestURI()), so the OAuth callback's
+  # `?code=…&state=…` and any credential an API client puts in a query parameter land in the pod
+  # log. Authorization and Cookie headers are not printed. Turn it on only where the log pipeline
+  # redacts query strings; the lines then show whether a 403 came from the proxy or the dashboard.
+  requestLogging: false
+
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 256Mi}
+
+  # There is deliberately NO `redirectMode` setting; the redirect form FOLLOWS what exposes
+  # the dashboard, because only one form is correct for each and a separate knob could only
+  # pick the wrong one:
+  #
+  #   route.enabled   -> a redirectREFERENCE naming the chart's own Route, resolved by
+  #                      OpenShift at login time against the host the Route reports. No host
+  #                      is needed at template time.
+  #   otherwise       -> a literal redirectURI. The reference form points at a Route by NAME,
+  #                      and the ingress-to-route controller generates that name with a random
+  #                      suffix (observed: probe-ingress-7669p), so it cannot be known at
+  #                      template time. Hence ingress.host must be set or derivable — see the
+  #                      gsd.externalHost helper.
+  #
+  # A `redirectMode: redirectreference` key used to sit here. It was read by nothing, and
+  # its default named the one mode the chart could not use at the time — so it documented the
+  # opposite of the behaviour, in a place an operator would reasonably believe.
+
+# ---------------------------------------------------------------------------
+# Per-user visibility
+# ---------------------------------------------------------------------------
+# WHO SEES WHAT, once the proxy has admitted a reader. ON by default, because it fixes an
+# exposure rather than adding a feature: the dashboard reads the cluster with its own
+# ServiceAccount, so with restrictions off EVERY authenticated reader sees the full RBAC
+# binding surface, every group's membership and every person's login failures — data a
+# plain user cannot read with `oc` (measured: eight `oc auth can-i list` checks, all no).
+#
+# With restrictions on, a reader sees only what belongs to them — their profile, their
+# groups, their grants, their own login attempts — unless a SubjectAccessReview, asked by
+# the app as its own ServiceAccount and naming the reader AND their groups, allows the
+# check in `adminSar` below. An INDETERMINATE answer (SAR error, timeout) always yields
+# the narrow view, never the wide one. Requires oauthProxy.enabled — with the proxy off
+# there is no trusted identity to scope to, and the chart refuses to render rather than
+# ship a control that cannot work.
+#
+# A REVOKED administrator keeps the wide view for at most the tier cache TTL (60s) plus
+# one in-flight page; a newly granted one waits the same. The SAR itself evaluates live
+# RBAC — only the cached verdict and the group list age.
+visibility:
+  # true -> the env var GSD_ENABLE_VIEW_RESTRICTIONS on the Deployment. The spelling is
+  # load-bearing: the app reads exactly that name, defaults to restricted, and never sees a
+  # misspelling — so a typo cannot silently disable the control.
+  #
+  # false restores today's everyone-sees-everything view. Make that a deliberate, recorded
+  # choice: it re-opens the exposure above for every authenticated account.
+  enabled: true
+
+  # How long a DECIDED tier is cached, per viewer, in whole seconds. Serves both thresholds
+  # below; each keeps its own cache, so this is the lifetime of an entry, not a shared budget.
+  #
+  # This is the one number here whose wrong value is a security consequence rather than a
+  # broken render, so both directions are stated:
+  #
+  #   LARGER   a reader removed from an admin group keeps the wide view for up to this long.
+  #            That is the fail-open direction, and it is why the default is a minute rather
+  #            than an hour. Verified live by granting cluster-reader and revoking it: the
+  #            wide view arrived, and was gone again, each within one interval.
+  #   SMALLER  a SubjectAccessReview plus a group read per reader per request. Measured at
+  #            97ms for the 65-group reference cluster. 0 disables caching entirely.
+  #
+  # An ERROR is never cached — only a decided answer is — so this does not extend an API-server
+  # outage, and an indeterminate tier is always the narrow view.
+  #
+  # A fractional or negative value FAILS THE RENDER. The app would cast it with int() and fall
+  # back to 60 with only a log line, leaving this file describing a cache that is not running.
+  tierTtlSeconds: 60
+
+  # THE ADMINISTRATOR THRESHOLD — the SubjectAccessReview a reader must pass to see
+  # everything. Expressed as the check itself rather than a list of role names, because a
+  # name list would miss cluster-reader and every custom role that grants the same read.
+  #
+  # Measured on the reference cluster, per role bound CLUSTER-WIDE:
+  #
+  #   check                                              admits
+  #   list clusterrolebindings.rbac...k8s.io (default)   cluster-admin, cluster-reader
+  #   list groups.user.openshift.io                      the same two among stock roles — but
+  #                                                      ALSO any custom role granting only
+  #                                                      directory read. See below.
+  #   list rolebindings.rbac.authorization.k8s.io        those two PLUS cluster-wide `admin`
+  #   anything your own ClusterRole grants               whoever holds that role
+  #
+  # `edit` and `view` pass NO cluster-scoped list at all — bound cluster-wide they are
+  # indistinguishable from a plain user here — and `cluster-edit`/`cluster-view` do not
+  # exist as roles. If people holding edit/view must see everything, bind them a role that
+  # grants the check above, or set enabled: false.
+  #
+  # THE DEFAULT CHANGED IN 0.4.0, from `list groups.user.openshift.io` to cluster-wide RBAC read.
+  # The old value was the threshold this file ALREADY documents as "WRONG — a privilege escalation,
+  # proven on the reference cluster" under oauthProxy.apiTokenAccess, where an account holding only
+  # `list groups` was handed 229 bindings including a cluster-admin CRB. The bearer path's floor was
+  # raised for that reason; the browser path's was not, although the code claimed it had been.
+  #
+  # UPGRADING CHANGES NOTHING FOR STOCK ROLES. Measured per persona, with their real group
+  # memberships, both thresholds side by side:
+  #
+  #   kubeadmin  (cluster-admin)   list groups=true   list clusterrolebindings=true
+  #   dana.lee   (cluster-reader)  list groups=true   list clusterrolebindings=true
+  #   an ordinary reader           list groups=false  list clusterrolebindings=false
+  #
+  # No read check separates cluster-admin from cluster-reader, so both keep the wide tier. What
+  # changes is the cluster this default was wrong for: one whose custom or aggregated role grants
+  # directory read without RBAC read. Set the old values explicitly if you need them back.
+  adminSar:
+    # "" means the core API group. No version suffix.
+    apiGroup: rbac.authorization.k8s.io
+    # Lowercase plural; resource/subresource (e.g. pods/log) is accepted.
+    resource: clusterrolebindings
+    verb: list
+    # Empty means a cluster-scoped check — the normal case. Set a namespace only for a
+    # threshold that is deliberately namespaced, e.g. get pods/log in
+    # openshift-authentication, which cluster-wide admin/edit/view also pass.
+    namespace: ""
+
+  # THE USAGE TAB'S SECOND, STRICTER THRESHOLD — a SubjectAccessReview asked INDEPENDENTLY of
+  # adminSar above, for the Usage tab alone. Everything else the wide tier serves can be
+  # reproduced with `oc` by anyone holding the roles that pass adminSar (groups, bindings,
+  # even the oauth-server logs behind Logins — cluster-reader holds get on pods/log). The
+  # Usage tab cannot: it is who-opened-this-dashboard data, living only in the dashboard's own
+  # SQLite. So it must not fall to the wide tier that cluster-reader — the deliberate AUDITOR
+  # persona — also passes.
+  #
+  # Measured on the reference cluster, per role bound cluster-wide:
+  #
+  #   check                                              cluster-admin  cluster-reader  separates?
+  #   list clusterrolebindings (adminSar default)         yes            yes             no
+  #   list/read anything                                 yes            yes             no
+  #   update clusterrolebindings (this default)          yes            NO              YES
+  #   get secrets                                        yes            NO              YES
+  #
+  # No READ check can separate them, because cluster-reader is by construction "may read
+  # everything". Only a write verb (or get secrets) does. `update clusterrolebindings` is
+  # chosen over `get secrets` because it means "this person administers who has access", the
+  # question actually being asked, and because secret-read is granted to non-admins in plenty
+  # of organisations. THE DASHBOARD STILL NEVER WRITES: a SubjectAccessReview only ASKS whether
+  # a subject could perform a verb; the app holds no write grant and this does not add one.
+  #
+  # If you want the Usage tab wide for everyone (the pre-existing behaviour), that is the blunt
+  # override config.userActivity.visibility: all — it wins over this check. Same nil-safe and
+  # exact-lowercase render guards as adminSar: a miscased field fails the render rather than
+  # silently demoting every administrator.
+  usageAdminSar:
+    apiGroup: rbac.authorization.k8s.io
+    resource: clusterrolebindings
+    verb: update
+    namespace: ""
+
+  # THE CLUSTER-ADMIN TIER (#322; the operator's decision of 2026-09-23) — ONE SubjectAccessReview,
+  # asked on this cluster, for the surfaces that are for cluster administrators only:
+  #
+  #   the Cluster Configurations tab — its existence, GET /api/clusterconfigs, and the write routes
+  #     (Create / Rotate / Delete / Test), which clusterConfig.secrets.writes.enabled still switches
+  #   the KPI page — GET /api/kpi
+  #   Rejoin (#316) — and, asked of the REMOTE with the person's own login, the same question decides whether a
+  #     Rejoin may read the token Secret there (SPEC_D4, D8)
+  #
+  # THE TOP TIER: a reader who passes it is granted every tier this cluster decides — the wide view
+  # here and on `inherit` clusters, and Usage — whatever adminSar and usageAdminSar answer for them,
+  # and with visibility.enabled off too. One way only: passing adminSar or usageAdminSar never
+  # implies this one, so those stay separate and can be loosened without handing anyone this tab.
+  # Per-cluster policies still apply: a `remote-sar` cluster asks its own API about the person, a
+  # `self-only` cluster stays self, a `hidden` cluster stays hidden.
+  #
+  # WHY THIS CHECK, measured on CRC: `list clusterrolebindings` (adminSar) admits cluster-reader, so
+  # the auditor saw the KPI page; `create secrets` in this namespace (the two-level tier this
+  # replaces, chart 0.42.1 to 0.56.0) kept the auditor out but admitted anyone holding `admin` or
+  # `edit` on that one namespace, who is not a cluster administrator. `update clusterrolebindings`
+  # — the question usageAdminSar already asks — a cluster-reader fails and a cluster-admin passes.
+  # Its own setting, not usageAdminSar's, so one moves without the other. Same exact-lowercase
+  # render guards as adminSar. THE DASHBOARD STILL NEVER WRITES: a SubjectAccessReview only asks.
+  #
+  # ASKED WHATEVER visibility.enabled SAYS, like the tier it replaces: turning the cluster-data
+  # restrictions off must not hand KPI or the fleet's wiring to every proxy-admitted reader. So with
+  # visibility.enabled: false the auth-delegator grant still renders and the review is still made;
+  # without that grant the two surfaces refuse everyone. An empty namespace is a cluster-scoped
+  # check, like adminSar's.
+  #
+  # `visibility.clusterConfigViewSar` and `visibility.clusterConfigManageSar` are REMOVED (chart
+  # 0.57.0): a values file that still sets either fails the render with a message naming this key.
+  clusterAdminSar:
+    apiGroup: rbac.authorization.k8s.io
+    resource: clusterrolebindings
+    verb: update
+    namespace: ""
+
+# ---------------------------------------------------------------------------
+# Reporting auditors (docs/DESIGN_reporting_auditors_and_ns_selector.md §2)
+# ---------------------------------------------------------------------------
+# Put a chosen group over the report gate without making anyone a cluster admin. Members can review
+# users, groups and bindings in OpenShift directly AND run reports in the dashboard — read-only, no
+# workload access, no Usage tab. ON by default (the chart's on-by-default rule): the chart binds the
+# named auditor group below (createLocal:false — bind-only) to a read-only audit ClusterRole. The
+# binding is INERT on a cluster where that group does not exist, so the default is safe; the objects
+# are a ClusterRole and a name-based ClusterRoleBinding, never a Group. Set `enabled: false` in an
+# environment values file to render nothing (an environment disables explicitly, never the reverse —
+# a values file that forgets it must keep the auditor gate, not silently drop it).
+rbacAuditors:
+  enabled: true
+  # The ClusterRole to bind. Default: the chart renders its own least-privilege read-only audit role
+  # (§2.1). Set `existingClusterRole` to bind one you made elsewhere (e.g. via the namespace-config
+  # operator) instead — the chart then renders no Role and only the Binding.
+  createClusterRole: true
+  existingClusterRole: ""          # non-empty => bind this instead of the chart-rendered role
+  # The groups to grant it. Each is bound by NAME, so a synced group and a local group work the same.
+  # The default names the estate's auditor group with createLocal:false — an LDAP sync (or the
+  # namespace-config operator) owns the Group; this chart only binds it. Keep createLocal:false for any
+  # group a directory syncs: a local Group of a synced name collides and can wedge the whole sync
+  # (docs/TROUBLESHOOTING_auditor_groups.md). Turn the whole feature off with `enabled: false` above.
+  groups:
+    - name: app-ocp-rbac-groupsync-ns-auditor
+      # createLocal omitted => false: an LDAP sync (or the namespace-config operator) owns the Group and
+      # this chart only binds it. Set createLocal: true ONLY for a group name no sync filter matches — a
+      # local group of a synced name collides and can wedge the sync (docs/TROUBLESHOOTING_auditor_groups.md).
+
+# ---------------------------------------------------------------------------
+# Monitoring
+# ---------------------------------------------------------------------------
+# The KPI page (#156, #157): the administrator-tier page that renders the KPI module — both pods'
+# self-reported system usage, the access-posture band, the in-app trends, the clusters table and
+# the doors out to a metrics stack. Every threshold is configuration, not a magic number, and the
+# tile states the rule that produced its colour ("amber: memory > 80 % of limit"); the amber mark is
+# drawn on the meter's track so position reads without colour.
+kpi:
+  thresholds:
+    # Percentages of the cgroup limit (memory, CPU) and of the volume's filesystem (disk).
+    memoryPercent: 80
+    cpuPercent: 80
+    # Share of scheduler periods in which the pod was throttled. Throttling is the saturation
+    # signal, not CPU %: the reference dashboard measured 1.10 % while CPU read as headroom.
+    throttledPercent: 1
+    diskPercent: 80
+
+# The doors out of the KPI page. OpenShift removed its bundled Grafana in 4.11, so Grafana is
+# operator-owned — the openshift-grafana chart in this repository, or a platform team's. Both URLs
+# empty (the default) mean DISCOVERED by the poll thread with the pod's own identity:
+#   - `grafana.url`: the one Route carrying `grafana.discovery.selector` in the pod's own namespace
+#     (the openshift-grafana chart labels its Route with its name), read through a Role in that
+#     namespace the chart renders while the selector is non-empty; `dashboardUid` is the shipped
+#     board's uid, so the door opens the board itself with 30 days pre-filled;
+#   - `console.url`: the console's public URL from openshift-config-managed/console-public, which
+#     every authenticated identity may read on OpenShift.
+# Set a URL to override discovery (a Grafana in another namespace, a console the cluster does not
+# publish); set the selector empty to switch Grafana discovery — and its Role — off. A door with
+# neither a URL nor a discovery renders prose, never a dead button.
+grafana:
+  url: ""
+  dashboardUid: gsd-group-sync-dashboard
+  discovery:
+    selector: app.kubernetes.io/name=openshift-grafana
+console:
+  url: ""
+
+# Both ON (operator decision 2026-09-19, chart 0.36.0): user-workload monitoring is on on the
+# enterprise clusters this chart is for, so the ServiceMonitor is scraped and the rules evaluated
+# from the first install, and the KPI page's Grafana board has series to draw. They were off from
+# 0.14.0 while the reference cluster ran no Prometheus; the render with both on was verified then
+# and every release since. OpenShift ships the Prometheus Operator CRDs; on a bare Kubernetes
+# without them, set both false — applying either fails the install outright.
+monitoring:
+  serviceMonitor:
+    enabled: true
+    # 30s: every series is recomputed from SQLite on scrape and each scrape takes the
+    # store's lock. Faster buys no resolution — the data only changes once per poll.
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+
+  prometheusRule:
+    enabled: true
+    labels: {}
+    # Thresholds live here rather than inside the exporter, so they can be seen and tuned.
+    # The metric is a unix timestamp, so the rule expresses staleness against real time.
+    overdueSeconds: 7200      # GroupSync has not synced for this long
+    # The dashboard itself has stopped polling. MUST stay above ~2x config.pollIntervalSeconds:
+    # the normal gap between polls is one interval, so a threshold below it makes this alert
+    # fire continuously, forever, on a perfectly healthy deployment. That is not theoretical
+    # — it is what 600 would have done the moment the interval went to 900.
+    notPollingSeconds: 600
+    # MiB. 25% of the default 1Gi PVC — high enough that normal churn never fires it, low
+    # enough to leave room to act before the volume fills. Raise it with persistence.size.
+    walMiB: 256
+    # Seconds without a successful oauth-log read before login capture counts as stalled.
+    # Capture rides the poll thread, so this MUST stay well above config.pollIntervalSeconds
+    # for the same reason notPollingSeconds must — below it, a healthy deployment alerts
+    # forever. 1800 covers a 900s interval with one missed cycle of slack.
+    captureStalledSeconds: 1800
+    # Seconds since the newest backup file before the copy counts as stale. Two intervals
+    # (config.backupIntervalHours, default 6h): one missed backup is a blip, two is a
+    # broken mechanism — and this is the only protection for the data that cannot be
+    # re-fetched from the cluster.
+    backupStaleSeconds: 43200
+    # Seconds since the off-volume CronJob last SUCCEEDED (kube_cronjob_status_last_successful_time
+    # from kube-state-metrics) before the copy counts as stale. Two slots of the default
+    # backup.offsite.schedule (every six hours). Rendered only with backup.offsite.enabled.
+    offsiteBackupStaleSeconds: 43200
+    for:
+      overdue: 10m
+      dangling: 15m
+      notPolling: 5m
+      unreachable: 15m
+      # Sustained, not a blip: one failed SubjectAccessReview round-trip self-heals on the
+      # next request, and every failure already serves the (safe) self view. Fifteen
+      # minutes of failures is every reader silently narrowed — that pages.
+      visibilityFailing: 15m
+      captureStalled: 15m
+      # The staleness threshold above is already two backup intervals, so the for: only
+      # needs to outlast a scrape gap.
+      backupStale: 30m
+      offsiteBackupStale: 30m
+      # The series exists only after the FIRST success, so absence means "never succeeded" or
+      # "kube-state-metrics is not in this Prometheus". Both are worth a warning; neither pages.
+      offsiteBackupUnobserved: 1h
+      # The KPI module's three (#156): thresholds are kpi.thresholds.* — the same numbers the KPI
+      # page draws as its amber marks, so the rule and the tile cannot disagree. Sustained, not a
+      # burst: throttling for a whole poll cycle or two is mis-sizing, one busy minute is not.
+      podThrottled: 15m
+      podMemoryHigh: 15m
+      volumeDiskFull: 30m
+      # Long, because a checkpoint legitimately lags behind a burst of reads. Only sustained
+      # growth is the starvation case.
+      walGrowing: 30m
+      # WAL mode is decided once at startup and never changes, so this only needs long
+      # enough to outlast a rollout.
+      walDisabled: 10m
+      # A config CR's reconcile is retried by its operator; a couple of minutes of failing
+      # is a blip, sustained failure is stopped RBAC reconciliation.
+      configError: 10m
+      # A cliff is a completed event, not a transient: the window is a day, so fifteen
+      # minutes only has to outlast a scrape gap.
+      groupCountCliff: 15m
+      reportPull: 30m       # GroupSyncDashboardReportUsagePullFailing: no successful pull for this long
+      reportSnapshot: 30m   # GroupSyncDashboardReportSnapshotStale: the newest VACUUM INTO copy is older than this
+      # GroupSyncDashboardReportScheduleLate: the status page's `late` already waits 30 minutes past the
+      # expected fire. A report pod restart (Recreate) leaves a gap in the series and this timer starts again.
+      reportScheduleLate: 15m
+      # Long: this is a migration backlog, not an incident. It should be visible and
+      # tracked, never paging anyone at 3am.
+      directUserGrants: 1h
+
+  # A Grafana dashboard over every family /metrics exports, delivered as a ConfigMap with the
+  # `grafana_dashboard: "1"` label the Grafana sidecar watches (kube-prometheus-stack, the
+  # community OpenShift Grafana deployments, grafana-operator v5 in sidecar mode). A core
+  # resource: it needs no CRD and cannot fail an install, unlike the two objects above.
+  #
+  # DEFAULT: "" — FOLLOW monitoring.serviceMonitor.enabled. The board is only useful once the
+  # scrape exists, and one switch should turn monitoring on. Set true to ship it with the
+  # ServiceMonitor off (a hand-written scrape_config), false to withhold it with the
+  # ServiceMonitor on (no Grafana). Anything other than true / false / "" refuses to render.
+  #
+  # Thresholds in the panels equal the prometheusRule defaults above (600, 7200, 256 MiB,
+  # 1800, 43200) and a test holds them together. The board is editable in Grafana; the JSON
+  # is deliberately not templated, so it renders byte-identical to
+  # dashboards/group-sync-dashboard.json.
+  #
+  # A GrafanaDashboard CR pointing grafana-operator v5 at this ConfigMap renders on request
+  # (cr.enabled below, #161) and stays off by default: the CR needs its CRD before the release
+  # renders, and its instanceSelector and datasource uid are the consumer's to name — both are
+  # refused empty at render time.
+  grafanaDashboard:
+    enabled: ""
+    # Extra metadata labels, e.g. a sidecar configured with a non-default label.
+    labels: {}
+    # Extra annotations. `folder` below is the common one and has its own key.
+    annotations: {}
+    # Grafana folder, written as the `grafana_folder` annotation the sidecar's
+    # folderAnnotation setting reads. Empty writes no annotation.
+    folder: ""
+    # The GrafanaDashboard CR for grafana-operator v5 (#161), ON by default and rendered only when
+    # the cluster serves grafana.integreatly.org/v1beta1 (Helm's .Capabilities.APIVersions — the live
+    # API on install and upgrade, `--api-versions` under helm template, the cluster's list under Argo
+    # CD): a cluster without the operator installs cleanly and picks the CR up on the first upgrade
+    # after the openshift-grafana chart (or a platform team's operator) lands. The CR points the
+    # operator at the ConfigMap above and binds the board's DS_PROMETHEUS input to a datasource:
+    # the operator substitutes `datasource` for every `${DS_PROMETHEUS}` in the JSON, verbatim, into
+    # the panels' `uid` fields — so give it the datasource's UID (the openshift-grafana chart's is
+    # `openshift-thanos`). Measured on CRC: substituting the NAME rendered in the browser (which falls
+    # back to a name lookup) but Grafana's query API answered "Data source not found". Without the
+    # binding the board's datasource variable starts empty and Grafana picks its first Prometheus,
+    # silently the wrong one when there are two. `instanceSelector` selects the Grafana CR; the
+    # openshift-grafana chart labels its instance app.kubernetes.io/instance: <its release name>.
+    cr:
+      enabled: true
+      instanceSelector:
+        app.kubernetes.io/instance: grafana
+      datasource: openshift-thanos
+      # The GrafanaDashboard must live in the ConfigMap's namespace; this lets it match a Grafana
+      # instance in another one.
+      allowCrossNamespaceImport: true
+      # How often the operator re-applies the board: a Grafana without persistence loses it on a pod
+      # restart until the next resync (measured on CRC — ten minutes of "No data" at the default).
+      resyncPeriod: 2m

@@ -1,0 +1,111 @@
+# The Route — the default way the dashboard is exposed (route.enabled, on by default). The
+# Ingress next door is the alternative for plain Kubernetes, and it is off by default for one
+# reason the Route does not share:
+#
+# THE INGRESS NEEDS A HOST AT TEMPLATE TIME; THE ROUTE DOES NOT. A hostless Ingress produces no
+# Route at all on OpenShift, so ingress.yaml must emit a host, and when none is configured it
+# reads the cluster's apps domain with `lookup`. That is fine for `helm install`, which has a
+# cluster. It is impossible under ArgoCD, Flux, or any GitOps tool: they render with
+# `helm template` and NO cluster connection, so the lookup returns nothing and the chart
+# refuses to render. A Route needs none of that, because host generation is the CLUSTER's
+# job — the router names it after the fact and reports the name in status.
+#
+# NAMED LIKE THE SERVICE. Both are <fullname>, which is the release name whenever the release
+# is called after the chart — so on the reference cluster Service, Route and release are all
+# `group-sync-dashboard`, and the ServiceAccount's redirect reference below can name the Route
+# exactly.
+#
+# spec.subdomain, NOT an empty spec.host. Both let the cluster choose, but they choose
+# differently, and one of them appends the namespace and fights ArgoCD. Measured on
+# OpenShift 4.18.2:
+#
+#     spec:                          -> spec.host filled in by the API server on create:
+#       (no host, no subdomain)         <name>-<namespace>.<apps domain>
+#                                       Namespace appended — the doubled name the operator
+#                                       does not want — and a field in the live object that
+#                                       git does not carry, so ArgoCD reports the Route
+#                                       OutOfSync until someone adds an ignoreDifferences for
+#                                       /spec/host (argo-cd issue #20305 is exactly this
+#                                       report).
+#
+#     spec:                          -> spec.host stays EMPTY, on create AND on re-apply.
+#       subdomain: <fullname>           The router composes <fullname>.<apps domain> and
+#                                       writes it to status.ingress[].host only. Nothing in
+#                                       spec differs from git.
+#
+# So the subdomain form is the one with the short name and no drift, and it yields the SAME
+# hostname the Ingress path derived — group-sync-dashboard.apps-crc.testing on CRC — so the
+# upgrade from the Ingress default does not move the URL. Two caveats from the Route API, both
+# survivable: an ingress controller "may choose to ignore this suggested name" and report what
+# it assigned instead, and a server that does not support subdomain (before OpenShift 4.11)
+# populates spec.host itself, which works but brings the drift above back. Login works in
+# every case, because the redirect REFERENCE (see serviceaccount.yaml) is resolved against
+# whatever host the Route's status reports, never against a name this chart computed.
+#
+# A HOST SET DELIBERATELY IS USED AS GIVEN. route.host — or an ingress.host carried over from
+# an older values file — becomes spec.host, subdomain is not emitted, and the router admits it
+# provided it is valid and unclaimed. See gsd.routeHost.
+#
+# The trade the subdomain form keeps from the Ingress path: two releases in DIFFERENT
+# namespaces request the same subdomain, and the second is refused with HostAlreadyClaimed.
+# That refusal lives in the Route's status (Admitted=False); Helm still reports success, so it
+# is legible but not loud. Fixed by setting route.host on one of them.
+#
+# UPGRADING FROM THE INGRESS (chart <= 0.7.1) DOES NOT TRIP THAT REFUSAL. Helm creates this
+# Route before it deletes the Ingress, so for a moment two Routes claim one host in one
+# namespace — but the controller-generated Route carries path "/" and this one carries none,
+# and the router's uniqueness check is per host AND path (openshift/router
+# unique_host.go compares Spec.Path), so both are admitted and the old one simply goes with
+# its Ingress. Measured on CRC 4.18.2: same hostname before and after, no refusal recorded.
+#
+# NO argocd sync-options annotation here, unlike the Ingress. That one carries
+# ServerSideApply=true because the ingress-to-route controller writes status.loadBalancer into
+# it. A Route's status is written by the router too, but nothing in this Route's SPEC is ever
+# server-populated when subdomain is honoured, so there is no field-ownership question for SSA
+# to settle and no reason to change how Argo applies it. The Application still wants an
+# ignoreDifferences entry for /status; the chart README carries it.
+#
+# TLS is a real field here rather than a route.openshift.io annotation, and it follows the
+# same rule as the Ingress: reencrypt whenever the proxy is on, because the proxy terminates
+# TLS itself with the service-ca certificate. See gsd.termination.
+#
+# END-TO-END, MEASURED on CRC 4.18.2 (2026-09-03), with a release applied from plain
+# `helm template` output — no cluster lookup, which is exactly ArgoCD's render:
+#   - the Route was admitted with spec.host empty and status.ingress[0].host =
+#     <fullname>.apps-crc.testing;
+#   - GET /oauth/start on that host answered 302 to the OAuth server with
+#     client_id=system:serviceaccount:<ns>:<fullname> and redirect_uri=https://<that host>/oauth/callback;
+#   - the OAuth server answered that authorize request 200 with its login page, i.e. it resolved
+#     the redirect reference against the router-assigned host and accepted the callback;
+#   - the same request with a foreign redirect_uri was refused 400 invalid_request — so the
+#     acceptance above was the reference doing its job, not a permissive server.
+{{- if eq (include "gsd.exposure" .) "Route" }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "gsd.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "gsd.labels" . | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with (include "gsd.routeHost" .) }}
+  host: {{ . }}
+  {{- else }}
+  # The cluster names it <fullname>.<apps domain>; see the header for why this and not host.
+  subdomain: {{ include "gsd.fullname" . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "gsd.fullname" . }}
+  port:
+    # The Service's named port. It is `http` in both proxy modes — only its targetPort moves to
+    # the proxy — which is also what the ingress-to-route controller generated from the Ingress.
+    targetPort: http
+  tls:
+    termination: {{ include "gsd.termination" (dict "root" . "configured" .Values.route.termination) }}
+    {{- with .Values.route.insecureEdgeTerminationPolicy }}
+    insecureEdgeTerminationPolicy: {{ . }}
+    {{- end }}
+{{- end }}

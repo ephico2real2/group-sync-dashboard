@@ -1,0 +1,45 @@
+# Template for a real cluster. Copy to environments/<cluster>.yaml and edit.
+#
+#   helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
+#     -n group-sync-dashboard -f environments/<cluster>.yaml
+
+# Usually omit this. The default Route is named by the router as
+# group-sync-dashboard.apps.<cluster>.<domain> — no lookup, so it works under ArgoCD and any
+# other GitOps tool, which render with no cluster connection. Set host ONLY to pin the name,
+# e.g. for a second release in another namespace, which would otherwise be refused with
+# HostAlreadyClaimed.
+# route:
+#   host: group-sync-dashboard.apps.prod.example.com
+#
+# Plain Kubernetes has no Routes: turn the Route off, the Ingress on, and give it the host —
+# an Ingress needs it at render time.
+# route:
+#   enabled: false
+# ingress:
+#   enabled: true
+#   host: group-sync-dashboard.apps.prod.example.com
+
+oauthProxy:
+  enabled: true
+  # Bearer tokens on /api. On since chart 0.14.0: the proxy's SubjectAccessReview demands
+  # cluster-wide RBAC read, the honest floor for what /api reports, so the switch grants nothing
+  # to a token whose holder lacks it — see docs/api-access.md. false means cookie sessions only.
+  apiTokenAccess:
+    enabled: true
+  # Restrict who may open the UI at all. Worth setting: UI access is equivalent to
+  # cluster-wide RBAC read, because the dashboard reports the whole binding surface.
+  # sar: '{"resource":"clusterrolebindings","resourceAPIGroup":"rbac.authorization.k8s.io","verb":"list"}'
+
+# Timezone for log lines and the rendered UI. Stored and served times stay UTC regardless.
+timezone: "America/New_York"
+
+# The dashboard's only write to a cluster. off | log | annotate — see
+# docs/unmanaged-audit-design.md before enabling annotate; Kubernetes caps it.
+config:
+  unmanagedAudit:
+    mode: "off"
+
+# On by default: the Argo sync-option annotations are inert outside Argo and protect the PVC
+# and the injected CA bundle inside it. Stated here so the intent is in git.
+argocd:
+  enabled: true

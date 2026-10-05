@@ -1,0 +1,653 @@
+{{- if and (gt (int .Values.replicaCount) 1) .Values.leaderElection.enabled }}
+{{- fail "replicaCount > 1 requires leaderElection.enabled=false. Above one replica each pod keeps its OWN database (/data/$POD_NAME/gsd.db), so every pod must poll for itself. With election on, the pods that lose the lease stop polling but KEEP SERVING reads from their own database, which then goes stale and never recovers — worse than no election at all. Set leaderElection.enabled=false, or return to replicaCount: 1." }}
+{{- end }}
+{{- if and (gt (int .Values.replicaCount) 1) .Values.persistence.enabled (ne (include "gsd.accessMode" .) "ReadWriteMany") }}
+{{- fail "replicaCount > 1 requires a ReadWriteMany volume. Leave persistence.accessMode empty to derive it, or set it explicitly. ReadWriteOnce binds to one NODE and ReadWriteOncePod to one POD, so under either the extra replicas stay Pending forever with no error on the Deployment itself." }}
+{{- end }}
+{{- /*
+ONE guard for RollingUpdate, not two. A second guard keyed on accessMode=ReadWriteOncePod
+was strictly worse than useless: every unsafe combination it caught is caught here too (at
+one replica this fires for EVERY access mode; above one replica the guard above already
+demands ReadWriteMany), while the only cases it uniquely caught were SAFE — persistence
+disabled, where each pod gets its own emptyDir and an overlapping rollout cannot collide.
+It refused those renders with a message about a volume that did not exist.
+*/}}
+{{- if and (eq (int .Values.replicaCount) 1) .Values.persistence.enabled (eq (toString .Values.strategy) "RollingUpdate") }}
+{{- fail "strategy=RollingUpdate is unsafe at replicaCount 1 with persistence enabled, whatever the access mode. RollingUpdate starts the incoming pod BEFORE terminating the outgoing one, and at one replica both use /data/gsd.db — two processes on one SQLite file, which corrupts rather than errors because WAL coordinates through an mmap'd -shm file that assumes a single host. The guard above catches only ReadWriteOncePod, where the scheduler refuses the second pod anyway; the DEFAULT ReadWriteMany happily mounts twice and was therefore the dangerous case, not the protected one. Use Recreate, or leave strategy empty to derive it. Above one replica RollingUpdate is correct and stays allowed, because each pod owns /data/$POD_NAME/gsd.db." }}
+{{- end }}
+{{- if and (eq (include "gsd.idleTimeoutEnabled" .) "true") (not .Values.oauthProxy.enabled) }}
+{{- fail "session.idleTimeout.enabled=true requires oauthProxy.enabled=true. The idle timeout ends a proxy session by sending the browser to the proxy's sign_out; with no proxy there is no session to end and the countdown would be theatre." }}
+{{- end }}
+{{- if and (eq (include "gsd.idleTimeoutEnabled" .) "true") .Values.oauthProxy.enabled }}
+{{- $idle := mul (include "gsd.idleTimeoutMinutes" . | int) 60 }}
+{{- $cap := include "gsd.durationSeconds" (include "gsd.cookieExpire" .) }}
+{{- if and (ne $cap "-1") (ge $idle (int $cap)) }}
+{{- fail (printf "session.idleTimeout.minutes (%d minutes) is not shorter than oauthProxy.cookie.expire (%s = %s seconds), so the idle timeout could never fire: the absolute cap ends every session first. Lower the minutes or raise the cap." (include "gsd.idleTimeoutMinutes" . | int) (include "gsd.cookieExpire" .) $cap) }}
+{{- end }}
+{{- end }}
+{{- if and (eq (include "gsd.visibilityEnabled" .) "true") (not .Values.oauthProxy.enabled) }}
+{{- fail "visibility.enabled=true requires oauthProxy.enabled=true. The per-user tiers scope data to X-Forwarded-User, which is trustworthy only when the oauth-proxy sets it; with the proxy off the header is whatever the caller typed, so the control cannot work. Turn the proxy on, or set visibility.enabled=false to accept — deliberately and on the record — that every reader of an unauthenticated route sees everything." }}
+{{- end }}
+{{- include "gsd.reportingGuards" . }}
+{{- /*
+Recovery mode (#303) is its own workload (#532): this file renders two Deployments from one pod
+spec, the app's and `<fullname>-recovery`, on every release. recovery.enabled sets only their
+replicas (the app's to 0, the recovery one's to 1), so both report Healthy and the switch is
+undone by the next rollout whatever the deployment tool prunes. Refused where it cannot be safe:
+a second recovery pod would be a second shell on the same file (or a Pending pod), and an emptyDir
+has nothing to restore onto and is wiped when the pod goes. The TTL is the bound on a forgotten
+recovery pod, so a value that is not a positive duration is refused here rather than by the
+script after the pod has started.
+*/}}
+{{- $recoveryOn := eq (include "gsd.recoveryEnabled" .) "true" }}
+{{- /* The offsite claim, read-only, so #302's restore can list the offsite copies: the same switch
+and the same claim the CronJob renders with (backup-offsite.yaml). */}}
+{{- $offsiteClaim := "" }}
+{{- if and (eq (include "gsd.offsiteOn" .) "true") (eq .Values.backup.offsite.destination.type "pvc") }}
+{{- $offsiteClaim = .Values.backup.offsite.destination.pvc.existingClaim | default (printf "%s-backup-offsite" (include "gsd.fullname" .)) }}
+{{- end }}
+{{- if $recoveryOn }}
+{{- /* Compared as text, not through `int`: `int true` is 1, and `replicaCount: true` rendered `replicas: true`
+(review of the spec, Codex F3). A YAML 1 reaches here as an int or a float64, and both print "1". */}}
+{{- if ne (toString .Values.replicaCount) "1" }}
+{{- fail (printf "recovery.enabled=true requires replicaCount: 1 (it is %v). Recovery mode is ONE pod holding the data volume with the writer stopped: at 0 there is no pod to restore from, and a second recovery pod is a second shell that can write the same file on a ReadWriteMany volume, or a pod that stays Pending on ReadWriteOnce and ReadWriteOncePod." .Values.replicaCount) }}
+{{- end }}
+{{- if not .Values.persistence.enabled }}
+{{- fail "recovery.enabled=true requires persistence.enabled=true. With an emptyDir there is no database to restore onto, and anything copied into it is wiped when the pod goes." }}
+{{- end }}
+{{- $ttl := include "gsd.recoveryTtl" . }}
+{{- $ttlSeconds := include "gsd.durationSeconds" $ttl }}
+{{- if eq $ttlSeconds "-1" }}
+{{- fail (printf "recovery.ttl %q is not a duration. Use a Go duration such as 2h (the default), 90m or 1h30m; a bare number has no unit and is refused. The TTL is what ends a forgotten recovery pod." $ttl) }}
+{{- end }}
+{{- if eq $ttlSeconds "0" }}
+{{- fail (printf "recovery.ttl %q is zero: the recovery pod would exit at once and crash-loop. Use a positive Go duration such as 2h (the default)." $ttl) }}
+{{- end }}
+{{- end }}
+{{- if .Values.oauthProxy.enabled }}
+{{- $cookie := (.Values.oauthProxy | default dict).cookie | default dict }}
+{{- /*
+Refuse at render time what the proxy would refuse at startup. Its refusal is a crash-looping
+sidecar with the reason buried in `oc logs` while `helm upgrade` reports success, which is the
+worst of both worlds: the release says deployed and nobody can log in.
+
+`dig` is avoided on purpose throughout — it panics on an intermediate that EXISTS AND IS NIL,
+which is exactly what a values file produces when somebody comments out the keys under
+`cookie:`. Measured: "interface conversion: interface {} is nil, not map[string]interface {}".
+*/}}
+{{- $expire := include "gsd.cookieExpire" . }}
+{{- $expireSeconds := include "gsd.durationSeconds" $expire }}
+{{- /* Compared as SECONDS, not as the typed text: "0s", "0.0s" and "0h0m" are zero too (review of C4,
+second pass), and a zero cap is not a cap — the proxy would expire every session at once. */}}
+{{- if eq $expireSeconds "0" }}
+{{- fail (printf "oauthProxy.cookie.expire %q resolves to zero seconds: a zero cap is not a cap — the proxy would expire every session at once. Use a positive Go duration such as 4h (the default)." (toString $expire)) }}
+{{- end }}
+{{- if eq $expireSeconds "-1" }}
+{{- /*
+toString before %q, because a values file may carry an unquoted number and Helm types it as an
+integer — %q on an int64 renders it as a Unicode RUNE, so `expire: 14400` produced a message
+about the character 㡀 and told the operator nothing about what they typed.
+*/}}
+{{- fail (printf "oauthProxy.cookie.expire %q is not a Go duration the proxy can parse. Use forms like 4h, 90m or 1h30m. A bare number has no unit and is refused, and so is a spelled-out one. The proxy would reject this at startup and crash-loop, with helm reporting a successful upgrade." (toString $expire)) }}
+{{- end }}
+{{- if $cookie.refresh }}
+{{- fail "oauthProxy.cookie.refresh has been removed and must not be set. Measured on provider=openshift: the proxy's refresh-time revalidation sends the token as a QUERY PARAMETER to /apis/user.openshift.io/v1/users/~, the API server ignores it and answers 403 naming the caller system:anonymous, so -cookie-refresh force-clears every session at the interval instead of sliding it. Kibana, the shipped precedent for this sidecar on this provider, sets -cookie-expire and no -cookie-refresh. Remove the key: the absolute cap is oauthProxy.cookie.expire." }}
+{{- end }}
+{{- if and (not .Values.oauthProxy.logoutUrl) (not (contains "signed-out" .Values.oauthProxy.skipAuthRegex)) }}
+{{- fail (printf "oauthProxy.skipAuthRegex (%s) no longer covers /signed-out while oauthProxy.logoutUrl is empty, so the logout landing page sits BEHIND the proxy it is supposed to land outside of: the redirect from sign_out starts a fresh OAuth flow and the reader who clicked Sign out arrives back signed in. Either keep signed-out in the regex, or point oauthProxy.logoutUrl somewhere outside the proxy." .Values.oauthProxy.skipAuthRegex) }}
+{{- end }}
+{{- end }}
+{{- range $workload := list "app" "recovery" }}
+{{- /* $recovery: this Deployment is the recovery workload; the pod spec below branches on it. */}}
+{{- $recovery := eq $workload "recovery" }}
+{{- with $ }}
+{{- $selector := ternary (include "gsd.recoverySelectorLabels" .) (include "gsd.selectorLabels" .) $recovery }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gsd.fullname" . }}{{ if $recovery }}-recovery{{ end }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    {{- if $recovery }}
+    app.kubernetes.io/component: recovery
+    {{- end }}
+spec:
+  {{- /* The app's Deployment at 0 is Healthy to Argo CD and to `oc rollout status` alike. */}}
+  replicas: {{ if $recovery }}{{ ternary 1 0 $recoveryOn }}{{ else if $recoveryOn }}0{{ else }}{{ .Values.replicaCount }}{{ end }}
+  strategy:
+    {{- /*
+    Recreate exists for the single-replica case, where the outgoing and incoming pods would
+    otherwise contend for the same database file. Above one replica each pod owns its own
+    file, so that reason is gone — and keeping Recreate there would take EVERY replica down
+    at once on each upgrade, removing the availability that was the only point of scaling.
+    */}}
+    type: {{ .Values.strategy | default (ternary "RollingUpdate" "Recreate" (gt (int .Values.replicaCount) 1)) }}
+  selector:
+    matchLabels: {{- $selector | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- /* A podLabels key that is also a selector label would win by YAML last-key-wins and
+               change the pod's identity: the API server then rejects the Deployment (template
+               labels outside its selector), and the PDB and Service would match no pod. Refuse it
+               by name rather than reorder the includes, which would discard the operator's label
+               silently (review of chart 0.14.0, second pass). */}}
+        {{- range $k, $_ := .Values.podLabels }}
+        {{- if hasKey ($selector | fromYaml) $k }}
+        {{- fail (printf "podLabels must not set %q: it is one of the selector labels the Service, the PodDisruptionBudget and the Deployment select the pod by" $k) }}
+        {{- end }}
+        {{- end }}
+        {{- $selector | nindent 8 }}
+        {{- with .Values.podLabels }}{{- toYaml . | nindent 8 }}{{- end }}
+      annotations:
+        # Restart the pod when the config changes. Without this a `helm upgrade` that only
+        # alters intervals or the cluster list updates the ConfigMap and changes nothing,
+        # because the running process read it at startup.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}{{- toYaml . | nindent 8 }}{{- end }}
+    spec:
+      serviceAccountName: {{ include "gsd.serviceAccountName" . }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- $affinity := deepCopy (.Values.affinity | default dict) }}
+      {{- /* THE ORDERING ON THE DATA CLAIM (#532). Each workload's pod carries a required
+      anti-affinity against the other's: the scheduler places no recovery pod while an app pod exists,
+      terminating ones included, and no app pod while a recovery pod exists, so the two never hold
+      gsd.db at once. Each names the other in its OWN terms because the scheduler re-queues a waiting
+      pod on a delete only when the deleted pod matches the waiting pod's own anti-affinity
+      (kube-scheduler interpodaffinity isSchedulableAfterPodChange): with the term on the recovery
+      pod alone, the app pod waited for the 5-minute unschedulable flush (SPEC_E11 note 8, 303 s).
+      kubernetes.io/os has one value on every node that can run this image, which makes the domain
+      the whole cluster rather than one node. */}}
+      {{- $other := ternary (include "gsd.selectorLabels" .) (include "gsd.recoverySelectorLabels" .) $recovery }}
+      {{- $anti := $affinity.podAntiAffinity | default dict }}
+      {{- $term := dict "labelSelector" (dict "matchLabels" ($other | fromYaml)) "topologyKey" "kubernetes.io/os" }}
+      {{- $_ := set $anti "requiredDuringSchedulingIgnoredDuringExecution" (append ($anti.requiredDuringSchedulingIgnoredDuringExecution | default list) $term) }}
+      {{- $_ := set $affinity "podAntiAffinity" $anti }}
+      {{- with $affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      containers:
+        - name: dashboard
+          image: {{ include "gsd.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if $recovery }}
+          # RECOVERY MODE (#303): the chart's stdlib script instead of uvicorn, whether or not the
+          # proxy is on (the image's CMD is uvicorn too). It ships in a ConfigMap, not the image, so
+          # it runs under the older image a rollback targets; it never opens the database.
+          command:
+            - python3.14
+            - /scripts/recovery_mode.py
+            - --release
+            - {{ .Release.Name | quote }}
+          {{- else if .Values.oauthProxy.enabled }}
+          # Bind loopback only. Otherwise 8080 stays reachable pod-network-wide and anything
+          # inside the cluster can skip the proxy entirely by addressing the pod directly,
+          # which would make the authentication decorative.
+          command:
+            - python3.14
+            - -m
+            - uvicorn
+            - gsd.api:create_app
+            - --factory
+            - --host
+            - 127.0.0.1
+            - --port
+            - "8080"
+            - --workers
+            - "1"
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: GSD_CONFIG
+              value: /etc/gsd/clusters.yaml
+            # MUST STAY ABOVE GSD_DB_PATH. Kubernetes expands `$(VAR)` only against
+            # variables defined EARLIER in this list — "an environment variable is not
+            # considered defined if it is specified further down the list" — and an
+            # unresolved reference is left as the literal string without blocking startup.
+            # With POD_NAME below, the per-pod path above one replica resolved to the
+            # literal /data/$(POD_NAME)/gsd.db: the SAME directory in every replica, on the
+            # ReadWriteMany volume, which is exactly the shared SQLite file the per-pod path
+            # exists to prevent. It fails silently, because the container starts fine.
+            #
+            # Also makes the Lease name the actual pod holding it, which is the first thing
+            # you want when asking "which replica is writing?".
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: GSD_DB_PATH
+              {{- if gt (int .Values.replicaCount) 1 }}
+              # PER-POD database file. Multiple replicas must NOT share one SQLite file:
+              # WAL coordinates writers through an mmap'd -shm file that assumes all
+              # processes are on ONE host, so sharing it across a ReadWriteMany volume
+              # corrupts rather than errors. A shared VOLUME with unshared FILES is safe.
+              #
+              # The cost is that accumulated history is per-pod: each replica only has the
+              # timeline since its own database existed, so the Service will show different
+              # history depending on which pod answers. Current state self-heals within one
+              # poll; history does not.
+              value: /data/$(POD_NAME)/gsd.db
+              {{- else }}
+              value: /data/gsd.db
+              {{- end }}
+            # Through the helper, not the raw value: an unrecognised level does not degrade to a
+            # default, it raises inside the uvicorn factory and the container never starts. The
+            # helper refuses the render instead, and normalises case so `debug` is not an outage.
+            - name: GSD_LOG_LEVEL
+              value: {{ include "gsd.logLevel" . | quote }}
+            # The HTTP request record, separate from the app's own reasoning (#245). Refused at
+            # render time the same way logLevel is: a level is a promise, and a misspelling that
+            # reaches the container is a promise silently not kept.
+            - name: GSD_HTTP_LOG_LEVEL
+              value: {{ include "gsd.httpLogLevel" . | quote }}
+            {{- with .Values.clusterConfigLogLevels }}
+            # Per-logger overrides. Not validated here: the app parses the pairs, skips a bad one
+            # with a warning and carries on, which is the right failure for a diagnostic setting —
+            # refusing the render would make a typo in a debugging aid an outage.
+            - name: GSD_LOG_LEVELS
+              value: {{ . | quote }}
+            {{- end }}
+            # The view-restrictions switch rides the Deployment rather than the ConfigMap:
+            # one wire from one values key, visible in `oc describe deploy` where an
+            # auditor looks for a security control. The NAME is load-bearing — the app
+            # reads exactly GSD_ENABLE_VIEW_RESTRICTIONS and defaults to restricted, so a
+            # misspelling anywhere is simply never read and cannot turn the control off.
+            - name: GSD_ENABLE_VIEW_RESTRICTIONS
+              value: {{ include "gsd.visibilityEnabled" . | quote }}
+            {{- with .Values.timezone }}
+            # Log timestamps only — see values.yaml. Stored and served times stay UTC
+            # because every call in the app is datetime.now(UTC), so this cannot shift data.
+            - name: TZ
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with include "gsd.trustedCaFile" . }}
+            # Colon-separated, like SSL_CERT_FILE. Used for any cluster that does not name
+            # its own caBundleFile — the normal case for an external, corporate-signed one.
+            - name: GSD_TRUSTED_CA_FILE
+              value: {{ . | quote }}
+            {{- end }}
+            # For curl IN THE POD, which reads none of the above: it trusts the image's own
+            # system bundle (/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem, measured) and
+            # would refuse a corporate-signed URL that the application itself verifies fine.
+            #
+            # curl is told through ITS OWN configuration file, not through environment
+            # variables. CURL_HOME names the directory curl reads .curlrc from; the ConfigMap
+            # mounted there (configmap-curlrc.yaml) carries `capath` for the hashed directory
+            # and, when the injected bundle is on, `cacert` for it. Measured on curl 7.76 and
+            # 8.22: when CURL_CA_BUNDLE is set, curl IGNORES SSL_CERT_DIR — `-v` names only the
+            # CAfile — so the earlier pair of variables could never make curl trust a hashed
+            # CA while the injected bundle was on, which is the default. A .curlrc names both
+            # and curl uses both (`-v` shows CAfile and CApath). Nothing but the curl tool
+            # reads it: the application's own TLS is untouched, and so is Python's.
+            - name: CURL_HOME
+              value: /etc/curl
+            {{- if $recovery }}
+            # Read by the recovery script, and by #302's restore wrapper to know it is in recovery mode.
+            - name: GSD_RECOVERY_MODE
+              value: "true"
+            - name: GSD_RECOVERY_MODE_TTL
+              value: {{ include "gsd.recoveryTtl" . | quote }}
+            {{- end }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/gsd
+              readOnly: true
+            - name: data
+              mountPath: /data
+            # readOnlyRootFilesystem is on, so anything writing to /tmp needs a volume.
+            - name: tmp
+              mountPath: /tmp
+            # curl's configuration (see CURL_HOME above): a ConfigMap of one key, mounted as a
+            # directory so curl finds $CURL_HOME/.curlrc.
+            - name: curlrc
+              mountPath: /etc/curl
+              readOnly: true
+            {{- if eq (include "gsd.reportingEnabled" .) "true" }}
+            # The service token (the usage pull, housekeeping), the ticket key that signs tickets
+            # (#392) and, with TLS, the service-ca bundle the poller verifies the report Service with.
+            - name: report-token
+              mountPath: /etc/gsd/report
+              readOnly: true
+            - name: report-ticket-key
+              mountPath: /etc/gsd/report-ticket
+              readOnly: true
+            {{- if .Values.reporting.tls.enabled }}
+            - name: service-ca
+              mountPath: /etc/gsd/service-ca
+              readOnly: true
+            {{- end }}
+            {{- end }}
+            {{- if .Values.trustedCA.injected.enabled }}
+            - name: trusted-ca-injected
+              mountPath: {{ .Values.trustedCA.mountPath }}/injected
+              readOnly: true
+            {{- end }}
+            {{- if .Values.trustedCA.existingConfigMap.enabled }}
+            - name: trusted-ca-enterprise
+              mountPath: {{ .Values.trustedCA.mountPath }}/enterprise
+              readOnly: true
+            {{- end }}
+            {{- with .Values.trustedCA.existingConfigMap.subjectHash }}
+            {{- if not $.Values.trustedCA.existingConfigMap.enabled }}
+            {{- fail "trustedCA.existingConfigMap.subjectHash is set but trustedCA.existingConfigMap.enabled is false — there is no ConfigMap to mount" }}
+            {{- end }}
+            {{- if not (regexMatch "^[0-9a-f]{8}(\\.[0-9]+)?$" .) }}
+            {{- fail (printf "trustedCA.existingConfigMap.subjectHash %q is not an OpenSSL subject hash (eight lowercase hex digits from `openssl x509 -noout -subject_hash -in ca.crt`, optionally followed by .N)" .) }}
+            {{- end }}
+            # The same CA a second time, as an entry in OpenSSL's hashed directory (Hummingbird's
+            # "Approach 2" for Python images): curl reads it through SSL_CERT_DIR above, urllib
+            # and the application's fallback context read it as OpenSSL's default capath. A
+            # subPath mount of ONE file, never the directory — mounting the directory would hide
+            # the base's ~290 hashed links to the public CAs. It does shadow the one entry of the
+            # same name if the base already has it, which is why the value may carry OpenSSL's
+            # collision suffix (`c275f070.1`): `.0` is assumed when none is given. subPath mounts
+            # do not follow later ConfigMap edits; a changed CA needs a rollout, which a hand-made
+            # ConfigMap needs anyway. The hash cannot be computed at render time, hence the value.
+            - name: trusted-ca-enterprise
+              mountPath: /etc/pki/tls/certs/{{ . }}{{ if not (contains "." .) }}.0{{ end }}
+              subPath: {{ $.Values.trustedCA.existingConfigMap.key }}
+              readOnly: true
+            {{- end }}
+            {{- range $name := list "platformNamespaces" "platformUsers" }}
+            {{- $cm := (index $.Values $name | default dict).existingConfigMap | default dict }}
+            {{- if $cm.enabled }}
+            # A platform list kept in a ConfigMap you own (#255): the whole ConfigMap as a directory, never a
+            # subPath, so the file is the kubelet's current copy. The dashboard reads it once, at start.
+            - name: {{ $name | kebabcase }}
+              mountPath: {{ include "gsd.platformListDir" $name }}
+              readOnly: true
+            {{- end }}
+            {{- end }}
+            {{- if $recovery }}
+            - name: recovery-script
+              mountPath: /scripts
+              readOnly: true
+            {{- if $offsiteClaim }}
+            # Read-only: the copies are listed and read from here, never written.
+            - name: offsite
+              mountPath: /offsite
+              readOnly: true
+            {{- end }}
+            {{- end }}
+          {{- /* No liveness probe in recovery mode: nothing serves /healthz, and a kill in the middle
+          of a restore is the failure recovery mode exists to prevent. */}}
+          {{- if and .Values.probes.liveness.enabled (not $recovery) }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              {{- if .Values.oauthProxy.enabled }}
+              # Through the proxy, over HTTPS: the app no longer listens on the pod IP.
+              # oauthProxy.skipAuthRegex must cover this path or kubelet gets a 302 to the
+              # login page and kills a healthy pod.
+              # NUMERIC, not the port name. A named port resolves only within the
+              # container that declares it, and this probe runs on the dashboard container
+              # while the name belongs to the sidecar. kubelet then parses the name as an
+              # integer and every probe errors with `strconv.Atoi: parsing "oauth-proxy"`.
+              # Both `helm template` and `oc apply --dry-run=server` accept it, so only a
+              # real deploy catches this.
+              port: {{ .Values.oauthProxy.port }}
+              scheme: HTTPS
+              {{- else }}
+              port: http
+              {{- end }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- /* No readiness probe in the recovery workload (#532): no Service selects its pod, so it
+          counts as ready once it runs and its Deployment reports available. */}}
+          {{- if and .Values.probes.readiness.enabled (not $recovery) }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              {{- if .Values.oauthProxy.enabled }}
+              # NUMERIC, not the port name. A named port resolves only within the
+              # container that declares it, and this probe runs on the dashboard container
+              # while the name belongs to the sidecar. kubelet then parses the name as an
+              # integer and every probe errors with `strconv.Atoi: parsing "oauth-proxy"`.
+              # Both `helm template` and `oc apply --dry-run=server` accept it, so only a
+              # real deploy catches this.
+              port: {{ .Values.oauthProxy.port }}
+              scheme: HTTPS
+              {{- else }}
+              port: http
+              {{- end }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- end }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.oauthProxy.enabled }}
+        - name: oauth-proxy
+          image: {{ .Values.oauthProxy.image }}
+          imagePullPolicy: {{ .Values.oauthProxy.imagePullPolicy }}
+          args:
+            - -provider=openshift
+            - -https-address=:{{ .Values.oauthProxy.port }}
+            - -http-address=
+            - -email-domain=*
+            - -upstream=http://127.0.0.1:8080
+            {{- if eq (include "gsd.reportingEnabled" .) "true" }}
+            # THE SECOND UPSTREAM, routed by PATH: openshift/oauth-proxy maps each upstream URL's
+            # path to a mux entry and forwards the request path unchanged, so /report/** reaches
+            # the report Service with the same login and the same X-Forwarded-User as /api/**.
+            # The trailing slash is the mux subtree; without it only the exact path would match.
+            - -upstream={{ include "gsd.reportUrl" . }}/report/
+            {{- if .Values.reporting.tls.enabled }}
+            # Verify the report Service's service-ca certificate. Passing -upstream-ca REPLACES the
+            # system trust store for upstreams, which is fine: the loopback upstream is plain HTTP.
+            - -upstream-ca=/etc/gsd/service-ca/service-ca.crt
+            {{- end }}
+            {{- end }}
+            - -tls-cert=/etc/tls/private/tls.crt
+            - -tls-key=/etc/tls/private/tls.key
+            - -cookie-secret-file=/etc/proxy/secrets/session_secret
+            # The absolute session cap, from oauthProxy.cookie.expire. The SAME helper feeds
+            # the ConfigMap the app reads, so the number the page can report is the number
+            # the proxy enforces, by construction. Deliberately NO -cookie-refresh: measured
+            # on this provider it force-clears the session at every interval rather than
+            # sliding it (values.yaml carries the measurement), and the shipped Kibana proxy
+            # omits it on this same provider too.
+            - -cookie-expire={{ include "gsd.cookieExpire" . }}
+            # NO -pass-access-token, and the reason is worth keeping. It was added so
+            # sign-out could revoke the user's token the way the OpenShift console does, and
+            # that was MEASURED FAILING on the lab: the console's logout works because the
+            # console's tokens carry scope ["user:full"], while this chart's client is a
+            # ServiceAccount and its tokens carry ["user:info","user:check-access"] — neither
+            # of which permits deleting anything, so the DELETE returned 403 however the RBAC
+            # was set. (`oc auth can-i delete oauthaccesstokens` answers yes and is misleading
+            # here: a SubjectAccessReview never sees the token's SCOPE, which is a separate and
+            # narrower gate applied at request time.) Widening -scope to user:full would make
+            # revocation work by handing this app a credential that can act as the user
+            # anywhere on the cluster — a strictly worse trade than not revoking, since the
+            # session already ends without it: measured on the lab, the proxy's own sign_out
+            # clears the cookie and re-entry demands credentials.
+            #
+            # The prefix everything the proxy serves lives under. Passed explicitly so the
+            # app can compose its sign-out link from the same value instead of hardcoding
+            # "/oauth" and drifting from it.
+            - -proxy-prefix={{ .Values.oauthProxy.proxyPrefix }}
+            # Where the browser lands after the proxy clears its cookie. Relative by default,
+            # so it resolves against whichever host served the redirect.
+            - -logout-url={{ .Values.oauthProxy.logoutUrl | default "/signed-out" }}
+            - -openshift-service-account={{ include "gsd.serviceAccountName" . }}
+            # The ServiceAccount CA signs the INTERNAL API endpoint (https://172.31.0.1), which
+            # is all the proxy needs for OAuth discovery. It does NOT sign the PUBLIC OAuth
+            # route, and the proxy talks to both.
+            - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            #
+            # The OAuth ROUTE, which the SA CA above does not cover. On a cluster whose *.apps
+            # wildcard is signed by an internal CA, login returned 500 with a healthy pod:
+            #
+            #   oauthproxy.go:661 error redeeming code: Post ".../oauth/token":
+            #       x509: certificate signed by unknown authority
+            #
+            # Discovery succeeded and the code exchange failed, which locates it exactly:
+            # discovery goes to the in-cluster API address, then RETURNS the public issuer, so
+            # the exchange hits the ingress-served route and a CA the SA bundle lacks.
+            #
+            # -openshift-ca "may be given multiple times" (its own --help). Passing any value
+            # replaces the default, so the SA path above must stay explicit. Same bundles the
+            # dashboard trusts; they previously reached only GSD_TRUSTED_CA_FILE.
+            #
+            {{- if .Values.trustedCA.injected.enabled }}
+            - -openshift-ca={{ .Values.trustedCA.mountPath }}/injected/ca-bundle.crt
+            {{- end }}
+            {{- if .Values.trustedCA.existingConfigMap.enabled }}
+            - -openshift-ca={{ .Values.trustedCA.mountPath }}/enterprise/{{ .Values.trustedCA.existingConfigMap.key }}
+            {{- end }}
+            - -skip-auth-regex={{ .Values.oauthProxy.skipAuthRegex }}
+            {{- if .Values.oauthProxy.sar }}
+            - -openshift-sar={{ .Values.oauthProxy.sar }}
+            {{- end }}
+            {{- if .Values.oauthProxy.apiTokenAccess.enabled }}
+            - -openshift-delegate-urls={{ .Values.oauthProxy.apiTokenAccess.delegateUrls }}
+            {{- end }}
+            {{- if .Values.oauthProxy.skipProviderButton }}
+            - -skip-provider-button
+            {{- end }}
+            - -request-logging={{ .Values.oauthProxy.requestLogging }}
+          ports:
+            - name: oauth-proxy
+              containerPort: {{ .Values.oauthProxy.port }}
+              protocol: TCP
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: oauth-tls
+              mountPath: /etc/tls/private
+              readOnly: true
+            - name: oauth-cookie
+              mountPath: /etc/proxy/secrets
+              readOnly: true
+            {{- if and (eq (include "gsd.reportingEnabled" .) "true") .Values.reporting.tls.enabled }}
+            - name: service-ca
+              mountPath: /etc/gsd/service-ca
+              readOnly: true
+            {{- end }}
+            #
+            # The same volumes the dashboard mounts. They already existed at pod level; only
+            # this container lacked them. Must stay paired with the -openshift-ca paths above:
+            # the proxy does NOT fail on a CA path it cannot read — verified by pointing it at
+            # a nonexistent file, which left the pod Running 2/2 and logged nothing — so a
+            # mount removed here goes unnoticed until a login fails on a real cluster.
+            #
+            {{- if .Values.trustedCA.injected.enabled }}
+            - name: trusted-ca-injected
+              mountPath: {{ .Values.trustedCA.mountPath }}/injected
+              readOnly: true
+            {{- end }}
+            {{- if .Values.trustedCA.existingConfigMap.enabled }}
+            - name: trusted-ca-enterprise
+              mountPath: {{ .Values.trustedCA.mountPath }}/enterprise
+              readOnly: true
+            {{- end }}
+          resources: {{- toYaml .Values.oauthProxy.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "gsd.fullname" . }}-config
+        - name: data
+        {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" (include "gsd.fullname" .)) }}
+        {{- else }}
+          # WARNING: the accumulated timeline and membership history reset on every restart.
+          emptyDir: {}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+        - name: curlrc
+          configMap:
+            name: {{ include "gsd.fullname" . }}-curlrc
+        {{- if $recovery }}
+        - name: recovery-script
+          configMap:
+            name: {{ include "gsd.fullname" . }}-recovery
+            defaultMode: 292   # 0444: read by any UID OpenShift assigns; nothing writes it
+        {{- with $offsiteClaim }}
+        - name: offsite
+          persistentVolumeClaim:
+            claimName: {{ . }}
+            readOnly: true
+        {{- end }}
+        {{- end }}
+        {{- if .Values.trustedCA.injected.enabled }}
+        - name: trusted-ca-injected
+          configMap:
+            name: {{ include "gsd.fullname" . }}-trusted-ca
+            # optional: the operator populates this shortly after creation, and a pod that
+            # refused to start until then would fail the first rollout of every install.
+            optional: true
+        {{- end }}
+        {{- if .Values.trustedCA.existingConfigMap.enabled }}
+        - name: trusted-ca-enterprise
+          configMap:
+            # NOT optional: you named this explicitly, so its absence is a mistake worth
+            # failing on rather than silently starting without the CA you asked for.
+            name: {{ .Values.trustedCA.existingConfigMap.name }}
+        {{- end }}
+        {{- range $name := list "platformNamespaces" "platformUsers" }}
+        {{- $cm := (index $.Values $name | default dict).existingConfigMap | default dict }}
+        {{- if $cm.enabled }}
+        - name: {{ $name | kebabcase }}
+          configMap:
+            # NOT optional, as trustedCA's: a list you named that is missing stops the pod rather than
+            # starting it with the shipped defaults. A missing KEY reaches the loader, which names it.
+            name: {{ $cm.name }}
+        {{- end }}
+        {{- end }}
+        {{- if .Values.oauthProxy.enabled }}
+        {{- if eq (include "gsd.reportingEnabled" .) "true" }}
+        - name: report-token
+          secret:
+            secretName: {{ include "gsd.reportName" . }}-shared-token
+            defaultMode: 288
+        # The dashboard signs with `key` alone; a rotation's `previous` is the report pod's to verify with.
+        - name: report-ticket-key
+          secret:
+            secretName: {{ include "gsd.reportName" . }}-ticket-key
+            defaultMode: 288
+            items:
+              - key: key
+                path: key
+        {{- if .Values.reporting.tls.enabled }}
+        # The service-ca bundle every OpenShift namespace carries (the ServiceMonitor already trusts
+        # it, templates/monitoring.yaml). Not optional: with TLS on, a pod without it cannot verify
+        # the report Service and would be a proxy that answers 502 on /report with nothing in
+        # `helm upgrade` to say why.
+        - name: service-ca
+          configMap:
+            name: openshift-service-ca.crt
+        {{- end }}
+        {{- end }}
+        - name: oauth-tls
+          secret:
+            secretName: {{ include "gsd.fullname" . }}-tls
+            defaultMode: 420
+        - name: oauth-cookie
+          secret:
+            secretName: {{ include "gsd.fullname" . }}-oauth-session
+            defaultMode: 420
+        {{- end }}
+{{- end }}
+{{- end }}

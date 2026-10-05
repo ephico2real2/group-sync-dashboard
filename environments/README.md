@@ -1,0 +1,104 @@
+# Release values
+
+One file per deployment target, committed. **Always pass the right one with `-f`, on every
+`helm upgrade`, including upgrades that only change the image tag.**
+
+```bash
+helm upgrade --install group-sync-dashboard charts/group-sync-dashboard \
+  -n group-sync-dashboard -f environments/crc.yaml
+```
+
+## Why not `--set`
+
+Helm's value precedence on upgrade is a trap, and it is silent. From the docs: if no `--set`
+or `-f` is given, Helm reuses the previous release's user-supplied values; **if either is
+given, it resets to chart defaults plus only what this invocation passed.**
+
+So `--set` is not additive across upgrades. Measured on this release:
+
+```
+before:  helm get values -> oauthProxy.apiTokenAccess.enabled: true
+run:     helm upgrade --set logLevel=DEBUG
+after:   helm get values -> logLevel: DEBUG          # apiTokenAccess GONE
+         delegate-urls on the pod -> absent          # the feature silently off
+```
+
+`STATUS: deployed`, no warning, a working feature switched off by a flag about logging. That
+is the whole argument for these files: state the desired state declaratively, keep it in git
+where a diff is reviewable, and pass it every time so there is nothing to remember and no
+implicit reuse to reason about.
+
+`--set` remains correct for something that genuinely varies per invocation — the image tag a
+build just produced — but only **alongside** `-f`, never instead of it.
+
+## Files
+
+| File | For |
+|---|---|
+| `crc.yaml` | the local CRC cluster used for development |
+| `example-production.yaml` | a template to copy — not deployed by anything |
+
+A new environment is a new file, reviewed like code. Nothing here holds a secret: the OAuth
+cookie secret is generated and reused by the chart, and image pull credentials come from the
+cluster's global pull secret.
+
+## What `crc.yaml` actually changes
+
+Every key `crc.yaml` sets already has a chart default. It introduces nothing the chart does not
+declare — it only *overrides*, and the table says which way:
+
+| key | chart default | crc.yaml | verdict |
+|---|---|---|---|
+| `config.unmanagedAudit.mode` | `log` | `log` | redundant — already the default |
+| `logLevel` | `INFO` | `DEBUG` | lab override |
+| `loginCapture.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
+| `loginCapture.source` | `audit-log` | `audit-log` | redundant — the default since chart 0.52.0, stated here anyway so a moving default cannot silently change this cluster. The grant is a ClusterRole on `get nodes/proxy` (+ `list nodes`), read-only but cluster-wide: read access to everything the kubelet serves over GET on those nodes. Narrow it in production with `loginCapture.auditLog.nodeNames`, which drops the `list` entirely |
+| `oauthProxy.apiTokenAccess.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
+| `rbac.namespaces` | `false` | `true` | lab override — a cluster-scoped read (get, list on namespaces, core group); required for the P2 namespace selector, off by default under the 0.14.0 rule |
+| `kyverno.metricsUrl` | `""` | `http://kyverno-svc-metrics.kyverno.svc:8000/metrics,http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics,http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics` | lab override — the Kyverno module's report breakers (#170): the lab runs Kyverno in `kyverno`, and the three circuits live on three endpoints; empty leaves the truncation state unknown |
+| `backup.offsite.enabled` | `""` | `true` | lab override — the off-volume backup on (the operator, 2026-10-02). Since #304 the empty default turns it on here too; `true` is the strict form, which refuses a combination where the copy cannot work rather than rendering nothing: a CronJob copies the newest scheduled backup to its own claim every six hours, so a lost or corrupted data volume is not the only copy. Its ServiceAccount has no token and no grant (rendered RBAC unchanged, 65 rules) |
+| `backup.offsite.destination.type` | `pvc` | `pvc` | redundant — the default, stated here anyway so a moving default cannot silently send the lab's copies elsewhere: a 5Gi claim on the default StorageClass, keep 14 |
+| `clusterConfig.secrets.writes.enabled` | `false` | `true` | lab override — the Cluster Configurations tab writes its own Secrets, so a cluster can be onboarded from the GUI instead of by hand. OFF in the chart as a stated exception to the on-by-default rule: it is the decision to let the dashboard mint cluster access, and its only write anywhere else is its own leader Lease |
+| `clusterConfig.fleetAccount.username` | `""` | `ocp-oauth-bind-serviceid` | lab override — names the LDAP account the dashboard binds AS, to read a target cluster's poller ServiceAccount token (SPEC_S4b, #284). Empty in the chart because naming an account is the decision that puts a real credential on the wire: with it empty and no cluster stanza declaring a connection mode, nothing binds and the grant below renders nothing |
+| `clusterConfig.fleetAccount.passwordSecret.namespace` / `.name` / `.key` | `""` / `gsd-fleet-account` / `password` | `openshift-config` / `ldap-oauth-bind-secret` / `bindPassword` | lab override — the lab reads the password from the Secret this cluster's own OAuth LDAP identity provider already uses, rather than keeping a second copy to rotate. **The namespace is the privileged half**: empty means this release's namespace, and naming another one writes a Role and RoleBinding into a namespace this chart does not own. The grant is `get` on that one Secret by `resourceNames` — never `list`, which `resourceNames` cannot restrict — and `clusterConfig.fleetAccount.passwordSecret.rbac.create: false` turns it off so an administrator can apply the two objects by hand |
+| `platformNamespaces.additionalSuffixes` / `.additionalNames` | `[]` / `[]` | `['-operator', '-manager', '-provisioner']` / `['kyverno', 'group-sync-dashboard']` | lab override — the estate's own platform namespaces (#255), the reference answer `values.yaml`'s comment documents, measured on this cluster: `-operator` catches three operator namespaces, `-manager` cert-manager, `-provisioner` hostpath-provisioner, and `kyverno` and `group-sync-dashboard` match no pattern. Since #353 a ServiceAccount in one of them is the platform's own: built-in, never an unmanaged finding (the lab's 124 finding rows on 117 bindings under the shipped defaults become 49 on 46) |
+
+**Read the right-hand column as "why this is not the default".** The overrides that remain are
+fail-closed in the chart on purpose, and a plain `helm install` must not do them uninvited:
+
+- OAuth Debug management was removed; clusters left at Debug must restore Normal manually (chart README migration note).
+- `DEBUG` is for debugging. `INFO` is the level that stays readable at steady state.
+- `rbac.namespaces` adds a **cluster-scoped** read (`get`, `list` on namespaces, core group) the
+  chart needs for nothing else, so it is off by default (the 0.14.0 rule). The lab turns it on
+  because the P2 namespace-access report and its multi-dimension selector read namespace labels;
+  without the grant the poller never lists namespaces and the selector is always empty — the chart
+  guard refuses the selector configuration without it.
+
+The redundant rows are deliberate, not an oversight: a release file should **state** what it wants
+rather than inherit it, so a default that moves later cannot silently change this cluster. Two of
+them became redundant on chart 0.14.0 (`loginCapture`, `apiTokenAccess`) and were kept for exactly
+that reason: the file records what this cluster runs with, whichever way the default moves. That
+costs one line each and buys a diff that shows intent. The Grafana dashboard override that validated
+B3 through grafana-operator v5 was removed with chart 0.14.0 and its `""` default follows the
+ServiceMonitor — ON by default since chart 0.36.0 (2026-09-19), with the rules and the GrafanaDashboard
+CR, so the board ships and the `openshift-grafana` release in the same namespace reads it through the
+CR (#161); the KPI page's doors are discovered. `crc.yaml` sets none of it, on purpose: the lab
+runs the default and would notice if the default stopped working.
+
+### The reporting feature block and the cluster list are configured in `crc.yaml`, not tracked here
+
+Two groups of keys `crc.yaml` sets are deliberately **not** rows in the table above: the
+`reporting.*` block — the P2/P4 feature configuration (which label keys the poller captures, which
+the Reports form offers as selector dimensions, the automated-run window, and the weekly schedule)
+— and `clusters`, the poll targets (this cluster plus the mock OpenShift API). These are feature
+configuration, not privileged overrides: every one still has a chart default, so the headline claim
+above still holds, and each is documented inline in `crc.yaml` with the reasoning next to the value.
+The table answers one question — "will a plain `helm install` do something privileged?" — and these
+keys are not part of that answer. `tests/test_environments_readme.py` enumerates the exemption (by
+`reporting.` prefix and `clusters`) so a genuinely new *privileged* override still cannot arrive
+undocumented, while the feature config that a lab file naturally carries does not have to be
+transcribed key-by-key into a table that would then need a list literal in a cell.
+
+`tests/test_environments_readme.py` holds this table against the real `values.yaml` and `crc.yaml`,
+because a table of defaults is exactly the kind of documentation that rots quietly — it stays
+plausible long after it stops being true.

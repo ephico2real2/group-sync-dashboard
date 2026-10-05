@@ -1,0 +1,181 @@
+{{ include "gsd.fullname" . }} deployed to namespace {{ .Release.Namespace }}.
+
+Image: {{ include "gsd.image" . }}
+
+{{- $exposure := include "gsd.exposure" . }}
+{{- if eq $exposure "Route" }}
+
+Route (the router names the host and reports it in status; spec.host is empty unless you set it):
+  oc get route {{ include "gsd.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.status.ingress[0].host}'
+{{- if and (not .Values.route.host) .Values.ingress.host }}
+
+NOTE: the Route's host ({{ .Values.ingress.host }}) came from ingress.host, which the Ingress is not
+using — route.enabled is on. The chart honours it so that an upgrade never moves a URL you pinned.
+If you pinned it, move it to route.host. If it was only there because the Ingress needed one (a
+plain-Kubernetes values file, say), clear it and let the router name the Route.
+{{- end }}
+{{- else if eq $exposure "Ingress" }}
+
+Route:
+  oc get ingress {{ include "gsd.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.rules[0].host}'
+{{- end }}
+
+Confirm what is actually running — the pod reports the commit it was built from:
+  curl -sk https://{{ include "gsd.routeHost" . | default "<the host above>" }}/api/version
+{{- $discovery := ((.Values.grafana.discovery | default dict).selector | default "") }}
+
+The KPI page's doors and the Grafana board (chart README, "Prerequisites — the Grafana and Observe
+integration"): user-workload monitoring on (the OpenShift engineers, once per cluster; the
+openshift-grafana chart's post-install Job reports it); a Grafana in this namespace —
+{{- if .Values.grafana.url }}
+  grafana.url is set: {{ .Values.grafana.url }}
+{{- else if $discovery }}
+  discovered by the Route labelled {{ $discovery }} in {{ .Release.Namespace }} (the openshift-grafana
+  chart's: helm install grafana <repo>/openshift-grafana -n {{ .Release.Namespace }} --timeout 15m);
+  until one exists the page says so instead of drawing a dead button
+{{- else }}
+  neither grafana.url nor grafana.discovery.selector is set: no "Open in Grafana" door renders
+{{- end }}
+{{- if not (.Capabilities.APIVersions.Has "grafana.integreatly.org/v1beta1") }}
+  — this cluster does not serve grafana.integreatly.org/v1beta1 yet, so the GrafanaDashboard CR was
+  not rendered; the next helm upgrade after grafana-operator lands renders it
+{{- end }}
+and `view` on {{ .Release.Namespace }} for every reader group (the console's namespace dashboard and
+Grafana's login both check `get pods` here):
+  oc adm policy add-role-to-group view <group> -n {{ .Release.Namespace }}
+
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence is disabled. The sync timeline and membership history are accumulated
+by polling and cannot be re-fetched from the API, so they reset on every restart.
+{{- end }}
+{{- if gt (int .Values.replicaCount) 1 }}
+
+NOTE: replicaCount is {{ .Values.replicaCount }}. Each pod polls for itself and owns its own
+database at /data/$POD_NAME/gsd.db — they do NOT share a file, so there are no concurrent
+writers. What they do not share is HISTORY: each pod holds only the timeline since its own
+database existed, so the Service answers "when did this user leave?" differently depending
+on which pod you reach. Current state self-heals within one poll; history does not.
+{{- end }}
+{{- if $exposure }}
+{{- if .Values.oauthProxy.enabled }}
+
+Authentication: OpenShift OAuth. Anyone who can log into this cluster can view the
+dashboard{{ if .Values.oauthProxy.sar }}, subject to the SubjectAccessReview in oauthProxy.sar{{ end }}.
+
+{{- $expire := include "gsd.cookieExpire" . }}
+Sessions: the proxy cookie lives {{ $expire }} from login, and it is ABSOLUTE — there is
+no cookie refresh and no mid-session revalidation, so an active reader is signed out at
+that mark too, and a revoked user keeps access until it. Change it with
+oauthProxy.cookie.expire. Signing out ends the proxy session; it does NOT revoke the OAuth
+token, because this chart authenticates as a ServiceAccount whose tokens carry only
+user:info and user:check-access — the DELETE was built, measured returning 403, and dropped.
+{{- $oauthCR := lookup "config.openshift.io/v1" "OAuth" "" "cluster" }}
+{{- if $oauthCR }}
+{{- $tc := (($oauthCR.spec) | default dict).tokenConfig | default dict }}
+{{- $maxAge := $tc.accessTokenMaxAgeSeconds | default 86400 }}
+{{- if gt (float64 (include "gsd.durationSeconds" $expire)) (float64 $maxAge) }}
+
+WARNING: the cookie lifetime ({{ $expire }}) exceeds this cluster's
+accessTokenMaxAgeSeconds ({{ $maxAge }}s). Nothing rechecks the token mid-session, so the
+cookie would outlive the token it represents and API calls fail before sign-out does.
+Lower oauthProxy.cookie.expire.
+{{- end }}
+{{- end }}
+{{- if eq (include "gsd.visibilityEnabled" .) "true" }}
+{{- $sarGroup := include "gsd.visibilitySarApiGroup" . }}
+{{- $sarResource := include "gsd.visibilitySarResource" . }}
+{{- $sarVerb := include "gsd.visibilitySarVerb" . }}
+{{- $sarNamespace := include "gsd.visibilitySarNamespace" . }}
+
+Visibility: RESTRICTED (visibility.enabled=true, the default). Each reader sees only their
+own profile, groups, grants and login attempts. A reader sees everything only if a
+SubjectAccessReview allows:
+
+  {{ $sarVerb }} {{ $sarResource }}{{ with $sarGroup }}.{{ . }}{{ end }}{{ with $sarNamespace }} in namespace {{ . }}{{ end }}
+{{- if and (eq $sarGroup "user.openshift.io") (eq $sarResource "groups") (eq $sarVerb "list") (eq $sarNamespace "") }}
+
+That default check admits cluster-admin and cluster-reader, and nobody else.
+{{- else }}
+
+This is a custom check (visibility.adminSar): whoever holds a role granting it gets the
+wide view. Stock cluster-reader passes every threshold measured for this feature.
+{{- end }}
+Grant the wide view through normal RBAC, never a chart value:
+
+  oc adm policy add-cluster-role-to-user cluster-reader <username>
+
+  (prefer the group form — a grant naming a person survives their departure:
+   oc adm policy add-cluster-role-to-group cluster-reader <ldap-group>)
+
+An indeterminate review (API error, timeout) yields the narrow view, never the wide one.
+Restore the old everyone-sees-everything behaviour only as a deliberate choice:
+  --set visibility.enabled=false
+{{- if gt (len .Values.clusters) 1 }}
+
+Several clusters are configured. The reader was authenticated by this pod's OWN cluster; what
+they see about each of the others is that entry's own policy (docs/ACCESS_CONTROL.md §11):
+{{- /* The host is the entry declaring `dashboardController: true`, else the first ENABLED entry
+       — the rule gsd.validateClusters and load_settings share; it is printed first (review of D2,
+       both reviewers; the declared controller added by the review of #251, which measured this
+       printing "(host)" against a remote). */ -}}
+{{- $hostIndex := -1 }}
+{{- $declaredIndex := -1 }}
+{{- range $i, $c := .Values.clusters }}
+{{- $enabled := true }}{{- if hasKey $c "enabled" }}{{- $enabled = eq (trim (toString $c.enabled)) "true" }}{{- end }}
+{{- if and $enabled (lt $hostIndex 0) }}{{- $hostIndex = $i }}{{- end }}
+{{- if and $enabled (lt $declaredIndex 0) (hasKey $c "dashboardController") }}
+{{- if eq (trim (toString $c.dashboardController)) "true" }}{{- $declaredIndex = $i }}{{- end }}
+{{- end }}
+{{- end }}
+{{- if ge $declaredIndex 0 }}{{- $hostIndex = $declaredIndex }}{{- end }}
+{{- range $pass := list 0 1 }}
+{{- range $i, $c := $.Values.clusters }}
+{{- $isHost := eq $i $hostIndex }}
+{{- if or (and (eq $pass 0) $isHost) (and (eq $pass 1) (not $isHost)) }}
+{{- $vis := "" }}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) }}{{- $vis = trim (toString $c.visibility) }}{{- end }}
+{{- $id := "" }}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) }}{{- $id = trim (toString $c.identity) }}{{- end }}
+{{- /* A remote's defaults, by the rule the application serves (SPEC_D2b §3.2, config.py#remote_policy): nothing
+       stated is remote-sar + same-as-host; `identity: none` alone keeps self-only. */}}
+{{- $defVis := ternary "self-only" "remote-sar" (eq $id "none") }}
+{{- $defId := ternary "same-as-host" "none" (eq (default $defVis $vis) "remote-sar") }}
+  {{ $c.name }}: visibility {{ if $vis }}{{ $vis }}{{ else if $isHost }}inherit (host){{ else }}{{ $defVis }} (default){{ end }}, identity {{ if $isHost }}same-as-host (host){{ else if $id }}{{ $id }}{{ else }}{{ $defId }} (default){{ end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- else }}
+
+Visibility: WIDE (visibility.enabled=false). Every admitted reader sees the full RBAC
+binding surface, every group's membership and every person's login attempts. You chose
+this; the default is restricted.
+{{- end }}
+{{- else }}
+
+WARNING: the {{ $exposure }} has NO authentication and the dashboard exposes group membership.
+Set oauthProxy.enabled=true before exposing it on a shared cluster.
+{{- end }}
+{{- end }}
+{{- if and .Values.loginCapture.enabled (eq (include "gsd.loginCaptureSource" .) "audit-log") }}
+
+Login capture: AUDIT LOG. The dashboard reads /var/log/oauth-server/audit.log on the
+control-plane nodes through the API server's node proxy — a ClusterRole with `get nodes/proxy`,
+which is read access to everything the kubelet serves on those nodes. No Debug verbosity is
+needed. Clusters left at Debug must be restored manually; see the chart README migration note.
+First read backfills as far as the rotated audit files reach{{ if gt (int .Values.loginCapture.retentionDays) 0 }}, {{ .Values.loginCapture.retentionDays }} days at most{{ else }} (retentionDays is 0: no age limit){{ end }}.
+{{- end }}
+{{- if eq (include "gsd.reportingEnabled" .) "true" }}
+
+Reporting is ON: the report service runs as deploy/{{ include "gsd.reportName" . }} on
+{{ include "gsd.reportImage" . }}, reached through the dashboard's proxy under /report/. Administrators
+(the wide tier) generate reports from the Reports tab; the Usage tab records who generated what.
+{{- if not .Values.reporting.persistence.enabled }}
+NOTE: reporting.persistence is off — artefacts are lost when the report pod restarts (each is
+regenerable from a snapshot).
+{{- end }}
+{{- if and (not .Values.reporting.pdf.enabled) (ne (include "gsd.reportPdfVariant" .) "") }}
+NOTE: reporting.pdf.variant is set but reporting.pdf.enabled is false; the variant is ignored.
+{{- end }}
+Pre-flight for TLS between the pods (reporting.tls.enabled):
+  oc exec -n {{ .Release.Namespace }} deploy/{{ include "gsd.fullname" . }} -c oauth-proxy -- /usr/bin/oauth-proxy --help 2>&1 | grep upstream-ca
+{{- end }}

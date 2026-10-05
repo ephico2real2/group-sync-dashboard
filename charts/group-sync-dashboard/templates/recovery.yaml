@@ -1,0 +1,14 @@
+# Recovery mode's script (#303), verbatim from scripts/recovery_mode.py; a test holds the two
+# identical. Rendered on every release, like the recovery Deployment that mounts it (#532), so
+# turning recovery mode on or off changes only the two Deployments' replicas.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gsd.fullname" . }}-recovery
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: recovery
+data:
+  recovery_mode.py: |
+{{ .Files.Get "scripts/recovery_mode.py" | indent 4 }}
