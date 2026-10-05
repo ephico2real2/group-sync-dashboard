@@ -44,15 +44,15 @@ control:
 * **the build host having a route out.** A locked-down or air-gapped builder has none.
 
 Each of those fails at the worst possible moment — while you are shipping — and none of them
-is your bug to fix. Vendoring inverts it: the repository holds everything the build needs, so
-a build works from a checkout alone, offline, years later. The cost is about 2.8 MB in git for
+is your bug to fix. Vendoring inverts it for these files: the repository holds them, so
+the build needs no npm, years later. The rest of the build still pulls its base images and
+package repositories. The cost is about 2.8 MB in git for
 the two API-docs packages (4.4 MB with the fonts) and this five-minute procedure.
 
 The same reasoning applies at runtime, which is why the files exist in the first place.
 FastAPI's stock docs handlers load their JavaScript from `cdn.jsdelivr.net`, and Swagger's
 default favicon comes from `fastapi.tiangolo.com`. On a cluster with no route to the internet
-— which is what this chart targets, pulling oauth-proxy from the internal registry and
-injecting a trusted CA bundle — those pages render blank. Serving them from a CDN also had an
+— which is what this chart targets, injecting a trusted CA bundle — those pages render blank. Serving them from a CDN also had an
 authenticated admin's browser talking to two third parties on every visit.
 
 ## Why the script talks to npm and not to the CDN
@@ -76,8 +76,9 @@ So the script never asks a CDN. It goes to the publisher:
 2. download the release tarball, recompute sha512, compare against that digest
 3. only then extract the file and record its sha256
 
-Every network path in the script runs through one function that performs step 2, so no mode
-can skip it. A tarball that fails is refused rather than vendored.
+Every download of asset bytes (`--update`, `--upgrade`) runs through one function,
+`fetch_and_verify_tarball`, that performs step 2, so neither can skip it; `--outdated` only asks
+npm for the `latest` version. A tarball that fails is refused rather than vendored.
 
 **Residual trust, stated plainly:** the npm registry itself, and TLS to it. That is a smaller
 and more accountable surface than a CDN edge, but it is not zero. If you need better, mirror

@@ -128,8 +128,8 @@ What is in the pod's shell: `sh`, `bash`, `curl`, `jq`, `cat`, `ls`, `base64`, `
 `chmod`, `rm`, `rmdir`. What is not: `head`, `wc`, `grep`, `id`, `pip`, `rpm`, `dnf`. A command that needs
 one of those fails with "command not found".
 
-Scan locally with the scanner CI uses — Grype, because Trivy does not recognise the base's OS. CI's
-scans only report (`fail-build: false`); `--fail-on high` makes this one fail:
+Scan locally with the scanner CI uses — Grype, because Trivy does not recognise the base's OS. In CI a
+vulnerability match only reports (`fail-build: false`); `--fail-on high` makes this one fail:
 
 ```bash
 podman build --target pack -t gsd:pack -f Containerfile .

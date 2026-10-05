@@ -271,8 +271,10 @@ a Grafana dashboard (a sidecar-labelled ConfigMap, `monitoring.grafanaDashboard`
 `GrafanaDashboard` CR where the cluster serves grafana-operator's API) that follows the
 ServiceMonitor's switch by default — see `docs/specs/SPEC_B3_grafana_dashboard.md`.
 
-Cardinality is bounded deliberately: series are per cluster, per GroupSync CR and per fixed
-category (a finding, an alert kind, a report, a schedule), never per group or per user. That is a scale concern — 500 groups must not mean 500 series — and a
+Cardinality is bounded deliberately: the application's label names are `branch`, `change`,
+`cluster`, `commit`, `component`, `finding`, `groupsync`, `kind`, `namespace`, `node`, `origin`,
+`outcome`, `provider`, `report`, `schedule`, `severity`, `source`, `state`, `status`,
+`subject_kind`, `table`, `threshold`, `tier` and `version`, never a group or a user. That is a scale concern — 500 groups must not mean 500 series — and a
 disclosure one, since `/metrics` is unauthenticated so a ServiceMonitor can reach it.
 
 `gsd_groupsync_last_sync_timestamp_seconds` is a unix timestamp rather than a precomputed age
@@ -322,9 +324,10 @@ Full detail, including CRC-specific traps, in
 
 [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs **that same script** on
 every merge to `main` that changes an image input, and commits nothing back to this repository:
-the immutable `<version>-<sha>` tag every time, the `:<version>` alias only when a human moved
-`version` in `pyproject.toml`. On `main`, the pushed digest is then signed and attested — keyless,
-under GitHub's OIDC identity — and its SBOM kept as an artifact and attached to the image. How an
+the `<version>-<sha>` tag every time, the `:<version>` alias only when a human moved
+`version` in `pyproject.toml`. With `SUPPLY_CHAIN_SBOM` and `SUPPLY_CHAIN_SIGNING` on (the unset default), its SBOM is kept as
+an artifact, and on `main` the pushed digest is signed and attested — keyless, under GitHub's OIDC
+identity — with the SBOM attached. How an
 operator checks all of that: [`charts/group-sync-dashboard/docs/HELM_DOWNLOAD_AND_INSTALL.md`](charts/group-sync-dashboard/docs/HELM_DOWNLOAD_AND_INSTALL.md);
 the release model: [`docs/guides/RELEASING.md`](docs/guides/RELEASING.md).
 
@@ -345,8 +348,9 @@ thing locally and in CI. Registry and namespace are **variables, not secrets** �
 sensitive, and as secrets they would be masked in exactly the logs where you want to see which
 registry a run pushed to.
 
-**Re-running a commit is safe.** The tag embeds the commit sha, so the same tag can only ever
-mean the same source; a re-run pushes an identical image, and the aliases are server-side copies
+**Re-running a commit names the same source.** The tag embeds the commit sha, so the same tag can
+only ever mean the same source; a re-run re-pushes it, possibly with different bytes (floating
+bases, `dnf update`), so pin `image.digest` when the bytes must not move. The aliases are server-side copies
 of that manifest, so no tag can end up naming different content than the digest that was signed.
 
 Credentials are never put on a command line — `secrets` go to the step's `env` and the script

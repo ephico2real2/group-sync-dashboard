@@ -38,11 +38,11 @@ Verdicts:
 
 | document | claims checked | fixed | not measured | code-suspect |
 |---|---|---|---|---|
-| `docs/guides/RELEASING.md` | 47 | 12 | 3 | 1 |
+| `docs/guides/RELEASING.md` | 47 | 16 | 3 | 1 |
 | `docs/guides/RELEASE_BRANCH_SETUP.md` | 19 | 1 | 5 | 0 |
-| `docs/guides/image-vulnerability-scan.md` | 19 | 3 | 4 | 0 |
-| `docs/guides/updating-vendored-assets.md` | 17 | 4 | 2 | 0 |
-| `README.md` | 29 | 6 | 4 | 0 |
+| `docs/guides/image-vulnerability-scan.md` | 19 | 4 | 4 | 0 |
+| `docs/guides/updating-vendored-assets.md` | 20 | 7 | 2 | 0 |
+| `README.md` | 29 | 7 | 4 | 0 |
 | `local-development/README.md` | 27 | 6 | 4 | 0 |
 
 `local-development/README.md` is an image input (`publish.yml` line 84), so this change takes application
@@ -64,7 +64,7 @@ version fields and release notes for review". Run in a throwaway clone on a bran
 
 It ran `tests/test_chart_versions.py` and committed nothing (`done : --no-commit, …`). The issue PRs that carried a
 bump kept less: `06431584` (#598) and `4eee95e4` (#616) added one bullet under `## Unreleased` and changed no spec
-status from `merged`; `86c118f0^2` (#619) changed exactly `Chart.yaml` (both history lines), `pyproject.toml`,
+status from `merged` (#598 kept its own P1 `specified` → `merged`); `bfbd6c28` (#619) changed exactly `Chart.yaml` (both history lines), `pyproject.toml`,
 `gsd/__init__.py` and one `## Unreleased` bullet. The guide now names every edit the flag makes and what an issue PR
 keeps, and the migration paragraph says the application heading stays there (the schema line needs it,
 `tests/test_migration_needs_app_release.py`).
@@ -78,10 +78,10 @@ keeps, and the migration paragraph says the application heading stays there (the
 | Cut with `prepare-release.py`; lower components reset to zero | CORRECT | `kind_of_bump` refuses a move that leaves a lower component non-zero (lines 85-102) |
 | The app-bump job: `on.push.paths` allowlist, merge ref vs base SHA, next MINOR/MAJOR only, bad base fails, version lines are not content, the README is an input | CORRECT | `check-app-version-bump.py` lines 32-55, 99-151; `ci.yml` job `app-version-bump` |
 | The PR gate's jobs and the two named checks | CORRECT | `ci.yml` jobs `tests` (3.11, 3.14), `ui`, `chart`, `diagrams`, `image`, `version-bump`, `app-version-bump`; branch protection requires seven of them (`gh api …/branches/main/protection`) |
-| "fans out to two independent workflows" | FIXED | `promote.yml` also runs after a merge (`workflow_run` of publish, and a chart or `environments/` push, lines 15-29). Now names it |
-| `publish.yml` "writes to nothing in this repository" | FIXED | the `attest` job holds `attestations: write` "to store the provenance statement in this repository's attestation store" (lines 422-427). Now: commits nothing; its one write there is the provenance |
+| "fans out to two independent workflows" | FIXED | `promote.yml` also runs after a merge (`workflow_run` of publish, and a chart or `environments/` push, lines 15-29). Now names it **Found by Codex's review:** each workflow has its own path filter (`publish.yml` lines 81-93, `helm.yaml` line 26), so a merge starts either, both or neither. Now says so. |
+| `publish.yml` "writes to nothing in this repository" | FIXED | the `attest` job holds `attestations: write` "to store the provenance statement in this repository's attestation store" (lines 422-427). Now: commits nothing; its one write there is the provenance **Found by Codex's review:** the `sbom` job also uploads the SBOM as a workflow artifact (`upload-artifact: true`), and the provenance write needs signing on. Now names both. |
 | The image inputs: `gsd/** · pyproject.toml · README.md · Containerfile · .containerignore · build script` | FIXED | `publish.yml` `on.push.paths` (lines 81-93) has twelve entries, including `Containerfile.report`, `build-and-push-report.sh`, `uninstall-lists.py`, both proofs and `publish.yml`. Now lists them |
-| The release decision: version moved → immutable tag and alias; unchanged → immutable only; cannot tell → immutable only with a `::warning::` naming `--release-tags` | CORRECT | `publish.yml` lines 196-238 |
+| The release decision: version moved → immutable tag and alias; unchanged → immutable only; cannot tell → immutable only with a `::warning::` naming `--release-tags` | FIXED | `publish.yml` lines 196-238 **Found by Codex's review:** the sha tag is not immutable. `build-and-push-external.sh` pushes `<appVersion>-<sha10>` unconditionally (line 205), the bases float and the pack runs `dnf update` (`Containerfile` lines 26, 54, 62, 68), and `publish.yml` line 292 says a `workflow_dispatch` rebuilds both images: a rebuild of the same commit re-pushes the tag, possibly with different bytes. "Immutable" for that tag is now "sha tag" in the diagram, step 8, the scripts' comment and the prose rows; the `promote.yml` message `immutable image … is not ready` is quoted as the code prints it. |
 | A release push publishes `:<appVersion>` (the diagram's `yes` branch) | FIXED | `build-and-push-external.sh --release-tags` copies to `${VERSION}` and `${CHART_VERSION}` (lines 262-277); quay: `0.70.7` and `5.4.0` both `sha256:9f6ed6458b16…`. The branch now shows `:<chartVersion>` too |
 | Tag scheme `<appVersion>-<10-char sha>` | CORRECT | `COMMIT="${COMMIT:0:10}"` (line 133); quay tag `5.4.0-86c118f093` |
 | `sbom`, `attest`, `latest` jobs; `:latest` on main only, after `attest` or after `publish` with signing off | CORRECT | `publish.yml` lines 334-638; run 37297540505: six jobs, all `success` |
@@ -91,15 +91,15 @@ keeps, and the migration paragraph says the application heading stays there (the
 | The `ErrImagePull` race "measured at 4.1.0, 4.4.0 and 5.1.0" | NOT MEASURED | historical |
 | `--argocd release` removes it; `--argocd main` switches back; the epic walk runs on `release` (`.claude/skills/epic/SKILL.md` section 6) | CORRECT | `release-crc.sh` lines 42-46 and 255-300; the skill's section 6, item 3 |
 | A second install needs its own release name, because cluster-scoped objects are named by release | CORRECT | `helm template` as `group-sync-dashboard` and `group-sync-dashboard-dev`: seven cluster-scoped objects each, no name shared |
-| `promote.yml`'s triggers, the five steps, what `release` holds, the commit subject, no workflow on `release` | CORRECT | `promote.yml` lines 15-38, 140-282; `gh api …/git/trees/release`: `charts`, `environments`, `promotion.yaml`; the tip's subject `promote: main 86c118f0…` |
+| `promote.yml`'s triggers, the five steps, what `release` holds, the commit subject, no workflow on `release` | FIXED | `promote.yml` lines 15-38, 140-282; `gh api …/git/trees/release`: `charts`, `environments`, `promotion.yaml`; the tip's subject `promote: main 86c118f0…` **Found by Codex's review:** the push trigger also lists `.github/workflows/promote.yml` (line 27). Added. |
 | One writer: the deploy key in the `release` environment (main only); a ruleset only deploy keys bypass, force pushes blocked; the job token `contents: read` | CORRECT | `gh api`: environment `release` `custom_branch_policies: true`, one rule `main` of type `branch`; ruleset 24475607 rules `creation`, `update`, `deletion`, `non_fast_forward`, bypass `DeployKey` `always`; `promote.yml` line 46 |
 | Rollback, and `release-crc.sh --argocd release` refusing a `release` without `promotion.yaml` | CORRECT | `promote.yml` lines 145-150; `release-crc.sh` lines 260-264 |
 | The operator's one-time steps | CORRECT | they match `RELEASE_BRANCH_SETUP.md` and the live settings above |
-| The four tags, including `:latest` (#425) | CORRECT | quay: `5.4.0`, `0.70.7`, `5.4.0-86c118f093` and `latest` all at `sha256:9f6ed6458b16…`; `test_the_docs_say_what_latest_names` passes |
+| The four tags, including `:latest` (#425) | FIXED | quay: `5.4.0`, `0.70.7`, `5.4.0-86c118f093` and `latest` all at `sha256:9f6ed6458b16…`; `test_the_docs_say_what_latest_names` passes **Found by Codex's review:** the sha tag's row said "never, by POLICY" and "byte-identical rollbacks", and the `image.tag` precedence entry "immutable BY CONVENTION": a rebuild re-pushes it (row above). The row, the note under the table, that entry, the `imagePullPolicy` paragraph and the pin example now point at `image.digest` for exact bytes. |
 | `image.digest` wins; a malformed digest fails the render and names `skopeo inspect` | CORRECT | `helm template --set image.digest=sha256:abc`: `image.digest "sha256:abc" is not a digest …` with `skopeo inspect --no-tags docker://…:5.4.0` |
 | `image.tag: ""` and `default .Chart.AppVersion` | CORRECT | `values.yaml` line 32; `_helpers.tpl` `gsd.image`; render `quay.io/ephico2real/group-sync-dashboard:5.4.0` |
 | `imagePullPolicy` is `Always` | CORRECT | `values.yaml` line 60; render |
-| "Every pushed image is signed and attested" | FIXED | `attest` runs only on `refs/heads/main` (`publish.yml` line 420); a dispatch from another branch pushes unsigned images (D9). Now "every image `publish.yml` pushes from `main`" |
+| "Every pushed image is signed and attested" | FIXED | `attest` runs only on `refs/heads/main` (`publish.yml` line 420); a dispatch from another branch pushes unsigned images (D9). Now "every image `publish.yml` pushes from `main`" **Found by Codex's review:** the image signing needs `SUPPLY_CHAIN_SIGNING` on, and `helm.yaml` attests only a newly published chart (line 352). Now qualified. |
 | Two repository variables turn the modules off; unset means on | CORRECT | `gh api …/actions/variables`: none set; `publish.yml` lines 342, 419 |
 | Steps 1-3 and 5 of an application release | CORRECT | `prepare-release.py` lines 350-367; the `--no-commit` run above |
 | Step 4: "`ci.yml` fails the PR if the version did not move" | FIXED | `ci.yml`'s check drops `Chart.yaml` from the changed set (`grep -v '/Chart.yaml$'`). Run on an `appVersion`-only commit in the clone: `changed=[]`, so the check prints "no chart content changed" and passes. Now says CI does not catch it. The consequence is finding 2 |
@@ -112,12 +112,12 @@ keeps, and the migration paragraph says the application heading stays there (the
 | The schema line's text, `N` and `M`, the shallow-clone refusal naming `fetch-depth: 0` | CORRECT | `SCHEMA_LINE`, `schema_since_app_release` (lines 168-195); `test_t300_8_releasing_md_states_the_line_and_when_it_appears` passes |
 | CI enforces it since `2e7d33be`, then application 2.3.0; 3.0.0 and 4.0.0 stayed at schema 20 | CORRECT | `highest_migration` read with `git show`: `2e7d33be` 2.3.0 → 20; HEAD 5.4.0 → 20 |
 | The chart-only release | FIXED | it also moves `merged` specs to `released` (same function; `promote_merged_specs` runs for `--chart` too). Added |
-| "Neither": `--no-commit` "prepares the matching version fields and release notes" | FIXED | the section above. Now names every edit and what an issue PR keeps |
+| "Neither": `--no-commit` "prepares the matching version fields and release notes" | FIXED | the section above. Now names every edit and what an issue PR keeps **Found by Codex's review:** an issue PR keeps the bullets already under `## Unreleased` and any status change the issue made itself: `06431584` keeps #598's own P1 `specified` → `merged`. #619's bump commit is `bfbd6c28` (`86c118f0` is its merge). Now says so. |
 | A migration is never "neither"; the test fails such a PR; commit the bump after the migration | CORRECT | `tests/test_migration_needs_app_release.py` `assert_schema_released` |
-| The migration paragraph's "commit the edits" | FIXED | the test requires the version's own application heading when the schema rises (`assert_release_schema_notes`); the paragraph now says that heading stays |
+| The migration paragraph's "commit the edits" | FIXED | the test requires the version's own application heading when the schema rises (`assert_release_schema_notes`); the paragraph now says that heading stays **Found by Codex's review:** it also keeps the collected bullets and the script's `merged` → `released` moves, since the heading stays. Added. |
 | When Actions is down: the three commands, `--release-tags` off by default and refusing a dirty tree, two images since 0.18.0, the recovery `publish.yml` names | CORRECT | `build-and-push-external.sh` lines 55-63, 233-279; `build-and-push-report.sh`; `publish.yml` lines 221-226 |
 | `--update-values` is the local path; CI never uses it | CORRECT | `publish.yml` lines 259-271 |
-| The troubleshooting table's messages | CORRECT | each string is in the code: `helm.yaml` lines 232, 238, 271, 295; `promote.yml` lines 64, 136, 147, 162, 207, 223, 239, 244, 251; `release-crc.sh` line 262; `publish.yml` lines 589, 617-633 |
+| The troubleshooting table's messages | FIXED | each string is in the code: `helm.yaml` lines 232, 238, 271, 295; `promote.yml` lines 64, 136, 147, 162, 207, 223, 239, 244, 251; `release-crc.sh` line 262; `publish.yml` lines 589, 617-633 **Found by Codex's review:** the `helm search repo` row still said the version-bump check stops a missed bump (it passes an `appVersion`-only edit, step 4), and the pod row told readers to pin the sha tag, which a rebuild can move. Both rows corrected. |
 | `:0.39.0` was application 0.24.0; the report repository's first publish (2026-09-11) | NOT MEASURED | historical |
 | #34 and #37 | NOT MEASURED | historical; `publish.yml`'s header records them |
 
@@ -165,9 +165,9 @@ keeps, and the migration paragraph says the application heading stays there (the
 | CI scans both the shipped image and the pack stage | CORRECT | `ci.yml` `image` job |
 | `sqlite3.enable_load_extension(False)` on every connection; `gsd/store.py#Store.sync_members` | CORRECT | `store.py` lines 1372 and 2278 |
 | SQLite 3.53.4 and the measured features | NOT MEASURED | needs the image |
-| "The gate is in CI … It fails only on findings somebody can act on" | FIXED | advisory (above); the medium-and-above inventory is uploaded as SARIF; only the two distribution checks fail the job. Now says so, and names the report image's two scans |
+| "The gate is in CI … It fails only on findings somebody can act on" | FIXED | advisory (above); the medium-and-above inventory is uploaded as SARIF; only the two distribution checks fail the job. Now says so, and names the report image's two scans **Found by Codex's review:** `fail-build: false` keeps a vulnerability match from failing a scan step; a build or scanner error still fails it. Now says so. |
 | Floating tags; nothing pins a snapshot; `workflow_dispatch` forces a rebuild | CORRECT | the `FROM` lines carry no digest; `publish.yml` line 96 |
-| Every pushed image carries the SBOM as an attestation and an artifact; `grype sbom:sbom.spdx.json` | CORRECT | `publish.yml` `sbom` and `attest` jobs; the install guide's "The SBOM" paragraph writes `sbom.spdx.json` |
+| Every pushed image carries the SBOM as an attestation and an artifact; `grype sbom:sbom.spdx.json` | FIXED | `publish.yml` `sbom` and `attest` jobs; the install guide's "The SBOM" paragraph writes `sbom.spdx.json` **Found by Codex's review:** the attestation needs `SUPPLY_CHAIN_SBOM` and `SUPPLY_CHAIN_SIGNING` on and a run on `main` (`publish.yml` lines 342, 415-420). Now qualified. |
 
 The limits and the previous analysis are records of their dates and were not re-measured.
 
@@ -180,6 +180,9 @@ The limits and the previous analysis are records of their dates and were not re-
 | The four commands and what each touches | CORRECT | `vendor-assets.sh` header; offline run: eleven `✓`, "All assets match. Nothing was downloaded."; `--outdated` left `git status` empty |
 | CI and `tests/test_vendored_assets.py` run the offline check | CORRECT | `test_the_script_verifies_offline`; CI's `tests` job runs the suite |
 | "~2.5MB in git" | FIXED | measured: the API-docs files are 2,827,977 bytes, the whole directory 4,396,633. Now "about 2.8 MB … (4.4 MB with the fonts)" |
+| "a build works from a checkout alone, offline" | FIXED | **Found by Codex's review:** the vendored files need no npm, but the build still pulls its base images and uses the pip and dnf repositories (`Containerfile` lines 26-71). Now limited to these files. |
+| the chart pulls oauth-proxy "from the internal registry" | FIXED | **Found by Codex's review:** the default is `registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15` (`values.yaml` `oauthProxy.image`; render). Removed. |
+| "Every network path in the script runs through one function that performs step 2" | FIXED | **Found by Codex's review:** `--outdated` asks npm for the `latest` version (`latest_version`, line 102) without that function; only `--update` and `--upgrade` download asset bytes, through `fetch_and_verify_tarball` (lines 109-137, called at line 255). Now says so. |
 | FastAPI's stock handlers load from `cdn.jsdelivr.net`; the favicon from `fastapi.tiangolo.com` | NOT MEASURED | third-party behaviour (`api.py` lines 925-926 says the same of the CDN) |
 | The integrity method: npm's `dist.integrity`, sha512, then sha256 | CORRECT | `vendor-assets.sh` lines 36-38 and 107-121 |
 | The example outputs | CORRECT | the live `--outdated` prints the same form (`↑ redoc 2.5.3 → 2.5.4 available`) |
@@ -213,14 +216,14 @@ The limits and the previous analysis are records of their dates and were not re-
 | 148 certificates | NOT MEASURED | historical |
 | A cluster's own `caBundleFile` wins | CORRECT | `config.py` "An explicit per-cluster bundle always wins" (line 532) |
 | Monitoring: "twelve alerting rules (fourteen with the off-volume backup CronJob on), both off by default", "the reference cluster runs no Prometheus" | FIXED | default render: 20 alerts; 18 with `backup.offsite.enabled=false`; the chart README says three need reporting; `monitoring.serviceMonitor.enabled` and `monitoring.prometheusRule.enabled` are `true`; the lab runs Prometheus (below). Now twenty, on by default, and the `GrafanaDashboard` CR (render with `--api-versions grafana.integreatly.org/v1beta1`: one) |
-| Cardinality "per cluster and per GroupSync CR only, never per group or per user" | FIXED | the label names in `gsd/` also include `finding`, `kind`, `report`, `schedule`, `node`, `threshold`; none names a group or a user. Now says so |
+| Cardinality "per cluster and per GroupSync CR only, never per group or per user" | FIXED | the label names in `gsd/` also include `finding`, `kind`, `report`, `schedule`, `node`, `threshold`; none names a group or a user. Now says so **Found by Codex's review:** the label names also include `branch`, `change`, `commit`, `component`, `namespace`, `origin`, `outcome`, `provider`, `severity`, `source`, `state`, `status`, `subject_kind`, `table`, `tier` and `version` (`labels=[…]` in `gsd/metrics.py` and `gsd/reporting/metrics.py`, the label tuples in `gsd/kpi/definitions.py`). The README now lists all twenty-four; none names a group or a user. |
 | The timestamp metric; `GroupSyncDashboardNotPolling`; `/healthz` unconditional, `/readyz` reads the store; the two WAL alerts | CORRECT | render; `api.py` lines 3019-3021, 3373-3385 |
 | "The remaining five … The chart README lists all eight" | FIXED | twenty (above). Now "Five more … all twenty" |
 | Building and shipping: the tag, the stamp, `/api/version`, the dirty-tree refusal | CORRECT | `build-and-push-external.sh` lines 131-166 |
-| `publish.yml` "writes nothing back to this repository" | FIXED | the provenance write (above). Now "commits nothing back" |
+| `publish.yml` "writes nothing back to this repository" | FIXED | the provenance write (above). Now "commits nothing back" **Found by Codex's review:** the SBOM artifact needs `SUPPLY_CHAIN_SBOM`, the signature `SUPPLY_CHAIN_SIGNING`; the README's "immutable" sha tag is now "the `<version>-<sha>` tag". Now qualified. |
 | The secrets and variables table | CORRECT | `gh api`: secrets `REGISTRY_PASSWORD`, `REGISTRY_USERNAME`; `publish.yml` defaults; `ci.yml` `vars.CI_UI_TESTS != 'false'` (line 267) |
 | The robot account example | NOT MEASURED | an example name |
-| Re-running a commit is safe; secrets in step `env`, checked in a step | CORRECT | `build-and-push-external.sh` aliases by `skopeo copy`; `publish.yml` lines 146-168 |
+| Re-running a commit is safe; secrets in step `env`, checked in a step | FIXED | `build-and-push-external.sh` aliases by `skopeo copy`; `publish.yml` lines 146-168 **Found by Codex's review:** a re-run re-pushes the sha tag, possibly with different bytes (the release-decision row above). Now says so and points at `image.digest`. |
 | What it shows: up to fourteen tabs and the cited functions | CORRECT | `test_access_declaration.py` and `test_docs_citations.py` pass |
 | What it writes | FIXED | the five places are right (batch 2's evidence). The section did not name the SubjectAccessReviews the tiers create (`kube.py` `SAR_API`, line 1379) or the fleet login's token, which `fleetlogin.py` revokes when done. One sentence added |
 | `ReconcileError` is sticky; current only when newer than the success | CORRECT | `state.py` lines 114-126; `api.py` line 1098 |
@@ -246,7 +249,7 @@ The limits and the previous analysis are records of their dates and were not re-
 | `test_live_smoke.py` runs in no CI job | CORRECT | deselected in `ci.yml` |
 | The image's bases, the `pack` stage, `Containerfile.annotated` (held identical) and `Containerfile.ubi` | CORRECT | `Containerfile`; both files exist; `tests/test_containerfile.py` |
 | What is in the pod's shell | FIXED | the pack also copies `rmdir` (`Containerfile` line 80). Added |
-| "Scan locally the way CI does" with `--fail-on high` | FIXED | CI's scans are advisory (`fail-build: false`, above). Now says CI only reports and the flag makes the local run fail |
+| "Scan locally the way CI does" with `--fail-on high` | FIXED | CI's scans are advisory (`fail-build: false`, above). Now says CI only reports and the flag makes the local run fail **Found by Codex's review:** the CI sentence said the scans only report; it is a vulnerability match that only reports. Reworded. |
 | The API docs routes | CORRECT | `api.py` lines 931, 3405, 3418, 3428 |
 | `cluster-report.py` needs the API token access and cluster-wide RBAC read | CORRECT | the delegated review on `list clusterrolebindings` |
 | `render-manifests.sh`: `deploy/`, gitignored, never applies; the Ingress host only with `ingress.enabled=true` | CORRECT | the script; `.gitignore` line 68 |
