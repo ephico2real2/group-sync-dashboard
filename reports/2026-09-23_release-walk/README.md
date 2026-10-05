@@ -73,3 +73,11 @@ E2E_WALK_DIR=local-development/e2e-walk local-development/.venv/bin/python \
   reports/2026-09-23_release-walk/validate_release.py \
   --base https://group-sync-dashboard.apps-crc.testing --login-user kubeadmin --out "$S/release"
 ```
+
+## Walk documents and PDFs, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git, and PDFs older than a day
+were removed to keep the repository small. The text above is left as recorded. These files are no longer in the
+tree. They remain in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-23_release-walk):
+
+- the walk document: `e2e-walk.html`;

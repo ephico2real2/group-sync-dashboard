@@ -149,3 +149,8 @@ for k in cani grant secret lease tokens sharedqa pvcs version; do reports/2026-0
 
 `scripts/walk.py` reads `developer`'s UI password from `GSD_UI_PASSWORD`. `scripts/run.sh` fills it from
 `crc console --credentials` for that one command only.
+
+## The walk document, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git. The text above is left as
+recorded. `walk.html` is no longer in the tree; it remains in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-29_rejoin-465-walk).

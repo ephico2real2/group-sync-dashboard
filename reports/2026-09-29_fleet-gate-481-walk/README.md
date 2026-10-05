@@ -83,3 +83,8 @@ because 1.18.0 was already deployed.
   `restart-observed.txt`, `after-podlog.txt`, `after-argo.txt` and `argo-after-restart.txt` come from the commands their
   first lines name, not from the script; the per-event counts in `after-podlog.txt` are recorded without the command
   that produced them, and its one data line carries the same `<fleet account>` replacement.
+
+## The walk document, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git. The text above is left as
+recorded. `walk.html` is no longer in the tree; it remains in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-29_fleet-gate-481-walk).

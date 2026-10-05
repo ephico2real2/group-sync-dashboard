@@ -58,3 +58,11 @@ corrected it; the scripts that ran them and their raw output are in `walk/`, and
   from the CRC install (`~/.crc/machines/crc/kubeadmin-password`, `crc console --credentials`) and never print a
   password or a token. `capture.sh` is the first capture, before the rejoin; the README's screenshots come from
   `capture2.sh`, run after it.
+
+## Walk documents and PDFs, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git, and PDFs older than a day
+were removed to keep the repository small. The text above is left as recorded. These files are no longer in the
+tree. They remain in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-24_d2b-lab-walk):
+
+- the walk document: `e2e-walk.html`;

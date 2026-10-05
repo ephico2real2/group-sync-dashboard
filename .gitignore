@@ -73,3 +73,10 @@ local-development/deploy/
 #   npx skills add mager/frontend-design
 .agents/
 skills-lock.json
+
+# Walk documents stay local for review, not in git (the operator, 2026-10-05): build_doc.py writes doc/e2e_walk.html and
+# doc/e2e_walk.pdf into each walk folder; older walks named them e2e-walk.html/.pdf at the folder root.
+reports/*/doc/
+reports/*/e2e-walk*.html
+reports/*/e2e-walk*.pdf
+reports/*/walk.html

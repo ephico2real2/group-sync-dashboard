@@ -107,9 +107,11 @@ two or three key PNGs (render), then a zip of the report artefacts and a zip of 
 ## Step 5 — commit the evidence, file the findings
 
 - `reports/YYYY-MM-DD_<slug>/` on a branch from main: `artefacts/` (the service's files), `screenshots/`
-  (main walk `NN-*.png`, second pass `extra-NN-*.png`, `pdf-page1-*.png`), `e2e-walk.pdf`, the four
-  results files, and a `README.md` (outcome line, what is here with counts, findings with issue
-  numbers, how to repeat). The README at the top of the reports folder (PR #98) holds the folder
+  (main walk `NN-*.png`, second pass `extra-NN-*.png`, `pdf-page1-*.png`, all at full resolution, never
+  downscaled), the four results files, and a `README.md` (outcome line, what is here with counts,
+  findings with issue numbers, how to repeat). The walk document (`doc/e2e_walk.html` and `.pdf`) is
+  NOT committed: it stays local for review and is sent to the operator in Step 4, and `.gitignore`
+  keeps `reports/*/doc/` out (the operator, 2026-10-05). The README at the top of the reports folder (PR #98) holds the folder
   convention and a row per walk — add the row. The two READMEs are scanned by the docs citation test: a backticked `.md`/`.py` path must
   resolve; name a file that will exist only after another PR merges in plain words.
 - Every product finding becomes an issue with the measurement and the mechanism from the source

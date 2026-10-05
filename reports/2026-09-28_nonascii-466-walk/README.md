@@ -119,3 +119,8 @@ bash "$R/scripts/capture.sh" podlog cleared <the delete instant>   # after the n
 ```
 
 `GSD_UI_PASSWORD` is `developer`'s password, taken from `crc console --credentials -o json` into the environment only.
+
+## The walk document, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git. The text above is left as
+recorded. `walk.html` is no longer in the tree; it remains in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-28_nonascii-466-walk).
