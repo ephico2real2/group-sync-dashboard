@@ -4,8 +4,9 @@ For someone who has to operate or extend this and has never seen it. It collects
 reasoning that is otherwise spread across code comments, `values.yaml` and the other
 documents in this directory, and it says where each claim lives so you can check it.
 
-Everything here was read out of the code on `feat/operator-config-health`. Where a choice
-is non-obvious, the file and line that decides it is cited.
+Everything here was read out of the code, and last checked against it on 2026-10-05 (application
+5.5.0, chart 0.70.8; `docs/reviews/DOCS_AUDIT_2026-10-05_b5_reference_architecture.md`). Where a
+choice is non-obvious, the file and the name or phrase that decides it are cited.
 
 ---
 
@@ -35,9 +36,20 @@ access as absent when it is not, and a false negative there closes an incident w
 
 It does not create, edit or delete anything it observes — not a GroupSync CR, not a Group, not
 a binding's subjects, its `roleRef` or its metadata. At no value of any chart setting does the
-ClusterRole carry a write verb on any of those (`templates/rbac.yaml#NO WRITE VERB`); the only object
-the dashboard writes anywhere is its own leader-election Lease. There was one write path, which labelled the
+ClusterRole carry a write verb on any of those (`templates/rbac.yaml#NO WRITE VERB`). What it does
+write on a cluster is its own Leases in its own namespace (the elector's, and one per fleet account), the
+TokenReviews and SubjectAccessReviews `system:auth-delegator` allows (the oauth-proxy's and the reader's tier;
+reviews store nothing), and the labelled cluster Secrets in its own namespace with
+`clusterConfig.secrets.writes.enabled`. The chart's secrets-mint hook, under its own ServiceAccount, creates
+the session, shared-token and ticket-key Secrets when they are absent. On a remote cluster, fleet lookup,
+`userSelfLogin` and Rejoin log in as the configured account (Rejoin: the person's), which creates an OAuth
+token for that account: fleet lookup and Rejoin revoke it on exit, `userSelfLogin` keeps and renews it and
+revokes the one it replaces, and Rejoin also asks a SelfSubjectAccessReview with it (§7.1). There was one write path, which labelled the
 unmanaged grants it discovered; §7.3 is the live-cluster measurement that removed it.
+
+Housekeeping, on by default in the chart, lets the cluster-admin tier delete finished report runs and old
+database copies on the pods' own volumes, previewed and confirmed; a queued or running run and the newest
+copy in each backup directory are never deleted (`gsd/housekeeping.py`, `gsd/reporting/artifacts.py`).
 
 ---
 
@@ -71,7 +83,7 @@ flowchart TB
     human1 --> hand --> hand2
   end
 
-  subgraph dash["The dashboard — read-only, one replica"]
+  subgraph dash["The dashboard — read-only on what it observes, one replica"]
     direction TB
     poll["Poll<br/>60s CRs and groups<br/>3600s bindings"]
     classify{"Classify every<br/>binding and grant"}
@@ -90,7 +102,7 @@ flowchart TB
 
   subgraph publish["Published three ways, same data"]
     direction LR
-    ui["UI — eight tabs<br/>verdict, why, what to do"]
+    ui["UI — up to fourteen tabs<br/>verdict, why, what to do"]
     api["/api — JSON<br/>bearer token, per cluster"]
     logs["Log — WARNING per finding<br/>UNMANAGED GRANT DISCOVERED"]
   end
@@ -137,13 +149,14 @@ flowchart TB
 5. **Published three ways from one store.** The UI for a review meeting, the API for a fleet
    aggregator, the log for a pipeline that alerts. Same data, no second copy.
 
-6. **A human closes it.** Migrate the grant to a group, or annotate the object with a
-   justification, or fix the operator. The dashboard holds no write verb and cannot do any of
-   these — the acknowledgement belongs with whoever holds the privileges, and the justification
+6. **A human closes it.** Migrate the grant to a group, or annotate the object with a justification,
+   or fix the operator. The dashboard holds no write verb on any of these objects and cannot do any
+   of these — the acknowledgement belongs with whoever holds the privileges, and the justification
    belongs next to the object it excuses.
 
 7. **The next poll confirms it.** A closed finding disappears from all three outputs together,
-   and the log says `unmanaged grant RESOLVED`. The operational goal is zero findings, at which
+   and, for an object an admin labelled `rbac.ocp.io/unmanaged=true`, the log says
+   `unmanaged grant RESOLVED` (§7.3). The operational goal is zero findings, at which
    point one directory change offboards a person from the whole cluster and an access review
    that reads clean *is* clean.
 
@@ -154,7 +167,6 @@ flowchart TB
 ```mermaid
 flowchart LR
   browser["Browser<br/>index.html, vanilla JS"] -->|HTTPS| route["Route (default)<br/>or Ingress → Route"]
-  prom["Prometheus"] -->|"/metrics, unauthenticated"| route
 
   subgraph pod["Pod — one replica"]
     direction TB
@@ -176,35 +188,37 @@ flowchart LR
   end
 
   route --> proxy
+  prom["Prometheus"] -->|"/metrics, unauthenticated,<br/>the pod IP at the Service port"| proxy
   k8s["Cluster API<br/>GroupSync, Group,<br/>RoleBinding, ClusterRoleBinding,<br/>NamespaceConfig, GroupConfig"]
   poll -->|"list — read-only"| k8s
   lease -->|"Lease get/create/update"| k8s
 ```
 
-The Lease arrow is the whole of the system's write surface, and the Lease is the dashboard's own
-coordination object — not anything it reports on. Every arrow to the observed objects is a
-`list`. §7.1.
+The Lease arrow is the dashboard's own coordination object — not anything it reports on — and every
+arrow to the observed objects is a `list`. It is not the whole write surface: the Token and SubjectAccessReviews (§7.5), the cluster Secrets with
+`clusterConfig.secrets.writes.enabled`, the secrets-mint hook's Secrets and the remote logins of §1 are
+drawn nowhere here. §7.1.
 
 ### The Python modules
 
 | Module | Responsibility |
 |---|---|
 | `gsd/config.py` | Load and validate `clusters.yaml`; resolve tokens and CA bundles on demand |
-| `gsd/kube.py` | Read-only REST client; one `ClusterClient` per cluster; flattens API objects into views |
+| `gsd/kube.py` | Kubernetes REST client; one `ClusterClient` per cluster; flattens API objects into views. It POSTs the tier's SubjectAccessReview (`gsd/kube.py#ClusterClient.create_subject_access_review`, asked by `TierResolver`), and its `_send` seam carries the fleet-Lease, cluster-Secret and Rejoin writes |
 | `gsd/poller.py` | The poll loop; one thread per enabled cluster; leader-gated |
 | `gsd/leader.py` | Lease acquisition and renewal against `coordination.k8s.io` |
-| `gsd/store.py` | The only module containing SQL or the string `sqlite3` |
+| `gsd/store.py` | The dashboard's only module containing SQL or importing `sqlite3`; the report service's `reporting/snapshot.py` is the other (below) |
 | `gsd/storage.py` | `StorageBackend` Protocol, and `open_backend()` — the one place an engine is named |
 | `gsd/state.py` | Pure functions: cron maths, CR health, alert computation. No I/O |
 | `gsd/audit.py` | The unmanaged-grant discovery plan: which bindings are findings, which are resolved, and the evidence for each. Pure decisions; the poller logs them |
-| `gsd/loginlog.py` | Parses oauth-server log text into login attempts. Pure functions, no I/O and no cluster, so every rule is testable against the real line that produced it |
-| `gsd/logincapture.py` | Reads the oauth-server's logs and records who logged in. Its own module because the failure mode is separable: capture can be off, forbidden or broken while group polling is perfectly healthy, and nothing here may take the poll down with it |
+| `gsd/loginlog.py` | The legacy oauth-server pod-log parser and the login-outcome vocabulary, kept for stored rows and the API and KPI consumers. Pure functions, no I/O and no cluster; the pod-log reader is removed |
+| `gsd/logincapture.py` | The login-capture entry point and its bounded retention; the live reader is `gsd/auditlog.py`, which reads the oauth-server's audit log and records who tried to log in. Its own module because the failure mode is separable: capture can be off, forbidden or broken while group polling is perfectly healthy, and nothing here may take the poll down with it |
 | `gsd/activity.py` | Who used the dashboard, buffered in memory, flushed on an interval |
 | `gsd/timeutil.py` | `now_iso()`, and nothing else. Split out of `store.py` because four modules importing it from there quietly made "what time is it" part of the storage contract |
 | `gsd/metrics.py` | Prometheus collector; reads the store at scrape time |
 | `gsd/api.py` | FastAPI routes, the `@consistent` decorator, app assembly |
 | `gsd/reporting/*` | The report service: its own FastAPI app (`server.py`), a read-only view over a `VACUUM INTO` copy (`snapshot.py`, the second and last module allowed to speak SQL), the ticket (`ticket.py`), the catalogue of eleven reports (`catalogue/`), the HTML and PDF renderers, the artefact store and the worker. Runs in its own pod on its own image; the dashboard imports only `ticket` and the prefix |
-| `gsd/static/index.html` | The entire frontend — one file, no build step, strict CSP |
+| `gsd/static/index.html` | The frontend — one file of vanilla JS, with its stylesheet in `app.css`, no build step |
 
 `gsd/state.py` and `gsd/audit.py` are deliberately I/O-free so their invariants are plain
 unit tests (`gsd/audit.py`). That matters most for `audit.py`: nothing is written back to the
@@ -254,14 +268,14 @@ sequenceDiagram
       end
       T->>S: maintain() — WAL checkpoint, poll thread only
       T->>S: backup() if due
-    end
-    alt binding refresh due
-      T->>K: list rolebindings + clusterrolebindings (paged)
-      T->>K: list namespaceconfigs + groupconfigs
-      T->>S: replace_bindings, replace_user_bindings, replace_operator_configs
-      opt unmanagedAudit.mode is log
-        T->>S: all_bindings — classify, then log each finding
-        Note over T,K: no call to K — nothing is written back
+      opt binding refresh due
+        T->>K: list rolebindings + clusterrolebindings (paged)
+        T->>K: list namespaceconfigs + groupconfigs
+        T->>S: replace_bindings, replace_user_bindings, replace_operator_configs
+        opt unmanagedAudit.mode is log
+          T->>S: all_bindings — classify, then log each finding
+          Note over T,K: no call to K — nothing is written back
+        end
       end
     end
   end
@@ -276,18 +290,18 @@ half-written state, which looks healthy. `record_poll` is now the last statement
 transaction, so `ok` is only true if everything above it committed.
 
 **`record_sync_event` is deliberately outside it and committed first**
-(`gsd/store.py#Store._write`). Its uniqueness key is the operator's own
+(`gsd/store.py#Store.poll_snapshot`). Its uniqueness key is the operator's own
 `lastSyncSuccessTime`, so a rollback loses an observation permanently rather than
 re-deriving it next cycle. It is `INSERT OR IGNORE`, so committing early costs nothing and
 repeats harmlessly.
 
-**`membership_event` is inside it, and safe to be** (`gsd/store.py#Store._write`). A membership
+**`membership_event` is inside it, and safe to be** (`gsd/store.py#Store.poll_snapshot`). A membership
 change self-heals: the next poll re-derives the identical change with a later `observed_at`,
 degrading the timestamp by one poll interval — which is already the documented error bar on
 "when did this person lose access?" (`charts/group-sync-dashboard/values.yaml#pollIntervalSeconds`).
 
 **A binding-refresh failure does not mark the cluster unreachable**
-(`gsd/poller.py#STANDBY_RECHECK_SECONDS`). It needs RBAC the group poll does not, so a 403 here must not
+(`gsd/poller.py#refresh_bindings`). It needs RBAC the group poll does not, so a 403 here must not
 blank out perfectly good group data. Logged, and retried next interval.
 
 **A 200 without an `items` key is refused, not read as empty** (`gsd/kube.py#ClusterClient._list_all`).
@@ -327,7 +341,7 @@ sequenceDiagram
 
   B->>P: GET /api/clusters/{id}/user-bindings
   alt path matches skipAuthRegex
-    Note over P: /healthz, /readyz, /metrics<br/>pass through unauthenticated
+    Note over P: /healthz, /readyz, /metrics, /signed-out,<br/>app.css and favicon.svg pass through unauthenticated
   else Authorization: Bearer present, path under /api
     Note over P: only when apiTokenAccess.enabled
     P->>P: TokenReview + SubjectAccessReview<br/>(delegate-urls: list clusterrolebindings)
@@ -376,7 +390,7 @@ statements the same one. Only an explicit read transaction does.
 
 It is deliberately **not** applied to single-call handlers: a snapshot holds a WAL read-mark
 and blocks checkpointing, so it is worth taking only where it buys consistency
-(`gsd/store.py#Store.poll_snapshot`). The wrapped function must be synchronous and must not stream,
+(`gsd/store.py#Store.read_snapshot`). The wrapped function must be synchronous and must not stream,
 yield or await — that would hold the snapshot for the life of the response rather than the
 life of the query. `tests/test_read_snapshot_scope.py` enforces it.
 
@@ -384,18 +398,19 @@ The metrics collector faces the same trap from the other side and solves it expl
 `collect()` is a generator that prometheus_client drives lazily while writing the response,
 so it gathers everything inside a snapshot, releases it, *then* yields (`gsd/metrics.py#DashboardCollector.collect`).
 
-**The usage middleware counts human actions, not requests** (`gsd/api.py#build_app`). The page
-polls itself every 30s and each poll is several API calls; counting requests measured how
-long a tab had been open, not whether anyone used the dashboard — one real session read 722.
-The browser stamps `X-Gsd-Interaction` on exactly one request per user-initiated refresh
-(`gsd/activity.py#EMAIL_HEADER`). The three unauthenticated paths are excluded *explicitly* rather
-than by assuming they arrive header-less, because they bypass the proxy and the caller
-decides what headers they carry (`gsd/api.py#build_app`).
+**The usage middleware counts human actions, not requests** (`gsd/api.py#build_app`). The page polls
+itself every 60s (`gsd/static/index.html#const POLL_INTERVAL_MS`) and each poll is several API
+calls; counting requests measured how long a tab had been open, not whether anyone used the
+dashboard — one real session read 722. The browser stamps `X-Gsd-Interaction` on exactly one request
+per user-initiated refresh (`gsd/activity.py#INTERACTION_HEADER`). The unauthenticated paths are
+excluded *explicitly* rather than by assuming they arrive header-less, because they bypass the proxy
+and the caller decides what headers they carry (`gsd/api.py#identity_is_trustworthy`).
 
 ### The UI
 
-One self-contained file, `gsd/static/index.html`, vanilla JS, no build step, strict CSP.
-Eight tabs (`index.html#const tab = (id, label)`):
+One file of vanilla JS, `gsd/static/index.html`, with its stylesheet in `app.css`, no build step.
+Up to fourteen tabs (`index.html#const tab = (id, label)`; the root `README.md` describes each). Seven
+of them:
 
 | Tab | Reads | Shows |
 |---|---|---|
@@ -404,26 +419,31 @@ Eight tabs (`index.html#const tab = (id, label)`):
 | Users | `/api/clusters/{id}/users`, `.../users/{name}` | every person who has logged in — one row per OpenShift `User` object — with group membership as an attribute, filtered in the browser as you type on id or display name and by chips; synced members who have never logged in are one line, by count; the same per-user page as Groups |
 | Access granted | `/api/clusters/{id}/bindings/findings` (administrator); `.../users/{viewer}` (narrowed) | every group-subject binding, classified `ok` / `dangling` / `unresolved` / `built_in` / `unmanaged`, opening on what was granted with the faults on top; per row, who it reaches — the group's members and how many have logged in — with a type-to-filter box and sortable columns; a narrowed reader sees the bindings that reach them through their groups |
 | RBAC policy | `/api/clusters/{id}/bindings/findings`, `.../operator-configs` | the policy operator's CR health beside the provenance of the bindings it templates |
-| Namespace audit | `/api/clusters/{id}/user-bindings` | grants that name a person rather than a group, ranked per namespace by privilege; server-side paging, sortable columns, namespace selector |
+| Namespace audit | `/api/clusters/{id}/user-bindings`, `.../namespaces`, `.../namespaces/{name}` | grants that name a person rather than a group, ranked per namespace by privilege; server-side paging, sortable columns, namespace selector; the namespaces the poller sees, and a page per namespace |
 | Usage | `/api/dashboard/activity` | who used the dashboard, per user per UTC day |
 
 The `index.html` served at `/` carries `Cache-Control: no-cache, must-revalidate`
 (`gsd/api.py#index`). Without it browsers apply heuristic caching to HTML and keep serving
-the old page after a redeploy — the whole app is this one file, so a stale shell silently
+the old page after a redeploy — the whole app's code is this one file, so a stale shell silently
 disables every fix behind it.
 
 The Namespace audit tab applies its namespace filter **server-side**
-(`index.html#every-grant`): the point of the filter is to stop shipping thousands of rows, and
-a client-side filter still pays for every one of them over the wire and in the DOM.
+(`gsd/static/index.html#The namespace filter is applied SERVER-side`): the point of the filter is to
+stop shipping thousands of rows, and a client-side filter still pays for every one of them over the
+wire and in the DOM.
 
 ---
 
 ## 5. Data model
 
-Fifteen tables. The distinction that governs every operational decision in this system:
+Thirty-five application tables in a fresh database (thirty-six rows in `sqlite_master`, with SQLite's
+own `sqlite_sequence`); this section is about fifteen of them, the fourteen in the
+diagram and `dashboard_user_activity` below it. The distinction that governs every operational
+decision in this system:
 
-> **`sync_event` and `membership_event` are accumulated and cannot be re-fetched. Everything
-> else is a cache the next poll rebuilds.**
+> **`sync_event` and `membership_event` are accumulated and cannot be re-fetched, and neither can
+> the history tables added beside them (`binding_event`, `kyverno_result_event`) or
+> `managed_group_seen`. The current-state tables are a cache the next poll rebuilds.**
 
 The Kubernetes API keeps no history. A CR carries one timestamp and a Group carries one of
 its own; the timeline exists only because this process observed it. Current state self-heals
@@ -446,8 +466,8 @@ erDiagram
   groupsync_state ||--o| reconcile_error : "last failure"
 ```
 
-`dashboard_user_activity` is the fifteenth and belongs to no cluster — it is who used the
-dashboard, which has no cluster dimension.
+`dashboard_user_activity` belongs to no cluster — it is who used the dashboard, which has no
+cluster dimension.
 
 ### The tables that are not obvious
 
@@ -518,8 +538,9 @@ of which 9 matter, and a list that is 92% noise is one operators stop reading
 
 For a Group subject, `unmanaged` additionally requires that the cluster demonstrably *uses* the
 policy operator — `EXISTS (… managed_source IS NOT NULL …)` over Group-subject bindings other than
-this chart's own (#354). Without that clause, every Group binding on a cluster that has never heard
-of `config-source` labels would flag. A ServiceAccount or User subject has no such gate: the platform's own
+the two charts' own provenance, this chart's (#354) and the group-sync-operator chart's (#503).
+Without that clause, every Group binding on a cluster that has never heard of `config-source`
+labels would flag. A ServiceAccount or User subject has no such gate: the platform's own
 are `built_in` before this arm (the stored `is_platform` flag: a namespace `platformNamespaces` names, a
 `system:` user, kubeadmin, OpenShift's two per-project controller bindings), and nothing silences the rest but
 the label or the annotation on its own binding. The three tiers above it are Group
@@ -608,7 +629,8 @@ already has.
 
 The cost is real and is the premise of the entire deployment shape: **SQLite is
 single-writer, and its WAL coordinates through an `mmap`'d `-shm` file that assumes every
-process is on one host.** One replica, `Recreate`, leader election, four Helm `fail` guards,
+process is on one host.** One replica, `Recreate`, leader election, the Helm `fail` guards on
+replicas and access modes,
 the RWX-versus-`ReadWriteOncePod` argument and the WAL-on-NFS alert all exist because of
 that one sentence. `docs/design/storage-coupling.md` §3.4 is explicit that moving to Postgres would
 make all of it dead weight — which is why the seam below exists but has not been used.
@@ -622,7 +644,8 @@ constructed. `Poller`, `DashboardCollector` and `ActivityRecorder` all receive t
 none creates one.
 
 `tests/test_storage_seam.py` enforces it with an AST check per module: no driver import and
-no SQL outside `store.py`, and `Store` must still satisfy the Protocol. Adding
+no SQL outside `store.py` and the report service's `reporting/snapshot.py`, and `Store` must still
+satisfy the Protocol. Adding
 `import sqlite3` to `api.py` now fails `test_no_module_imports_a_database_driver[api.py]`,
 verified by making that edit.
 
@@ -674,11 +697,11 @@ That is why the reader connection is thread-local and why `_depth()` counts per 
 **Readers never take the write lock.** Before the split, exactly one read completed during a
 0.92s bulk write on fast local storage. `/readyz` performs a read and the probe gives up at
 5s, so on slower storage that made the pod go NotReady during a routine refresh while
-`/healthz` stayed green (`gsd/store.py#Store._tx`).
+`/healthz` stayed green (`gsd/store.py#Store._reader`).
 
 **Readers get a shorter busy timeout than the writer** — 2000ms against 5000ms — for the
 same reason: a reader inheriting the writer's budget would turn a moment of contention into
-a failed probe and a restarted pod (`gsd/store.py#__all__`).
+a failed probe and a restarted pod (`gsd/store.py#Store.__init__`).
 
 **`:memory:` is special-cased** to reuse the writer connection, because each connection to
 `:memory:` is its own empty database. Tests use it; the deployment uses a file.
@@ -692,7 +715,7 @@ API misuse".
 is reentrant, so an inner `with self._conn` commits the shared transaction on exit and the
 outer block's work survives its own rollback. Measured: an outer transaction wrote
 `phase-one`, called one ordinary store method, then raised, and `phase-one` was still there.
-Eleven call sites could reach it. `_write()` (`gsd/store.py#Store.__init__`) is the deliberate join —
+Eleven call sites could reach it. `_write()` (`gsd/store.py#Store._write`) is the deliberate join —
 it participates in an ambient transaction if one is open — and is what lets `poll_snapshot()`
 turn nine transactions into one without every store method growing a `conn` parameter.
 
@@ -714,7 +737,7 @@ PASSIVE: it gives up the moment a reader holds an older snapshot. Under a steady
 API reads "gives up" can be every single time, and the WAL then grows without bound while
 the database file itself stays small — surfacing as a **full volume**, not a database error.
 So the poller forces `wal_checkpoint(TRUNCATE)` past `walCheckpointMb`, from the poll thread
-only, and counts busy results (`gsd/store.py#Store._reader`). A busy result every cycle is the
+only, and counts busy results (`gsd/store.py#Store._checkpoint`). A busy result every cycle is the
 starvation case; `gsd_sqlite_checkpoint_busy_total` is how you would ever notice.
 
 ### The report service reads a copy
@@ -749,7 +772,7 @@ re-fetched. `VACUUM INTO` rather than a file copy: it takes a read transaction f
 duration, so the output is a single consistent snapshot even while the poller writes. Copying
 `gsd.db` with a live WAL produces a torn file that opens without complaint and is missing
 the newest commits — a backup that restores, which is the worst kind
-(`gsd/store.py#Store._checkpoint`).
+(`gsd/store.py#Store.backup`).
 
 Run from the poll thread only, the same rule as the checkpoint. `keep` bounds the directory.
 
@@ -778,7 +801,7 @@ applied by the leader after each cycle's `_maybe_backup` and never before a back
 this process's life (`gsd/poller.py#Poller._prune_history`), 5,000 rows per table per cycle through
 the same id-IN-subselect shape as `prune_login_events` (`gsd/store.py#Store.prune_membership_events`,
 `gsd/store.py#Store.prune_sync_events`), served by two `(cluster_id, observed_at)` indexes added to
-`SCHEMA`. The wire says where the cut is: four history responses carry `retention: {window_days,
+`SCHEMA`. The wire says where the cut is: eight history responses carry `retention: {window_days,
 retained_since}` (`gsd/store.py#Store.history_retained_since`), and the page renders "history
 retained since …" so a timeline that begins at the edge is read as cut there, not started there.
 
@@ -799,6 +822,8 @@ The reader ClusterRole in `templates/rbac.yaml` grants `get` and `list` and noth
 | `user.openshift.io` | `identities` | get, list — only when `rbac.identities` (the first-login time from Identity objects) |
 | `rbac.authorization.k8s.io` | `rolebindings`, `clusterrolebindings` | get, list — only when `rbac.bindings` |
 | core (`""`) | `namespaces` | get, list — only when `rbac.namespaces` (the namespace report attests absence with it) |
+| `config.openshift.io` | `oauths`, `resourceNames: [cluster]` | get — only when `clusterAccess.discoverFromOAuth` (the login-gate group, read from the identity provider's filter) |
+| `wgpolicyk8s.io`, `openreports.io`, `policies.kyverno.io` | the policy reports and the CEL policy kinds | list — only when `kyverno.enabled` |
 
 The dashboard's Leases — the elector's (`leaderElection.leaseName`) and one per fleet account — are granted by a
 Role and RoleBinding, `<fullname>-leases`, in the release namespace: `get`, `create`, `update` on
@@ -814,9 +839,12 @@ by default) and reads audit logs at default OAuth verbosity. It grants no pods/l
 The auth-loglevel Jobs, identity and authentication-operator patch grant have been removed.
 See the chart README migration note for the manual Debug-to-Normal step.
 
-No `watch`, and no write verb on anything the dashboard reports on. The Leases are its own
-coordination objects, in its own namespace; with the default values they are the only thing in the
-cluster the ServiceAccount can change.
+No `watch` in the reader ClusterRole, and no write verb on anything the dashboard reports on. (The
+`-cluster-secrets` Role grants `get`, `list` and `watch` on ConfigMaps and Secrets in the release
+namespace for cluster discovery; the code sends no watch.) The Leases are its own
+coordination objects, in its own namespace; with the default values they are the only object in the
+cluster the ServiceAccount can change (its Token and SubjectAccessReviews persist nothing; the secrets-mint
+hook creates Secrets under its own ServiceAccount; remote logins use the configured account, not this one).
 
 This is checkable rather than asserted, and it holds at every setting: `helm template` with
 `config.unmanagedAudit.mode` set to `off`, `log`, `annotate`, an unrecognised word and empty
@@ -883,9 +911,9 @@ authentication from the presence of `X-Forwarded-User`** — that header is exac
 unauthenticated caller would set (`gsd/config.py#Settings`). So the chart states it, and:
 
 * `/api/dashboard/activity` returns **403** when the flag is false, whatever headers arrive
-  (`gsd/api.py#membership_changes`);
+  (`gsd/api.py#dashboard_activity`);
 * `/api/whoami` reports `authenticated: false` even when a username is present
-  (`gsd/api.py#direct_user_bindings`);
+  (`gsd/api.py#whoami`);
 * activity recording is off whenever the flag is false, regardless of what
   `userActivity.enabled` says, and the mismatch is logged at startup (`gsd/api.py#build_app`).
 
@@ -916,8 +944,9 @@ tabulates it. What is still not solved — and cannot be from one instance — i
 across identity providers, which is why `identity` is a stated assumption and why §8a remains the
 recommendation where trust boundaries differ.
 
-Three paths bypass the proxy by design — `/healthz`, `/readyz`, `/metrics`
-(`oauthProxy.skipAuthRegex`). The health paths must be there or kubelet receives a 302 to the
+These paths bypass the proxy by design (`oauthProxy.skipAuthRegex`): `/healthz`, `/readyz` and
+`/metrics`, plus `/signed-out` and two static files, `app.css` and `favicon.svg`, which carry no data.
+The health paths must be there or kubelet receives a 302 to the
 login page and kills a healthy pod. `/metrics` is there so a ServiceMonitor can scrape
 without credentials, which is precisely why the collector emits counts and states only and
 **never a group or user name** (`gsd/metrics.py`). A distinct-active-users gauge was
@@ -927,7 +956,7 @@ removed for the same reason: unlabelled is not anonymous enough to publish unaut
 `/api/dashboard/activity` defaults to **self-only**. The response is identifiable personnel
 data — who was present, on which days, between which times — and the argument that carries
 the rest of this dashboard ("you could read the groups with `oc` anyway") is true of group
-membership and false of who looked at it (`gsd/api.py#membership_changes`). `userActivity.visibility: all`
+membership and false of who looked at it (`gsd/api.py#dashboard_activity`). `userActivity.visibility: all`
 restores the older behaviour as an explicit choice. Anything unrecognised means `self`, never
 `all` (`gsd/config.py#_visibility_setting`). It is now the first of two ways that view can widen —
 §7.5 has the second.
@@ -941,7 +970,8 @@ so a read does not depend on the API server being up.
 
 ### 7.3 Unmanaged-grant discovery, and why nothing is written back
 
-`config.unmanagedAudit.mode` is `off` | `log`, default `off`. `off` runs no discovery code at
+`config.unmanagedAudit.mode` is `off` | `log`, default `log` in the chart (the application alone,
+with no value, runs `off`). `off` runs no discovery code at
 all; `log` publishes every finding to the pod log. Neither needs a write verb, and anything
 unrecognised is treated as `off` (`gsd/config.py#_audit_mode_setting`).
 
@@ -960,13 +990,14 @@ sets to label a ClusterRoleBinding granting nothing but `view`, and a single wil
 throughout — the RBAC grant was correct and irrelevant, because the escalation check runs after
 it.
 
-So a "special role" for this is 175+ rules of Kubernetes internals per binding class, or
-`escalate` on `rbac.authorization.k8s.io` (the verb that switches the check off — cluster-admin
-under a smaller name), or cluster-admin outright. All three give a read-only auditing tool the
-most privilege on precisely the most dangerous grants it exists to report. The mode, the two
-client methods that patched (86 lines, `gsd/kube.py#UNREACHABLE` records what and why) and the
-conditional `patch` grant (`templates/rbac.yaml#NO WRITE VERB`) were removed together. The full evidence,
-including the API server's own error text from the pod, is in `docs/design/unmanaged-audit-design.md`.
+So a "special role" for this is 175+ rules of Kubernetes internals per binding class, or `escalate`
+on `rbac.authorization.k8s.io` (the verb that switches the check off — cluster-admin under a smaller
+name), or cluster-admin outright. All three give a read-only auditing tool the most privilege on
+precisely the most dangerous grants it exists to report. The mode, the two client methods that
+patched (86 lines, `gsd/kube.py#NO WRITE METHOD ON THIS CLIENT` records what and why) and the
+conditional `patch` grant (`templates/rbac.yaml#NO WRITE VERB`) were removed together. The full
+evidence, including the API server's own error text from the pod, is in
+`docs/design/unmanaged-audit-design.md`.
 
 **The discovery is the deliverable.** In `log` mode the poller classifies from the rows the same
 cycle just stored, and emits one summary at INFO (`gsd/poller.py#refresh_bindings`):
@@ -986,18 +1017,20 @@ UNMANAGED GRANT DISCOVERED — crc-local: ClusterRoleBinding demo-cluster-admin-
 policy system (no config-source label, no exception annotation)
 ```
 
-The line names the role and the group because it has to stand alone as evidence. The old wording
+The line names the role and the subjects because it has to stand alone as evidence. The old wording
 was `WOULD stamp ClusterRoleBinding -/demo-cluster-admin-crb`, which framed the log as a
-rehearsal for a write and told a reader nothing about why the object mattered. Only the groups
-whose rows were classified `unmanaged` are cited: a binding can name two groups and be unmanaged
+rehearsal for a write and told a reader nothing about why the object mattered. Only the subjects
+whose rows were classified `unmanaged` are cited: a binding can name two subjects and be unmanaged
 for one of them, and citing the managed one would send a reader to inspect a grant that is fine
 (`gsd/audit.py#plan_audit_stamps`).
 
 `maxPerCycle` (default 20) bounds how many findings are *listed* individually per binding refresh.
-The summary always reports the true total and the remainder is counted as "not yet listed" rather
-than dropped, so a misclassification bug costs one screenful of log per cycle instead of the
-whole cluster at once. Resolutions are never capped — a closed finding must not queue behind new
-ones (`gsd/audit.py#plan_audit_stamps`).
+The summary always reports the true total awaiting acknowledgement (an object already labelled
+`rbac.ocp.io/unmanaged=true` is not re-announced), and the remainder is counted as "held back by the
+per-cycle cap" rather than dropped, then listed in later cycles, new findings first
+(`gsd/audit.py#AuditLogProgress`), so a misclassification bug costs one screenful of log per cycle
+instead of the whole cluster at once. Resolutions are never capped — a closed finding must not queue
+behind new ones (`gsd/audit.py#plan_audit_stamps`).
 
 A resolution is reported at INFO when an object carrying `rbac.ocp.io/unmanaged=true` stops being
 classified `unmanaged`. The dashboard never applies that label; an admin or a CI job does. The
@@ -1029,8 +1062,9 @@ to `off`, which would take the findings away from the one cluster known to have 
 
 ### 7.4 Credentials and trust
 
-Tokens are never in the config data model and are never returned by the API
-(`gsd/config.py`). They are re-read from the mounted file at the moment they are needed,
+A values entry's token is never in the config data model, and no token is returned by the API
+(`gsd/config.py`); a cluster Secret's `bearerToken` is the one the model holds, kept out of its `repr`.
+A `tokenFile` is re-read at the moment it is needed,
 deliberately not cached: a mounted Secret is updated in place on rotation, and a long-lived
 process that cached at startup would keep presenting the stale one until restarted
 (`gsd/config.py#ClusterConfig.resolve_token`).
@@ -1051,20 +1085,24 @@ helpful (`gsd/config.py#ClusterConfig.verify`).
 The container runs non-root, with a read-only root filesystem, all capabilities dropped and
 `RuntimeDefault` seccomp. Every SQLite connection — writer *and* every per-thread reader —
 has extension loading disabled, which is connection state, so hardening only the writer would
-leave every API request thread unprotected (`gsd/store.py#_MIGRATIONS`).
+leave every API request thread unprotected (`gsd/store.py#_harden`).
 
-### 7.5 Who sees what: two tiers, decided by the cluster
+### 7.5 Who sees what: three tiers, decided by the cluster
 
 Authentication (§7.2) answers *may you in*. This answers *how much*, and the cluster answers it —
 the dashboard holds no roles, groups or allowlists of its own. `docs/guides/ACCESS_CONTROL.md` is the
 tabular reference; this is the shape and the reasoning.
 
-**Two tiers, independent of each other.**
+**Three tiers; the first two independent of each other.**
 
 | | decides | resolver | default |
 |---|---|---|---|
 | cluster data | every group's membership, or only the reader's own | `gsd/api.py#viewer_scope` | `self` |
 | usage data | everyone's presence records, or only the reader's own | `gsd/api.py#usage_scope` | `self` |
+| cluster administration (#322) | the KPI page, the Cluster Configurations tab and the deletions from the page, or a refusal | `gsd/api.py#require_cluster_admin` | refused |
+
+The third is the top tier: a reader who passes it is granted the other two as well
+(`docs/guides/ACCESS_CONTROL.md` §2).
 
 The second is stricter and deliberately not derived from the first. The Usage tab is the one
 dataset that exists *only* in this database and cannot be reproduced with `oc`, so it must not
@@ -1113,13 +1151,13 @@ all `self`. Only the exact string `all` widens. Failures are deliberately *not* 
 degrades one request rather than pinning an administrator for a whole TTL — the reader still gets a
 page of their own data, never an error, so the pod log is the only place the cause appears.
 
-**The cache is what answers the objection §7.2 used to raise.** The TTL is a single constant
-(`gsd/config.py#VISIBILITY_TIER_TTL_DEFAULT`, 60s), so a read does not depend on the API server
-being reachable, and the window it buys is stated rather than implied: a reader whose grant is
-revoked keeps the wider view for at most one TTL. One resolution per viewer is in flight at a time;
-a follower whose wait expires while that slot is still held takes it over, because releasing it
-only on the leader's return meant one stuck resolution pinned that viewer to the narrow tier
-indefinitely — silently, since failing closed is the designed behaviour.
+**The cache is what answers the objection §7.2 used to raise.** The TTL is
+`visibility.tierTtlSeconds` (default 60s, `gsd/config.py#VISIBILITY_TIER_TTL_DEFAULT`), so a read
+does not depend on the API server being reachable, and the window it buys is stated rather than
+implied: a reader whose grant is revoked keeps the wider view for at most one TTL. One resolution
+per viewer is in flight at a time; a follower whose wait expires while that slot is still held takes
+it over, because releasing it only on the leader's return meant one stuck resolution pinned that
+viewer to the narrow tier indefinitely — silently, since failing closed is the designed behaviour.
 
 **A refusal names itself and nothing else** (`gsd/static/index.html#refusalCard`). It says what the
 view contains and that it is reserved, and deliberately not the role, grant, chart value or route
@@ -1154,7 +1192,7 @@ flowchart TB
     sm["ServiceMonitor + PrometheusRule<br/>optional"]
     rdep["Deployment -report<br/>replicas 1, Recreate (default on)"]
     rsvc["Service -report :8443<br/>service-ca certificate"]
-    rpvc["PVC -report-artifacts<br/>no keep annotation"]
+    rpvc["PVC -report-artifacts<br/>helm.sh/resource-policy: keep"]
     rsec["Secrets -shared-token and -ticket-key<br/>minted on the cluster once, mounted in both pods"]
     rnp["NetworkPolicy -report<br/>ingress: dashboard pod, schedule Jobs, monitoring"]
   end
@@ -1197,7 +1235,7 @@ No count in this heading, deliberately. It said "four" while the chart had grown
 | `reporting.enabled=true` with `rbac.bindings=false` | nine of the eleven reports are the binding surface |
 | `reporting.enabled=true` with a data claim that is not `ReadWriteMany` | `ReadWriteOncePod` admits one pod; `ReadWriteOnce` one node, and the two pods restart independently |
 | `reporting.snapshot.intervalSeconds < 60`, `reporting.ticket.ttlSeconds` outside `30..3600`, an unknown `reporting.pdf.variant`, a misspelt per-report switch, `loginActivity=true` with capture off, a schedule naming a report that is not enabled | each names the value and the remedy (`templates/_helpers.tpl`, `gsd.reportingGuards`) |
-| `oauthProxy.skipAuthRegex` no longer covering `/signed-out` while `logoutUrl` is set | sign-out would redirect to a path the proxy then demands a login for, so the reader lands back on the login page and the flow appears broken |
+| `oauthProxy.skipAuthRegex` no longer covering `/signed-out` while `oauthProxy.logoutUrl` is empty | the logout landing page would sit behind the proxy: the redirect from sign-out starts a fresh OAuth flow, and the reader who clicked Sign out arrives back signed in |
 
 `templates/backup-offsite.yaml` adds its own, all about mounting one claim twice and about where
 the copy goes (`charts/group-sync-dashboard/templates/backup-offsite.yaml#backup.enabled is not a value`).
@@ -1213,8 +1251,9 @@ no CronJob in those combinations instead (`charts/group-sync-dashboard/templates
 | `backup.offsite.enabled` set to a word other than `true`, `false` or empty | the switch is compared as a word, so a quoted `"false"` is off; a misspelt word must not decide whether the copy leaves the volume |
 | `destination.type` not `pvc`/`s3`; `destination.pvc.existingClaim` equal to the data claim; `keep < 0`; `s3` without a Secret or an image | a destination that is not one, a copy on the volume it protects, an unbounded negative, or credentials/tools the chart refuses to invent |
 
-`_helpers.tpl` carries ten more, and they are validation rather than combination: `ingress.host`
-(below), and nine that check the two SAR definitions and the tier TTL are *well-formed* — an API
+`_helpers.tpl` carries more, and the ones that matter here are validation rather than combination:
+`ingress.host` (below), and those that check the three SAR definitions and the tier TTL are
+*well-formed* — an API
 group that is not a group, a resource that is not a lowercase plural, a verb that is not a verb, a
 namespace that is not a namespace name, a TTL that is not a whole number.
 
@@ -1296,7 +1335,7 @@ restart, and this process holds the only copy of accumulated history between che
 `failureThreshold` moved 6 → 2 with that period, because 6 failures at 300s is a thirty-minute
 wait before a wedged pod restarts, which is not a health check.
 
-Neither probe is gated on a reachable cluster (`gsd/api.py#list_alerts`). An unreachable cluster
+Neither probe is gated on a reachable cluster (`gsd/api.py#readyz`). An unreachable cluster
 is a thing this dashboard exists to *display*, so failing readiness for one would take it
 down exactly when it has something to report.
 
@@ -1352,9 +1391,10 @@ the collector emits counts and states only and never a group or user name — §
 
 ### Leader election is best-effort, not a write fence
 
-Read `gsd/poller.py#refresh_bindings` before relying on it. Leadership is checked once in
-`_run_cluster` before `poll_once` is entered; nothing re-checks it during the writes that
-follow, and nothing carries a fence token the store could reject. A pod that passes the check
+Read `gsd/poller.py#BEST-EFFORT admission control, NOT a write fence` before relying on it.
+Leadership is checked once in `_run_cluster` before `poll_once` is entered; nothing re-checks it
+during the poll's own writes (the retention prune and the report tail re-check it, as admission
+control again), and nothing carries a fence token the store could reject. A pod that passes the check
 and then pauses — CPU throttling, a stop-the-world GC, a partition — can lose the lease, have
 another pod take over, and still complete every one of its writes on resume. Two pods can
 also both believe they hold it for up to `renew_seconds`, because expiry is judged against
@@ -1369,11 +1409,11 @@ same transaction, with a new leader advancing it first — a distributed-systems
 layered over SQLite, and not proportionate for a single-writer application whose primary
 defence is that there is only one pod.
 
-Two implementation details are worth knowing. Outside a cluster the elector assumes sole
-instance and sets itself leader, rather than refusing to poll and looking broken in local
-development (`gsd/leader.py#LeaderElector.start`). And a non-leader re-checks every 5s rather than every
-poll interval (`gsd/poller.py#log`): leadership is acquired asynchronously, so at startup
-the poll thread reliably loses the race once, and sleeping a full interval then would make
+Two implementation details are worth knowing. Outside a cluster the elector assumes sole instance
+and sets itself leader, rather than refusing to poll and looking broken in local development
+(`gsd/leader.py#LeaderElector.start`). And a non-leader re-checks every 5s rather than every poll
+interval (`gsd/poller.py#STANDBY_RECHECK_SECONDS`): leadership is acquired asynchronously, so at
+startup the poll thread reliably loses the race once, and sleeping a full interval then would make
 the first poll a whole interval late.
 
 ### Scaling, and why the answer is "don't"
@@ -1506,13 +1546,13 @@ the thing it publishes**, so a documentation-only merge publishes nothing.
 flowchart TB
   merge["merge to main"]
 
-  subgraph img["publish.yml — the image (writes to NOTHING in this repo)"]
+  subgraph img["publish.yml — the images (commits NOTHING to this repo)"]
     direction TB
-    ipath{"paths: gsd/**, pyproject.toml,<br/>README.md, Containerfile,<br/>.containerignore, build script"}
+    ipath{"paths: gsd/**, pyproject.toml, README.md,<br/>both Containerfiles, .containerignore,<br/>both build scripts, uninstall-lists.py,<br/>both image proofs, publish.yml"}
     rel{"did pyproject version change<br/>since the previous commit?"}
     build["build-and-push-external.sh<br/>tag = &lt;appVersion&gt;-&lt;10-char sha&gt;"]
-    relbuild["…--release-tags<br/>ALSO pushes :&lt;appVersion&gt;"]
-    quay[("quay.io/…:&lt;appVersion&gt;-&lt;sha&gt;<br/>immutable, every merge")]
+    relbuild["…--release-tags<br/>ALSO pushes :&lt;appVersion&gt;<br/>and :&lt;chartVersion&gt;"]
+    quay[("quay.io/…:&lt;appVersion&gt;-&lt;sha&gt;<br/>sha tag, every merge<br/>a rebuild re-pushes it")]
     alias[("quay.io/…:&lt;appVersion&gt;<br/>alias, releases only")]
     ipath -->|matched| rel
     rel -->|no| build --> quay
@@ -1536,74 +1576,80 @@ flowchart TB
   alias -.->|"the chart resolves this<br/>when image.tag is empty"| label
 ```
 
-**The image.** `publish.yml` runs the same script a laptop would, so the published artefact is a
+**The image.** Two images since application 0.18.0, the dashboard's and the report service's, built
+from one push. `publish.yml` runs the same script a laptop would, so the published artefact is a
 merge commit and the tag records which one. The tag is `<appVersion>-<sha>`, derived from
 `local-development/pyproject.toml` — the single source of truth. `appVersion` sits *outside* that
 chain, which is exactly how it rotted to `0.5.2` while the app was `0.6.0`;
 `tests/test_chart_versions.py` holds the two together, along with `gsd/__init__.py`'s `__version__`.
 
-**Nothing in `publish.yml` writes to this repository**, and that is the load-bearing property. It
+**Nothing in `publish.yml` commits to this repository**, and that is the load-bearing property; its
+one write there, with signing on, is the provenance in the attestation store, and it uploads the SBOM
+as a workflow artifact. It
 used to push a commit to `main` pinning the tag it had just built, and that one write-back caused
 three defects: a published chart that lagged two merges and shipped without a data-exposure fix
 (#34), a release that published nothing while reporting `success` (#37), and branch protection being
 impossible on `main`, because a user-owned repository cannot allowlist the Actions app as a bypass
 actor. The job now declares `contents: read` and `tests/test_publish_release_decision.py` asserts it.
 
-**Two kinds of tag, and the difference is the whole design.**
-`<appVersion>-<sha>` is immutable and published on every merge — a given tag always means the same
-source. `<appVersion>` is an alias the chart resolves by default, republished *only* when a human
-bumps the application version in a PR. It is deliberately not moved per merge: `values.yaml` sets
-`imagePullPolicy: Always`, so a moving default would let the running binary change on any container
-creation while the chart version on the cluster stayed put. Both adversarial reviewers refused the
-per-merge version; see `docs/design/DESIGN_decouple_chart_and_app_release.md`.
+**Two kinds of tag, and the difference is the whole design.** `<appVersion>-<sha>` is published on
+every merge — a given tag always means the same source, though a rebuild of that commit re-pushes
+it, possibly with different bytes. `<appVersion>` is an alias the chart resolves by default,
+republished *only* when a human bumps the application version in a PR. It is deliberately not moved
+per merge: `values.yaml` sets `imagePullPolicy: Always`, so a moving default would let the running
+binary change on any container creation while the chart version on the cluster stayed put. Both
+adversarial reviewers refused the per-merge version; see
+`docs/design/DESIGN_decouple_chart_and_app_release.md`.
 
-**And one thing that is not a tag at all.** `image.digest` pins the content rather than a name, and it
-wins over both forms above — `gsd.image` renders `repository@sha256:…`. The distinction the two kinds
-of tag rest on is *policy*: this project never repoints `<appVersion>-<sha>`, but a tag's owner always
-could. A digest is a hash of the bytes, so immutability is structural rather than promised. It ships
-empty, because a digest committed into the chart would outlive the appVersion it was taken from and
-pin every installation to one build with nothing in the chart to reveal the disagreement.
+**And one thing that is not a tag at all.** `image.digest` pins the content rather than a name, and
+it wins over both forms above — `gsd.image` renders `repository@sha256:…`. The distinction the two
+kinds of tag rest on is *policy*: this project never moves `<appVersion>-<sha>` to another commit,
+but a rebuild re-pushes it and a tag's owner always could repoint it. A digest is a hash of the
+bytes, so immutability is structural rather than promised. It ships empty, because a digest
+committed into the chart would outlive the appVersion it was taken from and pin every installation
+to one build with nothing in the chart to reveal the disagreement.
 
-**`<chartVersion>` is stamped by `helm.yaml`, not `publish.yml`**, and by `skopeo copy` rather than a
-rebuild. In `publish.yml` it would move `:0.4.4` on every image-input merge while the already-
+**`<chartVersion>` is stamped by `helm.yaml`**, by `skopeo copy` rather than a rebuild
+(`publish.yml`'s `--release-tags` also writes it, on a release merge only). Stamped on every merge in
+`publish.yml` it would move `:0.4.4` on every image-input merge while the already-
 published chart 0.4.4 still deployed an older image — a label that lied about a shipped release —
 and a template-only change would never produce one at all, because `charts/**` is deliberately absent
 from that workflow's path filter.
 
-**The pinned tag is not necessarily HEAD**, and that is deliberate rather than drift. The workflow
-only runs when an image input changed, so after a documentation-only merge the pin still names the
-last commit that actually produced an image. That is the more truthful statement: `gsd_build_info`
-reports where the running code came from, not where the branch has since moved to. What the tag
-always means is "the commit this image was built from" — an edit to a doc does not make the running
-image a different image. `tests/test_publish_paths.py` holds the filter against the Containerfile's
-own `COPY`/`ADD` lines, because the failure mode of an incomplete filter is silent: the workflow
-simply stops firing, and main keeps deploying the last image it built while the source moves on.
-`.containerignore` is in that list too — the builder applies it to the context before any `COPY`
-runs, so editing it changes the image with nothing else changing.
+**The newest sha tag is not necessarily HEAD**, and that is deliberate rather than drift. The
+workflow only runs when an image input changed, so after a documentation-only merge the newest sha
+tag still names the last commit that actually produced an image. That is the more truthful
+statement: `gsd_build_info` reports where the running code came from, not where the branch has since
+moved to. What the tag always means is "the commit this image was built from" — an edit to a doc
+does not make the running image a different image. `tests/test_publish_paths.py` holds the filter
+against the Containerfile's own `COPY`/`ADD` lines, because the failure mode of an incomplete filter
+is silent: the workflow simply stops firing, and main keeps deploying the last image it built while
+the source moves on. `.containerignore` is in that list too — the builder applies it to the context
+before any `COPY` runs, so editing it changes the image with nothing else changing.
 
-**Why the pin is written onto the fetched tip rather than rebased.** `actions/checkout` takes
+**Why the pin was written onto the fetched tip rather than rebased**, while there was a pin — the
+step and its test, `test_publish_pin_step.py`, went with the write-back above. `actions/checkout` takes
 `github.sha`, the triggering commit, not the branch tip. So when two merges land close together the
 second run is checked out at a commit that predates the first run's pin, and the two runs edit the
 same single line. The step used to commit its pin and `git pull --rebase` onto that — which failed
 twice, 2026-08-09 and 2026-08-10, with `CONFLICT (content)` on `values.yaml`. The
 `concurrency: publish-main` group does **not** prevent it: it serialises correctly, and serialising
 *guarantees* the earlier pin is already on `main` by the time the later run reaches the step. The
-step now fetches, hard-resets onto the tip, rewrites the tag there, and pushes — no divergent commit,
-so nothing to reconcile. `tests/test_publish_pin_step.py` reads the step out of the YAML and replays
-the collision, so editing the workflow re-tests it.
+step then fetched, hard-reset onto the tip, rewrote the tag there, and pushed — no divergent commit,
+so nothing to reconcile.
 
-The failure mode is worth knowing because it is quiet: the image is pushed to the registry **before**
-the pin step runs, so a failure there loses only the pin and `main` keeps pointing at the previous
-image. `0.6.0-6f88f2a9aa` was built on 2026-08-09 and is referenced by no commit in this repository.
+Its failure mode was quiet: the image was pushed to the registry **before** the pin step ran, so a
+failure there lost only the pin and `main` kept pointing at the previous image. `0.6.0-6f88f2a9aa`
+was built on 2026-08-09 and is referenced by no commit in this repository.
 
 **The chart.** `helm.yaml` gates on `ci.yml` and then runs chart-releaser, which publishes to the
 `gh-pages` branch as a Helm repository. It **skips a version it has already released**, so a template
 change without a `Chart.yaml` `version` bump publishes nothing and still reports success — the one
-failure mode of this path, and `helm.yaml` warns when a run is about to hit it.
+silent failure mode of this path, and `helm.yaml` warns when a run is about to hit it.
 
 ```console
 $ helm repo add gsd https://ephico2real2.github.io/group-sync-dashboard
-$ helm install gsd gsd/group-sync-dashboard --set ingress.host=…
+$ helm install gsd gsd/group-sync-dashboard
 ```
 
 ---
@@ -1616,21 +1662,21 @@ $ helm install gsd gsd/group-sync-dashboard --set ingress.host=…
 | SQLite, not a server | no operational dependency, no second failure domain, and the workload does not need the concurrency | `docs/design/storage-coupling.md` §3.4 |
 | `strategy: Recreate` at one replica | two processes on one SQLite file corrupt rather than error | `deployment.yaml#ONE guard for RollingUpdate` |
 | Leader election on even at one replica | `Recreate` is not instantaneous, `kubectl scale` is one keystroke, a partitioned node leaves an old pod running | `gsd/leader.py` |
-| Leader election is best-effort | a true fence is a distributed protocol over SQLite, disproportionate when the real defence is one pod | `gsd/poller.py#refresh_bindings` |
+| Leader election is best-effort | a true fence is a distributed protocol over SQLite, disproportionate when the real defence is one pod | `gsd/poller.py#BEST-EFFORT admission control, NOT a write fence` |
 | Poll, don't watch | syncs are at most hourly; N persistent watches with reconnect handling and relist storms buys nothing over two list calls a minute | `gsd/poller.py` |
 | Bindings on a slower cadence | listed across every namespace, ~154 paged requests at 100× reference scale, and they change on administrative action | `gsd/config.py#Settings` |
 | Poll interval 60s, not slower | `observed_at` is the only timestamp a membership change has, so the interval *is* the error bar on "when did this person lose access?" | `values.yaml#pollIntervalSeconds` |
 | The whole poll is one transaction | 60.38% of concurrent reads were torn; a half-finished cycle could stamp `ok` over half-written state | `gsd/store.py#Store` |
 | `@consistent` on multi-call handlers only | a snapshot holds a WAL read-mark and blocks checkpointing, so take one only where it buys consistency | `gsd/api.py#build_app` |
-| Readers on their own connections | one read completed during a 0.92s bulk write before the split; `/readyz` reads and the probe gives up at 5s | `gsd/store.py#Store._tx` |
+| Readers on their own connections | one read completed during a 0.92s bulk write before the split; `/readyz` reads and the probe gives up at 5s | `gsd/store.py#Store._reader` |
 | Metrics carry no group or user name | `/metrics` is unauthenticated so a ServiceMonitor can reach it, and names are membership data — plus 500 groups must not mean 500 series | `gsd/metrics.py` |
 | Activity aggregated per user-day | bounds the table at users × days, and avoids keeping a record of which colleague read whose membership | `gsd/store.py#SCHEMA` |
-| Activity self-scoped by default | it is identifiable personnel data, and "you could read it with `oc` anyway" does not cover who looked | `gsd/api.py#membership_changes` |
+| Activity self-scoped by default | it is identifiable personnel data, and "you could read it with `oc` anyway" does not cover who looked | `gsd/api.py#dashboard_activity` |
 | No write verb on anything the dashboard reports on | privilege-escalation prevention refuses a metadata patch on an RBAC object unless the writer already holds everything it grants: 4 planned, 0 landed, 175 rule sets demanded to label a `view` binding | `templates/rbac.yaml#NO WRITE VERB` |
 | A finding is suppressed by an annotation on the object, not in the dashboard | the justification belongs next to the object, and the acknowledgement belongs to somebody who holds the privileges | `gsd/store.py#_FINDING_CASE` |
-| Role rules are never expanded | an incomplete effective-permission answer is a false negative that closes an incident wrongly | `gsd/api.py#list_events` |
+| Role rules are never expanded | an incomplete effective-permission answer is a false negative that closes an incident wrongly | `gsd/api.py#group_detail` |
 | `unresolved` and `built_in` never alert | built-ins are normal and `unresolved` cannot be told from a not-yet-synced group; alerting trains people to ignore the view | `gsd/api.py#list_alerts` |
-| Every unbounded list is capped and says so | a silently truncated audit list is worse than a slow one | `gsd/api.py#list_events`, `400-406` |
+| Every unbounded list is capped and says so | a silently truncated audit list is worse than a slow one | `gsd/api.py#direct_user_bindings` |
 | The PVC survives `helm uninstall` | it holds the only state the API cannot reproduce | `templates/pvc.yaml#helm.sh/resource-policy` |
 
 ---
@@ -1683,7 +1729,7 @@ operator had asked for them (`gsd/config.py#_audit_mode_setting`).
 `user_bindings` silently overrode the existing reverse-lookup one and broke two tests. The
 two now say which question each answers — `user_bindings(cluster, user)` is "what does this
 person reach through their groups", `direct_user_bindings(cluster)` is "which bindings name a
-person directly" (`gsd/store.py#Store.replace_user_bindings`).
+person directly" (`gsd/store.py#Store.direct_user_bindings`).
 
 **Running the suite.** From `local-development/`, with the venv interpreter — the ambient one
 has no dependencies and gives six meaningless collection errors:
@@ -1693,7 +1739,8 @@ cd local-development && .venv/bin/python -m pytest tests/ -q
 ```
 
 `helm lint` and `helm template` run from the repository root. A plain `helm template` renders
-the default Route with no flags; with `--set ingress.enabled=true` it also needs
+the default Route with no flags; an Ingress render needs `--set route.enabled=false --set
+ingress.enabled=true` (the chart exposes through one object) and also
 `--set ingress.host=x.example.com`, or the host guard fails the render deliberately.
 
 ---

@@ -56,6 +56,7 @@ These install and operate guides ship inside the Helm chart.
 - [DOCS_AUDIT_2026-10-05_b2_chart_reference.md](reviews/DOCS_AUDIT_2026-10-05_b2_chart_reference.md) — docs content audit, batch 2: the chart README and the backup/restore runbook, claim by claim.
 - [DOCS_AUDIT_2026-10-05_b3_access_guides.md](reviews/DOCS_AUDIT_2026-10-05_b3_access_guides.md) — docs content audit, batch 3: the access-control, login-capture and API guides, claim by claim.
 - [DOCS_AUDIT_2026-10-05_b4_release_build.md](reviews/DOCS_AUDIT_2026-10-05_b4_release_build.md) — docs content audit, batch 4: the release, build and repository guides, the root README and `local-development/README.md`, claim by claim.
+- [DOCS_AUDIT_2026-10-05_b5_reference_architecture.md](reviews/DOCS_AUDIT_2026-10-05_b5_reference_architecture.md) — docs content audit, batch 5: the reference architecture, its diagrams and its citations, claim by claim.
 
 ## Research — `research/`
 
