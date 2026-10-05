@@ -186,7 +186,7 @@ as the fleet account is a failure on the fleet account's own counter.**
 | OpenShift docs, modules/identity-provider-about-ldap.adoc at `270ee60` | lines 12-13: "a simple bind is attempted using the distinguished name (DN) of the entry plus the provided password". Lines 41-45: the `attribute` a login name is matched against is each identity provider's own `url` setting |
 | OpenLDAP, `slapo-ppolicy(5)` | `pwdFailureTime` "contains the timestamps of each of the consecutive authentication failures made upon attempted authentication to this DN (i.e. account)"; at `pwdMaxFailure` failures, with `pwdLockout` set, "the account may be locked" |
 | Red Hat Directory Server 12, *Managing access control*, ch. 4 | "Directory Server maintains the lockout information in the following attributes of the user entries: `passwordRetryCount`: Stores the number of failed bind attempts" |
-| this repository | the lab's directory is OpenLDAP (`docs/ACCESS_CONTROL.md`); a locked 389-ds account answers code 19, which the oauth-server turns into a 500 (SPEC_S4a §3.1, `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md`) |
+| this repository | the lab's directory is OpenLDAP (`docs/guides/ACCESS_CONTROL.md`); a locked 389-ds account answers code 19, which the oauth-server turns into a 500 (SPEC_S4a §3.1, `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md`) |
 
 **Decides:** sending account A's password as account B adds one failure to B's counter, whatever cluster it is sent
 to. On the reference cluster the fleet account is the identity provider's own bind account (SPEC_S3 §3.1; its
@@ -236,7 +236,7 @@ because it drops pings the chart ships (#291).**
 
 | option | holds the rule? | what it costs | decision |
 |---|---|---|---|
-| (a) ping only the chart's `fleetAccount.username` | yes, for the ping | one comparison — fewer lines than (d). It stops the ping for every account a stanza names that differs from the chart's (`docs/CLUSTER_STANZA.md` §4, row 8: a per-cluster bootstrap account) and for a release with no chart username (`values.yaml`: "Empty = every mode stanza must name its own ldapConnectionBootstrap"); measured on a mutant, the values-stanza and ConfigMap guards fail. It narrows a shipped feature (#291) | rejected |
+| (a) ping only the chart's `fleetAccount.username` | yes, for the ping | one comparison — fewer lines than (d). It stops the ping for every account a stanza names that differs from the chart's (`charts/group-sync-dashboard/docs/CLUSTER_STANZA.md` §4, row 8: a per-cluster bootstrap account) and for a release with no chart username (`values.yaml`: "Empty = every mode stanza must name its own ldapConnectionBootstrap"); measured on a mutant, the values-stanza and ConfigMap guards fail. It narrows a shipped feature (#291) | rejected |
 | (b) a password Secret per account | yes | #369's end state, parked by the operator; a new stanza key in three places; a `get` grant per Secret, so the dashboard ServiceAccount's permissions change | not built |
 | (c1) record the account on the password Secret | yes | the Secret is not the release's (`values.yaml`: "The chart does not CREATE it"); on the reference cluster it is the identity provider's `bindPassword` Secret, which the dashboard may only `get`. A required new key needs a migration and each owner's agreement | rejected |
 | (c2) ping only when the same account and password digest has succeeded before | yes | a newly rotated password has no success yet, so the ping could never confirm a rotation — B3's point. Remembering an account's older success would not vouch for today's password either | rejected |
@@ -341,8 +341,8 @@ The same budget, by path — all three, as the orchestrator asked:
 | `local-development/tests/test_fleet_lookup.py` | the declaring Secret's retrieval now keeps its explicit account |
 | `local-development/tests/test_ping_account_scope.py` | new |
 | `docs/specs/SPEC_S4c_credential_lifecycle.md` | §3.4's "Which target", §3.12 rewritten (§5), a note |
-| `docs/CLUSTER_STANZA.md` | the `ldapConnectionBootstrap` row; §6 names the retained key |
-| `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` | the ping's account rule, and that history stays shown |
+| `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md` | the `ldapConnectionBootstrap` row; §6 names the retained key |
+| `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md` | the ping's account rule, and that history stays shown |
 | `local-development/API.md` | the `fleet` block lists history too |
 | `docs/CHANGELOG.md` | the `## Unreleased` entry |
 
@@ -359,8 +359,8 @@ Lines added and removed, measured on the applied tree:
 | `local-development/tests/test_fleet_lookup.py` | +2 | −1 |
 | `local-development/tests/test_ping_account_scope.py` | +487 | −0 |
 | `docs/specs/SPEC_S4c_credential_lifecycle.md` | +83 | −25 |
-| `docs/CLUSTER_STANZA.md` | +4 | −1 |
-| `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` | +5 | −1 |
+| `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md` | +4 | −1 |
+| `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md` | +5 | −1 |
 | `local-development/API.md` | +2 | −2 |
 | `docs/CHANGELOG.md` | +18 | −0 |
 
@@ -1442,7 +1442,7 @@ and the release presents the password only as an account the configuration names
    walk-only Secret in the release namespace — never `ldap-oauth-bind-secret`. A `saTokenLookup` stanza,
    `walk-lookup`, points at `https://api.crc.testing:6443` with `ldapConnectionBootstrap: developer`. For the walk,
    `developer` is bound to the estate's `group-sync-dashboard-cluster-poller-token-reader` Role in
-   `group-sync-operator` (S4b's rehearsal, `docs/VALIDATION_satokenlookup.md`). The ping runs at most once per
+   `group-sync-operator` (S4b's rehearsal, `docs/research/VALIDATION_satokenlookup.md`). The ping runs at most once per
    discovery cadence, so set `intervalSeconds` to 300.
 
    **The lab check, read-only: run it now, before the walk Secret exists, and again immediately before steps 3 and
@@ -1498,7 +1498,7 @@ anything else names it, and nothing presents the password as an account the conf
 
 ```
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 ```markdown
 | `dashboardController` | bool | this pod's own cluster. Exactly one enabled entry |
 | `saTokenLookup` | bool | connection mode: log in as the fleet account, read the poller SA's token |
@@ -1519,7 +1519,7 @@ anything else names it, and nothing presents the password as an account the conf
 
 ```
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 ```markdown
   `execProviderConfig`, `awsAuthConfig`, `proxyUrl`, `disableCompression`, `certData`, `keyData`,
   `serverName`), so a Secret copied from an Argo cluster entry says what is not supported.
@@ -1541,7 +1541,7 @@ A key name is a place a credential can land, so a refusal repeats a key only whe
 contract already knows; anything else is described by its length.
 ```
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
 token is written, the cluster leaves that set and is not retrieved again. The one later use of the LDAP
 account is the daily ping (`gsd/poller.py#Poller._ping_accounts`, `clusterConfig.fleetAccount.ping`): once

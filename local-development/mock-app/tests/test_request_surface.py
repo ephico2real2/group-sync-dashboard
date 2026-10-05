@@ -66,7 +66,7 @@ def test_fetch_namespaces(client):
 
 def test_fetch_namespaces_two_dimension_metadata(client):
     # The multi-dimension selector reads BOTH company.net/mnemonic and company.net/app-environment
-    # (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §6). The client down-selects to
+    # (docs/design/DESIGN_reporting_selectors_snapshots_and_windows.md §6). The client down-selects to
     # exactly the requested keys that are PRESENT — both on a two-dimension namespace, only the
     # mnemonic on the missing-dimension negative case, never the whole label map.
     keys = ["company.net/mnemonic", "company.net/app-environment"]

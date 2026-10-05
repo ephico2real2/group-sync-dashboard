@@ -64,7 +64,7 @@ def test_the_image_tag_is_empty_or_a_build_of_that_same_app_version() -> None:
     tag to appVersion, the other half of the drift that let appVersion read 0.5.2 for weeks while
     the application was 0.6.0. What changed is that `image.tag` now ships EMPTY — gsd.image resolves
     `default .Chart.AppVersion`, so a chart naming no tag deploys the version it declares, and there
-    is no pin to compare (docs/DESIGN_decouple_chart_and_app_release.md).
+    is no pin to compare (docs/design/DESIGN_decouple_chart_and_app_release.md).
 
     So the invariant becomes conditional, and covers BOTH states rather than only the committed one:
 

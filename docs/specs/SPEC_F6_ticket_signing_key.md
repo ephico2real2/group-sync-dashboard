@@ -2429,9 +2429,9 @@ oc delete secret group-sync-dashboard-oauth-session group-sync-dashboard-report-
 ```
 
 
-### Block 73 — `docs/DESIGN_reporting_service.md` (1 of 2): the ticket's format and the two Secrets
+### Block 73 — `docs/design/DESIGN_reporting_service.md` (1 of 2): the ticket's format and the two Secrets
 
-<!-- block: docs/DESIGN_reporting_service.md | edit -->
+<!-- block: docs/design/DESIGN_reporting_service.md | edit -->
 
 ```markdown
   secret[["Secret -shared-token<br/>minted on the cluster once, mounted in both pods"]]
@@ -2443,9 +2443,9 @@ oc delete secret group-sync-dashboard-oauth-session group-sync-dashboard-report-
 ```
 
 
-### Block 74 — `docs/DESIGN_reporting_service.md` (2 of 2): the ticket's format and the two Secrets
+### Block 74 — `docs/design/DESIGN_reporting_service.md` (2 of 2): the ticket's format and the two Secrets
 
-<!-- block: docs/DESIGN_reporting_service.md | edit -->
+<!-- block: docs/design/DESIGN_reporting_service.md | edit -->
 
 ```markdown
 - `GET /api/report/ticket` on the dashboard calls `require_admin_tier(request)` (`local-development/gsd/api.py#require_admin_tier`) — a refusal is the same 403 with the same "For administrators only." sentence — and returns `{"ticket": "<payload>.<sig>", "expires_in": 300, "prefix": "/report"}`. The payload is `{"v":1,"viewer":<X-Forwarded-User>,"tier":"all","iat":…,"exp":…,"nonce":…}`; the signature is HMAC-SHA256 with the shared token (§5.3). It is a **pure function of the request** — no store write, no file, no network beyond the tier check `whoami` already makes — so it satisfies "a GET on the dashboard must not cause work" in the sense R6 protects: nothing is created, rendered or stored.
@@ -2473,9 +2473,9 @@ One Secret, `<reportName>-shared-token`, minted on the cluster by the `secrets-m
 ```
 
 
-### Block 75 — `docs/reference-architecture.md` (1 of 2): the minted Secrets
+### Block 75 — `docs/guides/reference-architecture.md` (1 of 2): the minted Secrets
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 
 ```markdown
     rsec["Secret -shared-token<br/>minted on the cluster once, mounted in both pods"]
@@ -2487,9 +2487,9 @@ One Secret, `<reportName>-shared-token`, minted on the cluster by the `secrets-m
 ```
 
 
-### Block 76 — `docs/reference-architecture.md` (2 of 2): the minted Secrets
+### Block 76 — `docs/guides/reference-architecture.md` (2 of 2): the minted Secrets
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 
 ```markdown
 cookie key) and `<reportName>-shared-token` only when absent, and on the first upgrade to 0.37.0
@@ -2501,9 +2501,9 @@ cookie key), `<reportName>-shared-token` and, since 0.69.0, `<reportName>-ticket
 ```
 
 
-### Block 77 — `docs/DESIGN_reporting_auditors_and_ns_selector.md`: the two Secrets in the diagram's legend
+### Block 77 — `docs/design/DESIGN_reporting_auditors_and_ns_selector.md`: the two Secrets in the diagram's legend
 
-<!-- block: docs/DESIGN_reporting_auditors_and_ns_selector.md | edit -->
+<!-- block: docs/design/DESIGN_reporting_auditors_and_ns_selector.md | edit -->
 
 ```markdown
    Secret -shared-token (was -report-token before 0.37.0): HMAC key, mounted in both pods (ticket sign/verify, usage-pull auth)
@@ -2516,9 +2516,9 @@ cookie key), `<reportName>-shared-token` and, since 0.69.0, `<reportName>-ticket
 ```
 
 
-### Block 78 — `docs/DESIGN_reporting_selectors_snapshots_and_windows.md`: the named follow-up is done
+### Block 78 — `docs/design/DESIGN_reporting_selectors_snapshots_and_windows.md`: the named follow-up is done
 
-<!-- block: docs/DESIGN_reporting_selectors_snapshots_and_windows.md | edit -->
+<!-- block: docs/design/DESIGN_reporting_selectors_snapshots_and_windows.md | edit -->
 
 ```markdown
   window; splitting the signing secret from the service bearer is a named follow-up.
@@ -2531,9 +2531,9 @@ cookie key), `<reportName>-shared-token` and, since 0.69.0, `<reportName>-ticket
 ```
 
 
-### Block 79 — `docs/DESIGN_per_cluster_connection_auth.md`: the dashboard's volume list
+### Block 79 — `docs/design/DESIGN_per_cluster_connection_auth.md`: the dashboard's volume list
 
-<!-- block: docs/DESIGN_per_cluster_connection_auth.md | edit -->
+<!-- block: docs/design/DESIGN_per_cluster_connection_auth.md | edit -->
 
 ```markdown
 `tmp`, `curlrc`, `report-token` (the volume name; the Secret is `-shared-token` since 0.37.0), `service-ca`, `trusted-ca-*`, `oauth-*` — `templates/deployment.yaml`)
@@ -2545,9 +2545,9 @@ cookie key), `<reportName>-shared-token` and, since 0.69.0, `<reportName>-ticket
 ```
 
 
-### Block 80 — `docs/ACCESS_CONTROL.md`: the report service's door
+### Block 80 — `docs/guides/ACCESS_CONTROL.md`: the report service's door
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 | `/report/**` | the report service | a ticket from `/api/report/ticket` (a viewer) or the service token; a viewer without a ticket gets 401, a ticket for another identity 403 |

@@ -83,7 +83,7 @@ database. `crc start` is starting a stopped CodeReady Containers cluster.
 - **Found while measuring, outside this change.** (1) The suite's `LeaseAPI`
   (`local-development/tests/test_fleet_lifecycle.py#LeaseAPI`) answers a PUT to an absent name with `KeyError`, where
   the API server answers 409. No shipped test deletes a Lease, so it is left as is; §6's test file subclasses it
-  (`ApiServer`). (2) `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` carries two markdownlint findings on main
+  (`ApiServer`). (2) `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md` carries two markdownlint findings on main
   (MD012 at its line 18, MD040 at its line 98). This change touches neither line; markdownlint runs in no CI job.
 
 ## 1. The requirement, the decision, and what is out of scope
@@ -369,7 +369,7 @@ the authority, and the running pod's sweep carries the clear into the copy withi
 longer clears the gate; clearing the entry does. The one ordering the copy changes: the entry cleared while no pod read
 the Lease, then a `crc start`. The copy still holds the entry and puts it back (`kept=true refused=<code>`) — an
 over-block, the safe direction — and the runbook's step is to wait for the Lease, clear the entry again, and restart
-the pod. `charts/group-sync-dashboard/RUNBOOK.md` gains that procedure as its section 7, the runbook Q7 asked for:
+the pod. `charts/group-sync-dashboard/docs/RUNBOOK.md` gains that procedure as its section 7, the runbook Q7 asked for:
 until now the procedure was only in SPEC_S4c.
 
 ### 3.9 Above one replica, and with persistence off
@@ -460,18 +460,18 @@ there is no claim that all 28 fail before implementation. The chart renders the 
 | document | change |
 |---|---|
 | `docs/specs/SPEC_S4c_credential_lifecycle.md` | an orchestrator's note pointing here: B2's "+1 per act" for a deleted Lease is superseded, and why. The body stays verbatim |
-| `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` | the paragraph on the Lease (its lines 41-45) gains the copy, `crc start`, and where the clear is |
-| `charts/group-sync-dashboard/RUNBOOK.md` | section 7: clear the fleet account's entry by hand (§5 Q7), and the step after a `crc start` |
+| `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md` | the paragraph on the Lease (its lines 41-45) gains the copy, `crc start`, and where the clear is |
+| `charts/group-sync-dashboard/docs/RUNBOOK.md` | section 7: clear the fleet account's entry by hand (§5 Q7), and the step after a `crc start` |
 | `docs/specs/SPEC_D6_scrub_span.md` | an orchestrator's note: 45 emit call sites once this is applied (orchestrator's notes above) |
 | `docs/CHANGELOG.md` | the implementation's bullet under `## Unreleased` |
 | `.gitignore` | `fleet-gate.json*` beside `*.db` |
 | `local-development/tests/test_cluster_rejoin.py` | the runbook's section pin moves from six to seven |
 
-Read and left unchanged, each still true: `docs/CLUSTER_STANZA.md`'s and `docs/polling-and-discovery.md`'s sentences on
+Read and left unchanged, each still true: `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`'s and `docs/design/polling-and-discovery.md`'s sentences on
 the Lease (a restart, a crash or another replica still sends nothing again); `local-development/API.md`'s `fleet`
 block (still the Lease's state — while the Lease is absent, as last kept); the chart README's ping row and its
 conditional-rules paragraph (the only objects the dashboard writes on a cluster are still two Leases);
-`docs/DESIGN_cluster_connection_flows.md`'s ping lines.
+`docs/design/DESIGN_cluster_connection_flows.md`'s ping lines.
 
 ### 5.2 The proof
 
@@ -1669,7 +1669,7 @@ def test_proof_heading_distinguishes_regressions_from_unchanged_controls():
 
 
 def test_runbook_describes_reservation_failures_and_present_lease_saves():
-    runbook = (ROOT / 'charts/group-sync-dashboard/RUNBOOK.md').read_text()
+    runbook = (ROOT / 'charts/group-sync-dashboard/docs/RUNBOOK.md').read_text()
     text = ' '.join(runbook.split('## 7.', 1)[1].split())
     assert "a path already gated need not attempt a reservation or publish another finding" in text
     assert "Saving a present Lease also parses the existing file" in text
@@ -1681,11 +1681,11 @@ def test_runbook_describes_reservation_failures_and_present_lease_saves():
 # ── the runbook (the 2026-09-23 requirement) ───────────────────────────────────────────────────────────────
 
 def test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it():
-    runbook = REPO / "charts/group-sync-dashboard/RUNBOOK.md"
+    runbook = REPO / "charts/group-sync-dashboard/docs/RUNBOOK.md"
     headings = re.findall(r"^## (\d)\. ", runbook.read_text(), re.M)
     assert headings == ["1", "2", "3", "4", "5", "6"], headings
-    assert "../charts/group-sync-dashboard/RUNBOOK.md" in (REPO / "docs/README.md").read_text()
-    assert "(RUNBOOK.md)" in (REPO / "charts/group-sync-dashboard/README.md").read_text()
+    assert "../charts/group-sync-dashboard/docs/RUNBOOK.md" in (REPO / "docs/README.md").read_text()
+    assert "(docs/RUNBOOK.md)" in (REPO / "charts/group-sync-dashboard/README.md").read_text()
 ```
 
 ```python
@@ -1693,11 +1693,11 @@ def test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it(
 
 def test_the_runbook_sits_beside_the_values_with_seven_sections_and_docs_links_it():
     """Six for Refresh and Rejoin (#316); the seventh clears the fleet account's entry by hand (#481, SPEC_S4f)."""
-    runbook = REPO / "charts/group-sync-dashboard/RUNBOOK.md"
+    runbook = REPO / "charts/group-sync-dashboard/docs/RUNBOOK.md"
     headings = re.findall(r"^## (\d)\. ", runbook.read_text(), re.M)
     assert headings == ["1", "2", "3", "4", "5", "6", "7"], headings
-    assert "../charts/group-sync-dashboard/RUNBOOK.md" in (REPO / "docs/README.md").read_text()
-    assert "(RUNBOOK.md)" in (REPO / "charts/group-sync-dashboard/README.md").read_text()
+    assert "../charts/group-sync-dashboard/docs/RUNBOOK.md" in (REPO / "docs/README.md").read_text()
+    assert "(docs/RUNBOOK.md)" in (REPO / "charts/group-sync-dashboard/README.md").read_text()
 ```
 
 <!-- block: .gitignore | edit -->
@@ -1717,13 +1717,13 @@ clusters.yaml
 .pytest_cache/
 ```
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
 there before the password is sent; a session clears it and a refusal replaces it, so a restart, a crash or
 another replica reads it and does not send the password again; a success is still not recorded there. Keep one
 replica.
 
-Companion to [`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md), which covers *what a stanza may
+Companion to [`charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`](CLUSTER_STANZA.md), which covers *what a stanza may
 ```
 
 ```markdown
@@ -1734,10 +1734,10 @@ replica. Since #481 the same record is also kept beside the database, in `fleet-
 password again and pings no second time that day, and deleting the Lease no longer clears its entry (clear it as
 [`RUNBOOK.md`](RUNBOOK.md) section 7 says). With `persistence.enabled: false` the copy lasts only as long as the pod.
 
-Companion to [`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md), which covers *what a stanza may
+Companion to [`charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`](CLUSTER_STANZA.md), which covers *what a stanza may
 ```
 
-<!-- block: charts/group-sync-dashboard/RUNBOOK.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK.md | edit -->
 ```markdown
 oc --context="$REMOTE" delete useroauthaccesstokens <name>
 ~~~
@@ -1813,7 +1813,7 @@ oc exec -n $NS deployment.apps/$REL -c dashboard -- mv /data/fleet-gate.json /da
   instants are also kept beside the database, and an absent Lease is read from that copy and put back: a deletion costs
   +0 with persistence on at one replica. Independent per-pod copies above one replica may be stale and can allow
   +1 after a deletion (SPEC_S4f §3.9). §5 Q7's clear still re-arms, +1, and the runbook entry Q7 asked for is
-  `charts/group-sync-dashboard/RUNBOOK.md` section 7. SPEC_S4f §4 restates B2's and B3's budgets over the system,
+  `charts/group-sync-dashboard/docs/RUNBOOK.md` section 7. SPEC_S4f §4 restates B2's and B3's budgets over the system,
   scope by scope, with the rows it leaves: persistence off, an etcd restore, a reinstall into another namespace, and a
   clear by hand followed by a `crc start`. The body below is unchanged.
 

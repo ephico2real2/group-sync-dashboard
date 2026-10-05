@@ -45,7 +45,7 @@
 #  COMPANION FILES: uninstall-lists.py and image-proof.py (both used below and explained where
 #  they are used); Containerfile.ubi, the previous recipe on ubi9-minimal, kept for reference and
 #  built by nothing; tests/test_containerfile.py, which holds this file's shape;
-#  docs/DESIGN_hardened_image.md, with every measurement behind these comments.
+#  docs/design/DESIGN_hardened_image.md, with every measurement behind these comments.
 # =============================================================================================
 
 
@@ -332,7 +332,7 @@ COPY --from=build /install /install
 # A shell in a production image is attack surface, and that is accepted on purpose: the release
 # scripts verify the build stamp with `--entrypoint sh`, the documentation debugs in the pod with
 # curl and ls, and the alternative was an image nothing in this repository could check. CI scans
-# the pack stage itself, where these tools' RPM records live (docs/image-vulnerability-scan.md).
+# the pack stage itself, where these tools' RPM records live (docs/guides/image-vulnerability-scan.md).
 COPY --from=pack /jqpack/bin/   /usr/bin/
 COPY --from=pack /jqpack/lib64/ /usr/lib64/
 

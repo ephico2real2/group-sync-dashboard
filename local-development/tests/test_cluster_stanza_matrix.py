@@ -1,6 +1,6 @@
 """The cluster stanza's accepted combinations and refusals, held against BOTH readers.
 
-`docs/CLUSTER_STANZA.md` documents what a `clusters[]` entry may contain and — crucially — WHERE each
+`charts/group-sync-dashboard/docs/CLUSTER_STANZA.md` documents what a `clusters[]` entry may contain and — crucially — WHERE each
 refusal fires: most fail `helm template`, four fail only at pod startup. That distinction is what an
 operator plans a rollout around, so it is measured here rather than described: every row of the
 document's tables is a case below, and this test fails the build when the two stop agreeing.
@@ -119,7 +119,7 @@ def test_where_each_refusal_fires_is_what_the_document_says(tmp_path, label, ent
     # The operator plans a rollout around this: a stanza the render accepts and the pod refuses fails
     # AFTER a green upgrade, which reads as an outage rather than a config error.
     assert _renders(tmp_path, entries) is not by_render, (
-        f"{label}: docs/CLUSTER_STANZA.md §5 says the render "
+        f"{label}: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md §5 says the render "
         f"{'refuses' if by_render else 'accepts'} this, and it does not"
     )
 

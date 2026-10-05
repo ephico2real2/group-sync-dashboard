@@ -1,6 +1,6 @@
 """Mermaid diagrams in the docs must actually render.
 
-One did not, for an unknown length of time. `docs/reference-architecture.md` §3 "How a poll
+One did not, for an unknown length of time. `docs/guides/reference-architecture.md` §3 "How a poll
 flows" contained:
 
     Note over T: stand by; re-check in 5s,<br/>not one poll interval

@@ -20,7 +20,7 @@
 #
 # So the pin is gone. `charts/group-sync-dashboard/values.yaml` ships `image.tag: ""` and
 # `gsd.image` resolves `.Chart.AppVersion` — the fallback that helper ALREADY had. See
-# docs/DESIGN_decouple_chart_and_app_release.md for the review that settled it.
+# docs/design/DESIGN_decouple_chart_and_app_release.md for the review that settled it.
 #
 # WHY THE SCRIPT AND NOT INLINE STEPS, unchanged from before: the tag scheme, the stamp
 # verification and the release-alias rule all live in build-and-push-external.sh. Reimplementing
@@ -293,7 +293,7 @@ jobs:
       # moved (its step ran --release-tags before this one) to a digest this run never signs, and
       # a dispatch cannot move them (no `before`, so the release decision fails closed): the
       # recovery is a corrective application release, or the two-script route that decision's
-      # warning names, which publishes unsigned aliases. docs/DESIGN_supply_chain.md D10.
+      # warning names, which publishes unsigned aliases. docs/design/DESIGN_supply_chain.md D10.
       - name: Build and push the report image
         id: build-report
         if: steps.creds.outputs.configured == 'true'
@@ -327,7 +327,7 @@ jobs:
   # anonymously-plus-credential, or when an SBOM is produced elsewhere.
   #
   # BY DIGEST, so the catalogue describes the bytes that were pushed and not whatever a tag
-  # resolves to a minute later. Syft is pinned to the version docs/image-vulnerability-scan.md
+  # resolves to a minute later. Syft is pinned to the version docs/guides/image-vulnerability-scan.md
   # measured identifying Hummingbird OS; a test holds the two together, because a Syft that does
   # not recognise the base produces an SBOM with no OS packages in it — a document that is
   # complete-looking and wrong, the failure this repo has met with Trivy and with Grype's default.

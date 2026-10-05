@@ -10,11 +10,11 @@ the branch and the commit — one operation that commits every release edit or c
 
 WHY A SCRIPT. An application release is four edits that must land together — pyproject's version,
 gsd/__init__.py's __version__, Chart.yaml's appVersion and Chart.yaml's version — plus a history
-line in Chart.yaml and a heading in docs/CHANGELOG.md, in one pull request (docs/RELEASING.md).
+line in Chart.yaml and a heading in docs/CHANGELOG.md, in one pull request (docs/guides/RELEASING.md).
 tests/test_chart_versions.py holds the four together, but only after they were typed by hand, and
 the history conventions are held by nothing. This does all six from two arguments, runs that test,
 and commits to a NEW branch. It never touches main, never tags, never talks to a registry: publish
-and release stay where they are, downstream of a merge (docs/RELEASING.md#The whole flow).
+and release stay where they are, downstream of a merge (docs/guides/RELEASING.md#The whole flow).
 
 WHAT IT DERIVES. `--app` alone bumps the chart PATCH, because moving appVersion is a chart change
 and the release guide requires the bump — that is the precedent of chart 0.7.1, 0.9.1, 0.9.2 and

@@ -25,7 +25,7 @@ not ready for a restore (not in recovery mode, uvicorn running, another operatio
 does not match, integrity_check, a copy or a live set other than the ones the check showed). Nothing is written before every
 check has passed.
 
-docs/specs/SPEC_E3_restore_db.md is the design; docs/RUNBOOK_backup_restore.md, section 4, the manual fallback.
+docs/specs/SPEC_E3_restore_db.md is the design; charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 4, the manual fallback.
 """
 
 from __future__ import annotations
@@ -125,7 +125,7 @@ def stamp_epoch(stamp: str) -> float:
 
 def _values_hint(change: str) -> str:
     return (f"  Set {change} in this release's values file and roll it out through the release's deployment "
-            "pipeline (docs/RUNBOOK_backup_restore.md, section 4). Not with oc set env: recovery mode is the chart's "
+            "pipeline (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 4). Not with oc set env: recovery mode is the chart's "
             "recovery.enabled, and a hand edit of the Deployment is not it.")
 
 
@@ -404,7 +404,7 @@ def aside_notes(lay: Layout, known: int) -> list[str]:
             notes.append(f"note: {path} was taken before an upgrade to schema {match.group(2)}, which this image does "
                          f"not understand. Before that upgrade is tried again, move it and its {SUM_SUFFIX} out of "
                          f"{lay.pre_upgrade} (to {lay.pre_restore}/, for example), or the new attempt finds it and takes "
-                         "no copy of what this image writes from now on (docs/RUNBOOK_backup_restore.md, section 6). "
+                         "no copy of what this image writes from now on (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 6). "
                          "This script moves nothing.")
     return notes
 
@@ -434,7 +434,7 @@ def cmd_list(lay: Layout, known: int) -> int:
     if not lay.offsite.is_dir():
         say(f"# offsite: {lay.offsite} is not mounted in this pod. The chart's recovery pod mounts the offsite claim, "
             "read-only, when backup.offsite uses its pvc destination; restore a copy that is only on that claim with "
-            "docs/RUNBOOK_backup_restore.md section 4b")
+            "charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4b")
     for line in notes + aside_notes(lay, known):
         say(line)
     return 0
@@ -449,7 +449,7 @@ def checked(lay: Layout, rid: str, known: int) -> tuple[Row, str]:
     if row.differ():
         raise Refused(EXIT_COPY, f"{rid} names copies that differ: "
                                  + "; ".join(f"{p} (sha256 {row.digest(p)})" for _, p in row.entries)
-                                 + ". Decide which one is right and restore it by hand (docs/RUNBOOK_backup_restore.md, "
+                                 + ". Decide which one is right and restore it by hand (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, "
                                  "section 4)")
     if row.schema is None:
         raise Refused(EXIT_COPY, f"{row.path} is not a database SQLite can open")
@@ -657,7 +657,7 @@ def fold(lay: Layout) -> list[str]:
                 f"SQLite did not fold {' and '.join(held)} into {lay.db} when it closed it: another process has the "
                 "database open (an oc exec session), the file cannot be written, or it is damaged so that SQLite cannot "
                 "write the -wal back into it. Nothing beside it was removed. If nothing holds it and it can be written, "
-                "it is damaged: restore over it by hand (docs/RUNBOOK_backup_restore.md, section 4a)")
+                "it is damaged: restore over it by hand (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, section 4a)")
     removed = []
     for suffix in SIDE_FILES:
         side = Path(f"{lay.db}{suffix}")
@@ -735,10 +735,10 @@ def cmd_restore(lay: Layout, rid: str, known: int, group: int, confirmed: tuple 
     say(f"user_version {'absent' if before is None else before} -> {after}")
     say("restored. Turn recovery mode off the way it was turned on: set recovery.enabled: false in this release's "
         "values file and roll it out through the release's deployment pipeline, or, under the break glass "
-        "(docs/RUNBOOK_backup_restore.md section 4d), give the release back to Git (its step 5). The app starts on "
+        "(charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4d), give the release back to Git (its step 5). The app starts on "
         "the restored file once the recovery pod is gone.")
     if kept:
-        say(f"way back     {kept}/ is the database as it was; docs/RUNBOOK_backup_restore.md section 4, \"Undo a "
+        say(f"way back     {kept}/ is the database as it was; charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4, \"Undo a "
             "restore\", puts it back (fold it first: its rows may be only in its -wal)")
     for line in aside_notes(lay, known):
         say(line)

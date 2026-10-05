@@ -1,4 +1,4 @@
-"""Render real command output as a terminal-style PNG for docs/RUNBOOK_backup_restore.md.
+"""Render real command output as a terminal-style PNG for charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md.
 Every line shown is the command as run and its captured output; nothing is typed by hand."""
 import html, sys, pathlib
 from playwright.sync_api import sync_playwright

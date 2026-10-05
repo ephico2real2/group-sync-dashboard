@@ -185,7 +185,7 @@ def test_the_publish_job_can_write_to_nothing_but_the_registry() -> None:
     assert perms == {"contents": "read"}, (
         f"publish must hold read-only repository access; it declares {perms!r}. Anything more and "
         "main cannot be branch protected — a user-owned repo cannot allowlist the Actions app "
-        "(measured: two 422s, see docs/DESIGN_decouple_chart_and_app_release.md)."
+        "(measured: two 422s, see docs/design/DESIGN_decouple_chart_and_app_release.md)."
     )
 
 

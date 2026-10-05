@@ -701,7 +701,7 @@ with no memory of how it got there. Applying the same values file twice changes 
 a half-connected estate finishes the job. That is the property automation needs, and the reason a
 crashed pod mid-connect is not a broken cluster.
 
-Drawn as flow 5 of `docs/DESIGN_cluster_connection_flows.md`, in mermaid and in ASCII.
+Drawn as flow 5 of `docs/design/DESIGN_cluster_connection_flows.md`, in mermaid and in ASCII.
 
 ### 8.1 Ownership — only what we made, and it is bookkeeping, not authentication
 
@@ -877,7 +877,7 @@ exactly this (`gsd/poller.py`, #245): every failure carries a `phase=`, an `outc
 telling a human what to fix. Credential reconciliation is the step that stops waiting for the human on
 the subset the dashboard can fix by itself.
 
-Drawn as flow 6 of `docs/DESIGN_cluster_connection_flows.md`, in mermaid and in ASCII.
+Drawn as flow 6 of `docs/design/DESIGN_cluster_connection_flows.md`, in mermaid and in ASCII.
 
 ### 9.1 The poll is the probe
 

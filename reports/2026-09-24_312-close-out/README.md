@@ -97,6 +97,6 @@ The before figures are `walk/verify-fixes.out`'s; the rest are `walk/evidence-34
 held by `local-development/tests/test_chart_rbac_provenance.py`); the live cluster no longer reports the auditor
 binding, with the auditor tier passing its `can-i` and its negative control (above); and the ServiceAccount-subject
 asymmetry is decided as not intended. The decision is the operator's, recorded on #353 ("Exclusion is a decision, never
-inferred") and in `docs/HANDOVER_2026-09-20.md`: the finding extends to ServiceAccount and User subjects, and a grant is
+inferred") and in `docs/history/HANDOVER_2026-09-20.md`: the finding extends to ServiceAccount and User subjects, and a grant is
 silenced only by the operator's `rbac.ocp.io/config-source` label or the exception annotation on its binding, never by
 inference. Its specification, SPEC_U1, is pull request #357.

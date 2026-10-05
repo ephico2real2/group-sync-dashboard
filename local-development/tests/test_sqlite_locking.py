@@ -209,7 +209,7 @@ class TestHardening:
     sqlite-libs-3.34.1-10.el9_8 — so the surface was reduced instead of the version moved.
     The hardened base the image now runs on carries SQLite 3.53.4, past both advisories; the
     reduction stays because it costs nothing and closes the mechanism regardless of version.
-    docs/image-vulnerability-scan.md has the analysis.
+    docs/guides/image-vulnerability-scan.md has the analysis.
     """
 
     def test_extensions_cannot_be_loaded_on_the_writer(self, tmp_path):

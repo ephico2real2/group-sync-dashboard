@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 # said the same thing. Two literals that must agree will eventually disagree; one cannot.
 VISIBILITY_TIER_TTL_DEFAULT = 60
 
-# ── Per-cluster authorization (docs/ACCESS_CONTROL.md §11) ─────────────────────────────────────
+# ── Per-cluster authorization (docs/guides/ACCESS_CONTROL.md §11) ─────────────────────────────────────
 # The oauth-proxy authenticates a viewer against the HOSTING cluster only, so what a viewer may see
 # ABOUT ANOTHER cluster is a per-cluster decision. Four policies, and the words are the wire
 # vocabulary (/api/whoami and /api/clusters carry them), so they are declared once, here.
@@ -670,7 +670,7 @@ class Settings:
     backup_interval_hours: float = 6.0
     backup_keep: int = 4
     # off | log. Discovery only — nothing here writes to a cluster; see
-    # docs/unmanaged-audit-design.md. `log` publishes each finding to the pod log, `off`
+    # docs/design/unmanaged-audit-design.md. `log` publishes each finding to the pod log, `off`
     # silences the log while the RBAC policy tab and the API still show them. There was an
     # `annotate` mode that labelled findings; it is gone, and a config still asking for it
     # is downgraded to `log` below rather than failing to start.
@@ -731,7 +731,7 @@ class Settings:
     # an absolute one without guessing.
     session_cookie_refresh_seconds: int = 0
 
-    # ── IDLE TIMEOUT (docs/DESIGN_session_and_signout.md, "Idle timeout") ──────────────────────────
+    # ── IDLE TIMEOUT (docs/design/DESIGN_session_and_signout.md, "Idle timeout") ──────────────────────────
     # OFF by default: it signs people out, which is a session policy the platform team chooses.
     # Its OWN keys, never derived from the cookie pair — the cookie does not slide, so an idle
     # window computed from `expire - refresh` is meaningless here (the first lesson recorded there).
@@ -744,12 +744,12 @@ class Settings:
 
     # ── OPTIONAL MODULES ───────────────────────────────────────────────────────────────────────────
     # Each module has its own switch; the default is chosen per module and the values comment
-    # says why. CSV/JSON export (docs/DESIGN_export.md) is ON: it runs in the browser over rows
+    # says why. CSV/JSON export (docs/design/DESIGN_export.md) is ON: it runs in the browser over rows
     # the server already served this reader, makes no request and needs no grant. Off removes
     # the control from the filter bar and nothing else changes.
     ui_export_enabled: bool = True
 
-    # ── USERS TAB MODULES (docs/DESIGN_users_tab_logins.md, "Decisions after 0.9.0") ─────────────
+    # ── USERS TAB MODULES (docs/design/DESIGN_users_tab_logins.md, "Decisions after 0.9.0") ─────────────
     # Identity-provider names the Users tab lists. EMPTY MEANS ALL — a value that is simply empty
     # by default. Applied at READ time, never at the poll, so changing it needs no re-poll and the
     # stored record stays the whole cluster; recorded on the wire as `providers_filter` so the tab
@@ -887,7 +887,7 @@ class Settings:
     # auditor persona) keeps every wide audit view but must NOT see colleagues' presence records.
     # Measured: no read check separates cluster-admin from cluster-reader, so the default asks a
     # write verb — `update clusterrolebindings` — which the dashboard never performs; a SAR only
-    # asks. See docs/SPEC_usage_admin_tier.md.
+    # asks. See docs/design/SPEC_usage_admin_tier.md.
     visibility_usage_admin_sar_api_group: str = "rbac.authorization.k8s.io"
     visibility_usage_admin_sar_resource: str = "clusterrolebindings"
     visibility_usage_admin_sar_subresource: str = ""
@@ -902,7 +902,7 @@ class Settings:
     # and usageAdminSar answer for them (gsd/api.py, viewer_scope and usage_scope). One way only:
     # passing adminSar or usageAdminSar never implies this tier.
     #
-    # WHY THIS CHECK, measured on CRC (docs/SPEC_usage_admin_tier.md and the adminSar comment above):
+    # WHY THIS CHECK, measured on CRC (docs/design/SPEC_usage_admin_tier.md and the adminSar comment above):
     # no read check separates cluster-admin from cluster-reader, so `list clusterrolebindings` (the
     # wide tier) admitted the auditor persona to the KPI page; `create secrets` in the release
     # namespace (the two-level tier this replaces, #230) kept the auditor out but admitted anyone
@@ -956,7 +956,7 @@ class Settings:
     # attest ABSENCE. Kept from the first C3 body.
     namespaces_read_enabled: bool = False
     # The Namespace label keys the poll captures per namespace, so the namespace-access report
-    # can select on them (docs/DESIGN_reporting_auditors_and_ns_selector.md §3). Bounded — only
+    # can select on them (docs/design/DESIGN_reporting_auditors_and_ns_selector.md §3). Bounded — only
     # these keys, never the whole label map; default () is off. Read from the ConfigMap key
     # `namespaceMetadataLabels` (rendered with toJson), the same convention as the audit lists.
     namespace_metadata_labels: tuple[str, ...] = ()
@@ -1406,7 +1406,7 @@ _ADMIN_SAR_DEFAULTS = {
 # cluster-admin from cluster-reader, because cluster-reader may read everything — so the default
 # asks about a WRITE verb, `update clusterrolebindings`, which cluster-admin holds and
 # cluster-reader does not. The dashboard still never writes; a SubjectAccessReview only asks
-# whether a subject could. See docs/SPEC_usage_admin_tier.md.
+# whether a subject could. See docs/design/SPEC_usage_admin_tier.md.
 _USAGE_ADMIN_SAR_DEFAULTS = {
     "ApiGroup": "rbac.authorization.k8s.io",
     "Resource": "clusterrolebindings",

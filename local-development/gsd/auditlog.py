@@ -6,7 +6,7 @@ request, at Metadata level, at every audit profile but `None`. A login attempt i
 annotations carry BOTH `authentication.openshift.io/username` and
 `authentication.openshift.io/decision` — allow, deny or error. No `spec.logLevel: Debug`, so no
 OAuth roll and no login outage; and history as far back as the rotated files reach.
-docs/DESIGN_login_capture.md has the measurement; docs/specs/SPEC_D1_audit_log_login_capture.md's
+docs/design/DESIGN_login_capture.md has the measurement; docs/specs/SPEC_D1_audit_log_login_capture.md's
 grounding note has the shapes, counted on the reference cluster's real log (49,360 records).
 
 THREE KINDS, MEASURED. Of every annotated request that names a person, exactly three shapes are

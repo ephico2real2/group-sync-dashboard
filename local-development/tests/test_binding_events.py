@@ -1,4 +1,4 @@
-"""binding_event: the bindings' membership history (docs/DESIGN_binding_events.md).
+"""binding_event: the bindings' membership history (docs/design/DESIGN_binding_events.md).
 
 The claims, each with a test: a refresh records what appeared and disappeared, a role change is
 one removed + one added, an unchanged refresh records nothing, a cluster's first observation is

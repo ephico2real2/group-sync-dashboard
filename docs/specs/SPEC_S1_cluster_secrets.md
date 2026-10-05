@@ -19,7 +19,7 @@ check on every Old text. A deviation found necessary during implementation is wr
 the same pull request, under "Orchestrator's notes", with the reason.
 
 The flows this contract produces are drawn — as mermaid and as ASCII — in
-[`docs/DESIGN_cluster_connection_flows.md`](../DESIGN_cluster_connection_flows.md): the connection
+[`docs/design/DESIGN_cluster_connection_flows.md`](../design/DESIGN_cluster_connection_flows.md): the connection
 path with every refusal point, the three TLS modes as a decision, the credential modes and which
 object holds which secret, and the tier gate on the surface. The log vocabulary those pictures are
 read against is `gsd/clusterconfig/events.py` (#245).
@@ -64,7 +64,7 @@ read against is `gsd/clusterconfig/events.py` (#245).
 
   *Rules.* Fail closed (Argo's `policy.default: deny`): no resolver, no identity, or an errored check →
   refused. Each level has its **own** resolver instance and cache — never shared with the wide tier's or
-  with each other — and its own metric threshold label, the rule `docs/SPEC_usage_admin_tier.md` already
+  with each other — and its own metric threshold label, the rule `docs/design/SPEC_usage_admin_tier.md` already
   states. `manage` is **not** inferred from `view` in code, so a site may grant them apart. Settings
   `visibility_clusterconfig_{view,manage}_sar_*` (chart `visibility.clusterConfig{View,Manage}Sar`) let a
   site point either at its own question, e.g. a dedicated `fleet-admin` ClusterRole; an empty `namespace`

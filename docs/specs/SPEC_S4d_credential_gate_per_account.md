@@ -46,7 +46,7 @@ Decisions on the review of `555a7e2` (Grok, Codex Astra; 2026-09-26), recorded f
   adapted to one URL, the reachable case (§4).
 - **F2 (both reviewers): accepted.** Three maintained documents still stated the superseded per-target failure
   rule, and all three are corrected here: SPEC_S5 §3.3's "Different targets still have different #284 gate keys"
-  (replaced in place, recorded in S5's notes), `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md`'s paragraph
+  (replaced in place, recorded in S5's notes), `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md`'s paragraph
   that left cross-target lockout to #285 (a chart PATCH to 0.58.7, above #413's 0.58.6, with its history line; 0.59.0 stays
   S4c's reservation), and `docs/diagrams/remote-cluster-access/source.html`'s join-figure aria-label and join-table
   row (text only). Codex's document-contract test is §6's `test_credential_gate_docs.py`. §3.5 no longer says the
@@ -183,12 +183,12 @@ replica starts empty until #285.
 SPEC_S4b's R2-1 (orchestrator's notes, and R2-2's second clause) is marked superseded with a pointer; its §3.12
 code is the verbatim design body and keeps its history. SPEC_S4c's §3.3 cache paragraph names the refused kind
 as what `FleetRecord.refused` seeds and quotes the docstring sentence this change writes, recorded in its notes.
-`docs/DESIGN_remote_cluster_access.md` states the gate per target twice (the join flow and the table row); both
+`docs/design/DESIGN_remote_cluster_access.md` states the gate per target twice (the join flow and the table row); both
 are corrected, and so are the same two statements in `docs/diagrams/remote-cluster-access/source.html` (the
 join figure's aria-label and the join table's row). The rendered `joining-a-cluster.*.png` needs no re-render: its
 visible SVG text says only "gate: not re-sent once refused", an aria-label is not painted, and the table sits after
 the figure's `</figure>`. SPEC_S5 §3.3's "Different targets still have different #284 gate keys" is replaced in
-place and recorded in S5's notes; its table is unchanged. `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md`'s
+place and recorded in S5's notes; its table is unchanged. `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md`'s
 paragraph that left cross-target lockout to #285 is rewritten, with a chart PATCH (0.58.7) and its `Chart.yaml`
 history line — no template, value or RBAC change. The CHANGELOG entry goes first under `## Unreleased`.
 
@@ -667,11 +667,11 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 
 @pytest.mark.parametrize("path,stale", [
     ("docs/specs/SPEC_S5_configmap_onboarding.md", "Different targets still have different #284 gate keys;"),
-    ("charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md", "Cross-process and cross-target account-wide\nlockout protection is #285"),
+    ("charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md", "Cross-process and cross-target account-wide\nlockout protection is #285"),
     ("docs/diagrams/remote-cluster-access/source.html", "once refused, not re-sent to that target by this process"),
     ("docs/diagrams/remote-cluster-access/source.html", "a password the target already refused is not sent again"),
-    ("docs/DESIGN_remote_cluster_access.md", "a password this target already refused is not sent again"),
-    ("docs/CLUSTER_STANZA.md", "the same canonical target/account/password is not sent again"),
+    ("docs/design/DESIGN_remote_cluster_access.md", "a password this target already refused is not sent again"),
+    ("charts/group-sync-dashboard/docs/CLUSTER_STANZA.md", "the same canonical target/account/password is not sent again"),
 ])
 def test_current_docs_do_not_claim_failure_is_target_scoped(path, stale):
     text = (REPO / path).read_text()
@@ -767,7 +767,7 @@ fencing belongs to #285. This spec does **not** imply one total
   target, and every row of §3.3's table, stated per canonical target, is unchanged.
 ```
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
 The baseline values/Secret trigger still gates bound login failures as #284 specifies; this does not
 claim that its successful logins were globally one-shot. Cross-process and cross-target account-wide
@@ -803,7 +803,7 @@ version: 0.58.6
 version: 0.58.7
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
            -> the credential gate: a password this target already refused is not sent again
 ```
@@ -812,7 +812,7 @@ version: 0.58.7
            -> the credential gate: a password the account was already refused, by any target, is not sent again (#315)
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
 | The lookup itself (the join) | the poller, automatically: the leader, or the sole replica without election (more replicas without election are refused) | unchanged | the remote, as the fleet account | the fleet password; once refused, not re-sent to that target by this process (`local-development/gsd/fleetlookup.py#CredentialGate`) |
 ```
@@ -867,7 +867,7 @@ version: 0.58.7
 - **The secrets-mint Job pulls Red Hat's OpenShift CLI image by default (chart 0.58.6).**
 ```
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 ```markdown
 The ConfigMap trigger marks the existing process-lifetime CredentialGate on a bound
 login failure and on a successful session (before the token read). After that mark,

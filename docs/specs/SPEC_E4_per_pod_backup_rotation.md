@@ -84,7 +84,7 @@ apart from the maintained `path#anchor` citations.
    §3.3 becomes incomplete ("Two files with one ID are the same name in two sources"); its orchestrator should add
    "or, above one replica, two pods' copies stamped in the same microsecond, which differ and are refused". Note 12
    of SPEC_E3 ("the ID (the stamp) is unchanged by it") holds.
-10. **Collisions with the specs in flight.** SPEC_E3 edits `docs/RUNBOOK_backup_restore.md` (§4) and
+10. **Collisions with the specs in flight.** SPEC_E3 edits `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` (§4) and
     `docs/CHANGELOG.md` (`## Unreleased`); this spec edits the runbook's first bullet and the same heading. Blocks
     are re-derived from main at implementation, per `docs/specs/README.md`, "Reconciliations", rule 5; a difference
     is recorded here as a deviation. The index row this spec adds is the thirty-ninth, after SPEC_G1's, SPEC_E2's
@@ -719,7 +719,7 @@ The evidence (the values file, the logs, the listings, the metric reads) goes un
 | `local-development/tests/test_metrics.py` | 71 | 1 |
 | `local-development/tests/test_kpi.py` | 11 | 0 |
 | `local-development/tests/test_chart_grafana_dashboard.py` | 8 | 0 |
-| `docs/RUNBOOK_backup_restore.md` | 6 | 1 |
+| `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` | 6 | 1 |
 | `docs/CHANGELOG.md` | 16 | 0 |
 | `charts/group-sync-dashboard/README.md` | 13 | 1 |
 | `charts/group-sync-dashboard/values.yaml` | 5 | 0 |
@@ -1323,7 +1323,7 @@ def test_the_docs_say_where_each_replicas_copies_are(tmp_path):
     def words(text: str) -> str:
         return " ".join(text.replace("#", " ").split())
 
-    runbook = words((REPO / "docs" / "RUNBOOK_backup_restore.md").read_text())
+    runbook = words((REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text())
     readme = (REPO / "charts" / "group-sync-dashboard" / "README.md").read_text()
     scaling = words(readme[readme.index("\n## Scaling\n"):readme.index("\n## Storage\n")])
     values = (REPO / "charts" / "group-sync-dashboard" / "values.yaml").read_text()
@@ -1604,11 +1604,11 @@ New text:
 
 ```
 
-### Block 24 — docs/RUNBOOK_backup_restore.md: the runbook's on-volume bullet names a replica's copies
+### Block 24 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: the runbook's on-volume bullet names a replica's copies
 
 T391-9; the issue's item 6.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1682,7 +1682,7 @@ of one pod's database, and also the copies of pods that no longer exist and thos
 (written at one replica, or by a release before #391): a rollout renames every pod, and nothing deletes
 a departed pod's copies, as nothing deletes its `/data/<pod name>/gsd.db`. `backup.offsite` still ships
 the single newest copy, which is one replica's. At one replica the name stays `gsd-<UTC stamp>Z.db` and
-`keep` bounds the whole directory ([runbook](../../docs/RUNBOOK_backup_restore.md)).
+`keep` bounds the whole directory ([runbook](../../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md)).
 
 Four combinations are refused at template time rather than deployed broken:
 ```
@@ -1696,14 +1696,14 @@ T391-9.
 Old text:
 
 ```yaml
-  # they count against persistence.size (docs/RUNBOOK_backup_restore.md §6).
+  # they count against persistence.size (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §6).
   backup:
 ```
 
 New text:
 
 ```yaml
-  # they count against persistence.size (docs/RUNBOOK_backup_restore.md §6).
+  # they count against persistence.size (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §6).
   #
   # ABOVE ONE REPLICA every pod writes into this one dir as gsd-<stamp>-<pod>.db and keeps `keep` of
   # its OWN: keep applies per replica, and no pod deletes another pod's copies. The copies of a pod

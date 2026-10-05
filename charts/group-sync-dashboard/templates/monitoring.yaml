@@ -196,7 +196,7 @@ spec:
         # within windowHours. The unsilenced kind ONLY: a cliff an administrator silenced (the
         # Group annotation or the values list) is exported as kind=group_count_cliff_silenced
         # and must not page. Rendered only while the module is on — a rule on a kind the
-        # collector never emits can never fire (docs/DESIGN_metrics_refresh.md §5.2).
+        # collector never emits can never fire (docs/design/DESIGN_metrics_refresh.md §5.2).
         - alert: GroupSyncGroupCountCliff
           expr: gsd_alerts_total{kind="group_count_cliff"} > 0
           for: {{ .Values.monitoring.prometheusRule.for.groupCountCliff }}
@@ -322,7 +322,7 @@ spec:
               fails when either of its passes fails: nothing newer is off the volume, or, at one
               replica, the newest pre-upgrade copy is refused while the six-hourly copies still ship.
               `oc get jobs -l app.kubernetes.io/component=backup-offsite` and the failed pod's
-              log name the cause; docs/RUNBOOK_backup_restore.md has the manual run.
+              log name the cause; charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md has the manual run.
         - alert: GroupSyncDashboardOffsiteBackupUnobserved
           expr: >-
             absent(kube_cronjob_status_last_successful_time{namespace="{{ .Release.Namespace }}",cronjob="{{ include "gsd.fullname" . }}-backup-offsite"})

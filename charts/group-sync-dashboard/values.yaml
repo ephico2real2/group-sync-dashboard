@@ -17,7 +17,7 @@ image:
   # build. That one write-back caused three defects: a published chart that lagged two merges and
   # shipped without a data-exposure fix (#34), a release that published nothing while reporting
   # success (#37), and branch protection being impossible because CI had to write to the default
-  # branch. docs/DESIGN_decouple_chart_and_app_release.md has the review that settled it.
+  # branch. docs/design/DESIGN_decouple_chart_and_app_release.md has the review that settled it.
   #
   # SET IT to deploy a specific build, and the fallback steps aside:
   #   --set image.tag=0.7.0-db8a90510f      an exact commit's image, immutable
@@ -214,7 +214,7 @@ probes:
 # ---------------------------------------------------------------------------
 # Recovery mode (#303) — the app stopped and a recovery pod holding the data volume
 # ---------------------------------------------------------------------------
-# For a restore or a rollback (docs/RUNBOOK_backup_restore.md section 4). The chart renders a second
+# For a restore or a rollback (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4). The chart renders a second
 # Deployment, <fullname>-recovery, on every release (#532): the app's pod spec and the same /data
 # volume, with the chart's recovery script (scripts/recovery_mode.py, shipped in a ConfigMap) in the
 # dashboard container instead of uvicorn, at 0 replicas. recovery.enabled=true scales the app's
@@ -354,7 +354,7 @@ config:
   # upgrades the schema: /data/pre-upgrade when there is one replica, /data/$POD_NAME/pre-upgrade when
   # replicaCount is greater than 1, with backups on or off. It does not start if the copy cannot be
   # written. The copies of the newest three upgrades are kept, each about the size of the database, so
-  # they count against persistence.size (docs/RUNBOOK_backup_restore.md §6).
+  # they count against persistence.size (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §6).
   #
   # ABOVE ONE REPLICA every pod writes into this one dir as gsd-<stamp>-<pod>.db and keeps `keep` of
   # its OWN: keep applies per replica, and no pod deletes another pod's copies. The copies of a pod
@@ -553,7 +553,7 @@ config:
     retentionDays: 400
 
   # Computed alerts with a tunable threshold. Every kind /api/alerts serves is derived at
-  # read time from what the poll stored (docs/reference-architecture.md, "Derived, never
+  # read time from what the poll stored (docs/guides/reference-architecture.md, "Derived, never
   # stored"); this block holds the ones that carry a number.
   alerts:
     # THE GROUP-COUNT CLIFF: a group whose membership fell by dropRatio or more, from a
@@ -682,7 +682,7 @@ ui:
     # file names the cluster, tab, tier and UTC time, and says when the page was a cut of a
     # larger set (`_partial` in the name, `truncated` in the JSON) so a spreadsheet never implies
     # completeness. Exports are not recorded: the Usage tab counts interactions per day, not
-    # actions (docs/DESIGN_export.md). Set false to keep the control off the page.
+    # actions (docs/design/DESIGN_export.md). Set false to keep the control off the page.
     enabled: true
 
 # ---------------------------------------------------------------------------
@@ -692,7 +692,7 @@ ui:
 # `minutes` is the whole window of inactivity (no pointer, keyboard or tab-visibility activity)
 # before sign-out; the last `warningSeconds` of that window are a countdown on screen, and at
 # zero the page sends the browser to the proxy's sign_out — the proxy clears the cookie, and re-entry
-# demands credentials (measured; docs/DESIGN_session_and_signout.md). Its OWN keys: the cookie does
+# demands credentials (measured; docs/design/DESIGN_session_and_signout.md). Its OWN keys: the cookie does
 # not slide, so nothing here is derived from `oauthProxy.cookie.expire`, and that cap remains the
 # guarantee for a tab that never reaches sign_out (a closed laptop). Activity in one tab of the
 # same browser defers the timeout in every other tab of it, so an idle tab cannot sign out a
@@ -722,7 +722,7 @@ session:
 # ANOTHER cluster is therefore a decision this file has to make, per entry, and it used to make
 # it silently: the host's tier gated every cluster's rows, so a host cluster-admin saw a remote
 # cluster's membership, bindings and login failures whether or not they held anything there.
-# Two keys per entry now model it (docs/ACCESS_CONTROL.md §11):
+# Two keys per entry now model it (docs/guides/ACCESS_CONTROL.md §11):
 #
 #   visibility:   inherit     the host's tier decides — the old behaviour, and the host's own
 #                             default (the host is the HOSTING entry). On a remote it is
@@ -767,9 +767,9 @@ session:
 #
 # The alternative posture — one dashboard per cluster and a fleet report reading each one's
 # API with a token from THAT cluster — needs none of this and is still the recommendation
-# where trust boundaries differ: docs/reference-architecture.md §8a.
+# where trust boundaries differ: docs/guides/reference-architecture.md §8a.
 clusters:
-  # EVERY ACCEPTED COMBINATION, AND WHERE EACH REFUSAL FIRES: docs/CLUSTER_STANZA.md — measured, not
+  # EVERY ACCEPTED COMBINATION, AND WHERE EACH REFUSAL FIRES: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md — measured, not
   # described, and held by tests/test_cluster_stanza_matrix.py. Worth reading §5 before a rollout:
   # seventeen bad stanzas fail `helm template`, but FOUR render cleanly and are refused by the pod at
   # startup (an unknown key, a duplicate name, an apiUrl with no scheme, insecureSkipVerify together
@@ -1031,7 +1031,7 @@ persistence:
 # config.backup (under config: above) writes VACUUM INTO copies to the SAME volume they
 # protect. This CronJob mounts that volume read-only and carries the newest copy somewhere
 # else: a second claim, or object storage. Together they are the whole answer; either alone
-# is half. Restore, and how to verify a copy without restoring: docs/RUNBOOK_backup_restore.md.
+# is half. Restore, and how to verify a copy without restoring: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md.
 #
 # ON WHEREVER IT CAN WORK. `enabled` is read as a word, one of three:
 #   ""     (the default) on, unless the copy cannot work here; then nothing renders and nothing
@@ -1058,7 +1058,7 @@ persistence:
 #
 # WHO RUNS IT. The dashboard image, with a Python-stdlib script the chart ships as a
 # ConfigMap (scripts/offsite_backup.py, mounted at /scripts). The image has no tar, rsync or
-# aws on purpose (docs/DESIGN_hardened_image.md §10), and a shell copy could not verify what
+# aws on purpose (docs/design/DESIGN_hardened_image.md §10), and a shell copy could not verify what
 # it copied; the sqlite3 module is exactly what PRAGMA integrity_check needs.
 #
 # MOUNTING THE DATA CLAIM TWICE. The dashboard pod holds it.
@@ -1211,7 +1211,7 @@ housekeeping:
 reporting:
   enabled: true
 
-  # Namespace metadata capture and selection (docs/DESIGN_reporting_auditors_and_ns_selector.md §3).
+  # Namespace metadata capture and selection (docs/design/DESIGN_reporting_auditors_and_ns_selector.md §3).
   # BOTH empty by default, and enabling them also needs rbac.namespaces=true (the poll only lists
   # Namespace objects with that grant). The render refuses a selector that names a key the poll does
   # not capture, and labels set while the grant is off.
@@ -1494,7 +1494,7 @@ rbac:
 
   # The User objects are the SOURCE of the Users tab: OpenShift creates one at a person's first
   # login through an identity provider and never before, so the tab's rows — and its headline,
-  # how many people have logged in to the cluster — come from here (docs/DESIGN_users_tab_logins.md).
+  # how many people have logged in to the cluster — come from here (docs/design/DESIGN_users_tab_logins.md).
   # (A User created by hand has no identity; it is listed as a manual account and not counted.)
   # Read off each object: the name, fullName (shown as "alice.cooper · Alice Cooper" on every member
   # surface, absent is ordinary), the creation time (first login), and the identity-provider prefix
@@ -1788,7 +1788,7 @@ clusterConfig:
 # It records allow/deny/error, but no LDAP result code or AD sub-code (such as account locked).
 # First read backfills available rotated files within retentionDays; pin nodeNames to narrow RBAC.
 # Stored pod-log rows and their causes remain readable and are linked to matching audit events.
-# See docs/AUDIT_LOG_CAPTURE.md for the local/remote grant and worked example.
+# See docs/guides/AUDIT_LOG_CAPTURE.md for the local/remote grant and worked example.
 loginCapture:
   enabled: true
   # The only supported source. Old pod-log values fail with migration guidance.
@@ -2120,7 +2120,7 @@ oauthProxy:
   # Direct API access with a bearer token
   # ---------------------------------------------------------------------------
   # Lets `curl -H "Authorization: Bearer <token>" https://<host>/api/...` work, which is what
-  # an external aggregator needs — see docs/api-access.md.
+  # an external aggregator needs — see docs/guides/api-access.md.
   #
   # WHY IT IS OFF WITHOUT THIS. The proxy authenticates BROWSER sessions with a cookie. A
   # request carrying a bearer token and no cookie is simply unauthenticated as far as it is
@@ -2394,7 +2394,7 @@ visibility:
     namespace: ""
 
 # ---------------------------------------------------------------------------
-# Reporting auditors (docs/DESIGN_reporting_auditors_and_ns_selector.md §2)
+# Reporting auditors (docs/design/DESIGN_reporting_auditors_and_ns_selector.md §2)
 # ---------------------------------------------------------------------------
 # Put a chosen group over the report gate without making anyone a cluster admin. Members can review
 # users, groups and bindings in OpenShift directly AND run reports in the dashboard — read-only, no
@@ -2415,12 +2415,12 @@ rbacAuditors:
   # The default names the estate's auditor group with createLocal:false — an LDAP sync (or the
   # namespace-config operator) owns the Group; this chart only binds it. Keep createLocal:false for any
   # group a directory syncs: a local Group of a synced name collides and can wedge the whole sync
-  # (docs/TROUBLESHOOTING_auditor_groups.md). Turn the whole feature off with `enabled: false` above.
+  # (charts/group-sync-dashboard/docs/TROUBLESHOOTING_auditor_groups.md). Turn the whole feature off with `enabled: false` above.
   groups:
     - name: app-ocp-rbac-groupsync-ns-auditor
       # createLocal omitted => false: an LDAP sync (or the namespace-config operator) owns the Group and
       # this chart only binds it. Set createLocal: true ONLY for a group name no sync filter matches — a
-      # local group of a synced name collides and can wedge the sync (docs/TROUBLESHOOTING_auditor_groups.md).
+      # local group of a synced name collides and can wedge the sync (charts/group-sync-dashboard/docs/TROUBLESHOOTING_auditor_groups.md).
 
 # ---------------------------------------------------------------------------
 # Monitoring

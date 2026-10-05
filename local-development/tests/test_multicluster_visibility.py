@@ -1,6 +1,6 @@
 """Per-cluster authorization: the host's tier never widens a remote unless the operator says so.
 
-THE EXPOSURE (docs/reference-architecture.md §7.2, before 0.19.0): the tier was decided against the
+THE EXPOSURE (docs/guides/reference-architecture.md §7.2, before 0.19.0): the tier was decided against the
 first enabled cluster and gated every cluster's rows, so a host cluster-admin was served a remote's
 membership, bindings and login failures with no standing there. These tests pin the four policies
 and the identity switch (gsd/config.py CLUSTER_VISIBILITIES, CLUSTER_IDENTITIES) at the API handler,
@@ -376,7 +376,7 @@ def test_access_control_section_11_names_only_routes_the_app_serves(tmp_path):
     section names is held to the app's route table, with `{id}`/`{name}` as the placeholders."""
     import pathlib
     import re
-    text = (pathlib.Path(__file__).resolve().parents[2] / "docs" / "ACCESS_CONTROL.md").read_text()
+    text = (pathlib.Path(__file__).resolve().parents[2] / "docs" / "guides" / "ACCESS_CONTROL.md").read_text()
     section = text.split("## 11. Several clusters in one instance", 1)[1].split("\n## ", 1)[0]
     app = build_app(Settings(clusters=[ClusterConfig("h", "https://h", token_env="X")], oauth_proxy_enabled=True,
                              db_path=str(tmp_path / "gsd.db")),
@@ -396,7 +396,7 @@ def test_access_control_decision_diagram_cites_definitions_not_line_numbers():
     import pathlib
     import re
     root = pathlib.Path(__file__).resolve().parents[2]
-    text = (root / "docs" / "ACCESS_CONTROL.md").read_text()
+    text = (root / "docs" / "guides" / "ACCESS_CONTROL.md").read_text()
     section = text.split("## 5. How a request becomes a decision", 1)[1].split("\n## ", 1)[0]
     diagram = section.split("```", 2)[1]          # the fenced decision diagram alone
     assert not re.findall(r"\b(?:api|config)\.py:\d+\b", diagram), "a line-number citation is back"

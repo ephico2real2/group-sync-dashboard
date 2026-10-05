@@ -1,6 +1,6 @@
 """The storage seam, enforced rather than assumed.
 
-docs/storage-coupling.md used to end with this caveat:
+docs/design/storage-coupling.md used to end with this caveat:
 
     There is no Protocol, ABC, or interface today. The decoupling is a property of how the
     code is *used*, protected by convention and enforced by nothing. A single

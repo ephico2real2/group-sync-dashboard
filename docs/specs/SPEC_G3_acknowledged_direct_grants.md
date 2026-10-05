@@ -167,7 +167,7 @@ orchestrator's notes, before it is applied again.
      chart 0.66.1, a PATCH as before. Each block's Old text names the tree's numbers, and the history lines carry
      today's date. G4's planned versions move to 0.66.2 / 0.66.3.
    - **Block 57.** SPEC_G1 (#554) replaced the old three-column access table with the per-route declaration
-     (`docs/ACCESS_CONTROL.md` §4), so the row it edits is now that declaration's `user-bindings` row
+     (`docs/guides/ACCESS_CONTROL.md` §4), so the row it edits is now that declaration's `user-bindings` row
      (`apply-spec-blocks.py` said "Old text occurs 0 times"). The persona columns do not change: G3 changes what the
      answer holds, not who gets one. Its wording goes into the row's notes cell. G1's test reads the persona words,
      so it holds the row unchanged.
@@ -828,7 +828,7 @@ Lines added and removed by §7, from `git diff --numstat` on the implemented cop
 | `charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md` | 19 | 5 |
 | `docs/CHANGELOG.md` | 15 | 0 |
 | `charts/group-sync-dashboard/Chart.yaml` | 6 | 2 |
-| `docs/ACCESS_CONTROL.md` | 1 | 1 |
+| `docs/guides/ACCESS_CONTROL.md` | 1 | 1 |
 | `local-development/pyproject.toml` | 1 | 1 |
 | `local-development/gsd/__init__.py` | 1 | 1 |
 
@@ -2703,9 +2703,9 @@ class TestAcknowledgedGrantsDisclosure:
 class TestUsagePage:
 ```
 
-### Block 57 — docs/ACCESS_CONTROL.md: §4's `/user-bindings` row
+### Block 57 — docs/guides/ACCESS_CONTROL.md: §4's `/user-bindings` row
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 Old text:
 

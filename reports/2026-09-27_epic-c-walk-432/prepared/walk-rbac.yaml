@@ -40,7 +40,7 @@ subjects:
     namespace: group-sync-dashboard
 ---
 # 2. Step 2: `developer` may read what the lookup reads on the target — the estate's existing token-reader Role in
-#    group-sync-operator, which binds the fleet account today (S4b's rehearsal, docs/VALIDATION_satokenlookup.md
+#    group-sync-operator, which binds the fleet account today (S4b's rehearsal, docs/research/VALIDATION_satokenlookup.md
 #    Case A). A binding to the existing Role, not a new or broader one.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

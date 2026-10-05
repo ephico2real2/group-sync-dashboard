@@ -9,7 +9,7 @@
 | Version note | The change is image content (a renderer, the service's allow-sets, the trigger, the page), so it takes the next application MINOR, 4.2.0 (`docs/specs/README.md`, the version ladder; SPEC_E5's rule). The chart takes the PATCH that moves `appVersion`, 0.66.6: no value key, default, template logic or RBAC rule changes, only comments and the README row that name `csv` as an allowed word (§3.9, with the measurement). Read on `fba80ff3` (application 4.1.0, chart 0.66.5); the one other `specified` row, W1, holds chart 0.67.0, which stays above 0.66.6, so W1 does not move. A release that lands first makes the version blocks (§7, Blocks 19 to 22) fail their check, and the implementing pull request corrects them here before applying |
 | Issue | [#106](https://github.com/ephico2real2/group-sync-dashboard/issues/106) |
 | Status | released |
-| Source | OB1-lite's research and specification of 2026-10-03, from the issue's refined body (2026-09-26), `docs/DESIGN_reporting_output_and_delivery.md` §2 re-measured against main, and SPEC_C1's browser export. Measured on main `fba80ff3` with the repository's venv (Python 3.14.7) and node 26.9.0: §2.3's probe built all eleven reports over the seeded snapshot. No lab read; §5 states the walk. §7's blocks were proved against a clean checkout of `fba80ff3` (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-03, from the issue's refined body (2026-09-26), `docs/design/DESIGN_reporting_output_and_delivery.md` §2 re-measured against main, and SPEC_C1's browser export. Measured on main `fba80ff3` with the repository's venv (Python 3.14.7) and node 26.9.0: §2.3's probe built all eleven reports over the seeded snapshot. No lab read; §5 states the walk. §7's blocks were proved against a clean checkout of `fba80ff3` (§4.3) |
 
 ## How to read this spec
 
@@ -32,7 +32,7 @@ and tables; prose cites `path#anchor`.
 
 ## Orchestrator's notes
 
-1. **The design doc's renderer is not taken.** `docs/DESIGN_reporting_output_and_delivery.md` §2.2 sketches
+1. **The design doc's renderer is not taken.** `docs/design/DESIGN_reporting_output_and_delivery.md` §2.2 sketches
    `render_csv` over `csv.writer`. Measured (§2.2): `csv.writer` writes `True` where the page writes `true`, a
    Python list's repr where the page joins with `; `, `""` for a lone empty field, and applies no formula guard.
    The issue requires the page's rule, so the renderer ports `csvField` and joins records itself (§3.4).
@@ -391,7 +391,7 @@ $ git diff --stat        (the tracked files; render_csv.py and test_report_csv.p
  .../templates/report-cronjob.yaml             |  2 +-         local-development/gsd/reporting/config.py     |  6 +++---
  charts/group-sync-dashboard/values.yaml       |  2 ++         local-development/gsd/reporting/runs.py       |  4 ++++
  docs/CHANGELOG.md                             | 11 +++++++++++  local-development/gsd/reporting/server.py     | 10 ++++++----
- docs/DESIGN_reporting_output_and_delivery.md  |  5 ++++-      local-development/gsd/reporting/trigger.py    |  2 +-
+ docs/design/DESIGN_reporting_output_and_delivery.md  |  5 ++++-      local-development/gsd/reporting/trigger.py    |  2 +-
  local-development/API.md                      |  2 +-         local-development/gsd/static/index.html       |  2 ++
  local-development/pyproject.toml              |  2 +-         local-development/tests/test_ui.py            | 23 ++++++++++
  16 files changed, 68 insertions(+), 17 deletions(-)
@@ -1126,16 +1126,16 @@ appVersion: "4.1.0"
 appVersion: "4.2.0"
 ```
 
-### Block 23 — `docs/DESIGN_reporting_output_and_delivery.md`: the status line
+### Block 23 — `docs/design/DESIGN_reporting_output_and_delivery.md`: the status line
 
-<!-- block: docs/DESIGN_reporting_output_and_delivery.md | edit -->
+<!-- block: docs/design/DESIGN_reporting_output_and_delivery.md | edit -->
 ```markdown
-**Status: proposed — round 1 reviewed, corrections folded in.** Record: `docs/REVIEW_reporting_output_delivery.md`. Four features from `docs/REPORTING_ENHANCEMENTS.md`, taken forward
+**Status: proposed — round 1 reviewed, corrections folded in.** Record: `docs/reviews/REVIEW_reporting_output_delivery.md`. Four features from `docs/design/REPORTING_ENHANCEMENTS.md`, taken forward
 ```
 
 ```markdown
 **Status: proposed — round 1 reviewed, corrections folded in. §2 (CSV output) is built by
 `docs/specs/SPEC_F2_csv_format.md` (#106), which re-measured it against main and did not take its `csv.writer`
-renderer or its `#` label rows (SPEC_F2 §2.4, §2a).** Record: `docs/REVIEW_reporting_output_delivery.md`. Four
-features from `docs/REPORTING_ENHANCEMENTS.md`, taken forward
+renderer or its `#` label rows (SPEC_F2 §2.4, §2a).** Record: `docs/reviews/REVIEW_reporting_output_delivery.md`. Four
+features from `docs/design/REPORTING_ENHANCEMENTS.md`, taken forward
 ```

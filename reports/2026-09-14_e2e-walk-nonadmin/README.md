@@ -52,4 +52,4 @@ GSD_UI_PASSWORD='Ldap123!' KUBECONFIG=<cluster kubeconfig> \
 ```
 
 jane.smith's password is the repository's documented LDAP test credential
-(`docs/LOGIN_CAPTURE_QUICKCHECK.md`). She is self-tier; kubeadmin and john.doe are wide-tier.
+(`docs/guides/LOGIN_CAPTURE_QUICKCHECK.md`). She is self-tier; kubeadmin and john.doe are wide-tier.

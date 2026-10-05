@@ -16,7 +16,7 @@
 #
 # This is the lean copy. Containerfile.annotated has the same instructions with the full
 # reasoning and every measurement beside each step (tests/test_containerfile.py holds the two
-# identical); Containerfile.ubi is the previous recipe. Design: docs/DESIGN_hardened_image.md.
+# identical); Containerfile.ubi is the previous recipe. Design: docs/design/DESIGN_hardened_image.md.
 
 # ---------------------------------------------------------------------------------------------
 #  STAGE 1 · build — the application and its Python dependencies, resolved into /install

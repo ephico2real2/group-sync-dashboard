@@ -30,7 +30,7 @@ The released image, pinned by digest, ran in a throwaway pod with no volume.
   source's (`walk/backup-sha.txt`).
 - The copy is stamped 00:29:48Z. The first attempt at the pod failed, because the image has no `sleep`; it was
   recreated with a Python wait.
-- The script is `walk/walk_epic_b.py`. The recipe in `docs/RUNBOOK_backup_restore.md` was then run verbatim on the
+- The script is `walk/walk_epic_b.py`. The recipe in `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` was then run verbatim on the
   lab and also gave 13 of 13.
 
 | Check | Result |
@@ -62,7 +62,7 @@ The operator chose to prove #301 on a copy, not by a live upgrade and restore (#
 
 ## The three screenshots
 
-They are in `docs/RUNBOOK_backup_restore.md`, in "What a successful backup looks like", with the commands for each,
+They are in `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`, in "What a successful backup looks like", with the commands for each,
 and under `docs/screenshots/`. Each picture shows real output; lines not relevant to it are left out.
 - **The six-hourly backup:** captured at 23:02:25Z (`capture/`, `capture/render.py`).
 - **The pre-upgrade copy and the restore check:** from this walk (`walk/render2.py`, `walk/pre-verify.py`).

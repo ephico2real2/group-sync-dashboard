@@ -122,7 +122,7 @@ def _selector_labels_env() -> tuple[str, ...]:
     """The ordered selector dimensions from GSD_REPORT_NS_SELECTOR_LABELS (a JSON array, the same
     transport the chart uses for namespaceMetadataLabels). Empty/unset -> no selector. Duplicate or
     blank entries fail at startup — a duplicated dimension would break the AND-across selection's
-    expectation of distinct keys (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3)."""
+    expectation of distinct keys (docs/design/DESIGN_reporting_selectors_snapshots_and_windows.md §3)."""
     raw = os.environ.get("GSD_REPORT_NS_SELECTOR_LABELS", "").strip()
     if not raw:
         return ()

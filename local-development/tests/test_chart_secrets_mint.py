@@ -108,8 +108,8 @@ class TestRender:
 
 def test_current_docs_describe_the_minted_secrets_not_the_lookup_era():
     """Review of #215 (Codex M9): two design paragraphs still described `lookup` as current."""
-    reference = (REPO / "docs" / "reference-architecture.md").read_text()
-    design = (REPO / "docs" / "DESIGN_reporting_service.md").read_text()
+    reference = (REPO / "docs" / "guides" / "reference-architecture.md").read_text()
+    design = (REPO / "docs" / "design" / "DESIGN_reporting_service.md").read_text()
     assert "reused across upgrades by `lookup`" not in reference and "oauth-secret.yaml#lookup" not in reference
     assert "oauth-secret.yaml#lookup" not in design
     assert "<fullname>-oauth-session" in reference and "<reportName>-shared-token" in design
@@ -226,7 +226,7 @@ class TestTheBringYourOwnKeyAndTheDocs:
 def test_the_default_image_is_red_hats_cli_and_the_docs_say_what_a_cluster_without_it_must_do():
     """Review of #413 (OB1-lite, Grok N1): the default is registry.redhat.io's ose-cli-rhel9, pulled BY TAG from a
     pre-install/pre-upgrade hook, so an unpullable image fails the release (measured for ose-cli:latest,
-    docs/OAUTH_LOGLEVEL_REVIEW.md C2). The rendered Job pins the default; all three documents name the failure,
+    docs/research/OAUTH_LOGLEVEL_REVIEW.md C2). The rendered Job pins the default; all three documents name the failure,
     the mirror path that redirects a tag pull, and the imagestream fallback."""
     job, _, _ = _job(_render())
     assert job["spec"]["template"]["spec"]["containers"][0]["image"] == "registry.redhat.io/openshift4/ose-cli-rhel9:v4.22"

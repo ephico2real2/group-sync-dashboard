@@ -73,7 +73,7 @@ def _seed(db: str) -> None:
     store.set_cluster_access_group(
         "c1", "cn=gate,ou=groups,dc=example,dc=com", "discovered", "gate-group", now)
     # The User objects: both people have logged in, neither provider supplied a name. Since the
-    # Users tab is sourced from these (docs/DESIGN_users_tab_logins.md) a row exists only for a
+    # Users tab is sourced from these (docs/design/DESIGN_users_tab_logins.md) a row exists only for a
     # User, so the self-tier user tests need the viewer to have one.
     store.replace_users("c1", [
         {"user_name": VIEWER, "full_name": None, "created_at": now, "providers": ["corp-ldap"], "has_identity": True},

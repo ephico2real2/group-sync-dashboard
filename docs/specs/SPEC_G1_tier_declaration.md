@@ -15,7 +15,7 @@
 The plain point first. The dashboard already decides correctly who sees what: every route calls its gate in
 `local-development/gsd/api.py`. What is missing is one written table that says, for every route and every page,
 what each kind of reader gets, and a test that fails when the code and the table disagree. Today the table in
-`docs/ACCESS_CONTROL.md` is written by hand, is thirteen routes and four tabs behind, and nothing checks it, so a new
+`docs/guides/ACCESS_CONTROL.md` is written by hand, is thirteen routes and four tabs behind, and nothing checks it, so a new
 route could ship with no gate and the suite would stay green. This spec makes §4 of that document the declaration
 for routes and §3 the declaration for pages, and adds the test that holds both to the running code.
 
@@ -178,7 +178,7 @@ command appears there as a quotation of that model, not as a step of this change
 
 ## 1. The mandate, and what is out of scope
 
-The issue (#239, "What must be accomplished"): `docs/ACCESS_CONTROL.md` §4 has one row for every route the app
+The issue (#239, "What must be accomplished"): `docs/guides/ACCESS_CONTROL.md` §4 has one row for every route the app
 registers with the cluster-configuration writes on, keyed by method and path, naming the tier each persona gets, the
 six write routes marked as registered only with `clusterConfig.secrets.writes.enabled`; every §4 row names something
 the app serves, except rows marked as another service's; §3 has one row for every tab and page, naming what each
@@ -452,7 +452,7 @@ could be measured on this app, measured.
 
 | alternative | source, quoted | what it would cost here | decision |
 |---|---|---|---|
-| **A1. The declaration as tables in `docs/ACCESS_CONTROL.md`, read by a test that walks `app.routes` and drives every cell** | ASVS 5.0.0 8.1.1, "authorization documentation defines rules for restricting function-level … access" (§2.6); the Authorization Cheat Sheet, line 133, "automated unit and integration testing of access control logic can help reduce the number of security flaws that make it into production" | one test module (269 lines), one browser test, the two tables; no change under `gsd/` or `charts/`, so no image and no release | **chosen**: the epic's decision of 2026-09-30, the only option that changes no behaviour, and the only one that is the documentation ASVS asks for |
+| **A1. The declaration as tables in `docs/guides/ACCESS_CONTROL.md`, read by a test that walks `app.routes` and drives every cell** | ASVS 5.0.0 8.1.1, "authorization documentation defines rules for restricting function-level … access" (§2.6); the Authorization Cheat Sheet, line 133, "automated unit and integration testing of access control logic can help reduce the number of security flaws that make it into production" | one test module (269 lines), one browser test, the two tables; no change under `gsd/` or `charts/`, so no image and no release | **chosen**: the epic's decision of 2026-09-30, the only option that changes no behaviour, and the only one that is the documentation ASVS asks for |
 | **A2. Generate §4 from the code** (a script that probes every route and writes the table) | — (a design option, not a published practice) | small, but the table would then record whatever the code does: a route shipped with the wrong gate would regenerate a wrong row and stay green | **rejected**: a declaration must be written by a person and compared with the code, or it proves nothing; generation is how the drift would be hidden, not caught |
 | **A3. A `TIER_BY_SURFACE` registry in `gsd/`** (SPEC_T1's step T1) | the Cheat Sheet, line 41: checks "should allow for global, application-wide configuration rather than needing to be applied individually to every method or class" | every gate re-pointed at the registry, `visibility.tiers` on `/api/whoami`, an image MINOR, and the setting renames that came with it in SPEC_T1 | **not designed here**: it is the operator's open question on #239 (the mandate). The Cheat Sheet's sentence is its best argument and is recorded under "Open for the operator" |
 | **A4. Enforcement in FastAPI itself: a global dependency, or a custom `APIRoute` class, that refuses a route with no declared tier at runtime** | FastAPI 0.141.1 docs, `tutorial/dependencies/global-dependencies.md` lines 3-7: "you can add them to the `FastAPI` application … they will be applied to all the *path operations* in the application"; `how-to/custom-request-and-route.md` line 3: "you may want to override the logic used by the `Request` and `APIRoute` classes" | measured on FastAPI 0.141.1 with a global dependency that refuses every request: `/decorated 403`, `/hidden 403` (an `include_in_schema=False` route), `/openapi.json 200`, `/static/a.css 200`. A path operation is an `APIRoute`, so the schema route and the mount, two of this app's 44 entries, are out of its reach; it also needs the tier table in code (A3), turns a forgotten declaration into a refusal served in production instead of a red build, and changes the image | **rejected**: it covers fewer routes than A1's walk of `app.routes`, and moves the failure from CI to readers |
@@ -491,7 +491,7 @@ could be measured on this app, measured.
 
 ### 3.1 Where the declaration lives
 
-In `docs/ACCESS_CONTROL.md`, the document an operator already reads for who sees what: §4 for routes, §3 for pages.
+In `docs/guides/ACCESS_CONTROL.md`, the document an operator already reads for who sees what: §4 for routes, §3 for pages.
 Not in code: the epic decided it (2026-09-30), it needs no image change, and a reviewer reads one table instead of a
 data structure and the code that consults it. The test parses the two tables, so the document cannot drift from the
 code without CI failing. The table records the gates; it configures nothing.
@@ -682,7 +682,7 @@ under `reports/<date>_tier-declaration/` with the screenshots, pinned to the ful
 
 ## 6. What an operator sees, and what it costs
 
-- In `docs/ACCESS_CONTROL.md`: §3, one row for each of the sixteen pages with a word per reader; §4, one row for each
+- In `docs/guides/ACCESS_CONTROL.md`: §3, one row for each of the sixteen pages with a word per reader; §4, one row for each
   of the 44 routes with a word per reader, the gate it calls and whether the writes switch registers it, and
   `/report/**` in its own small table. The same tables CI reads.
 - In CI: a red build when a route or page ships without a row, a row outlives its route, a reader is answered
@@ -698,7 +698,7 @@ under `reports/<date>_tier-declaration/` with the screenshots, pinned to the ful
 | `local-development/tests/test_ui.py` | 63 | 0 |
 | `local-development/tests/test_multicluster_visibility.py` | 29 | 16 |
 | `local-development/tests/test_specs_index.py` | 12 | 0 |
-| `docs/ACCESS_CONTROL.md` | 133 | 40 |
+| `docs/guides/ACCESS_CONTROL.md` | 133 | 40 |
 | `docs/specs/SPEC_T1_tier_model.md` | 7 | 2 |
 | `docs/specs/README.md` | 1 | 1 |
 | `docs/CHANGELOG.md` | 10 | 0 |
@@ -719,7 +719,7 @@ The new module: the two tables parsed, `app.routes` walked, every row requested 
 <!-- block: local-development/tests/test_access_declaration.py | create -->
 
 ```python
-"""The access declaration (#239, docs/specs/SPEC_G1_tier_declaration.md): `docs/ACCESS_CONTROL.md` §3 and §4 say
+"""The access declaration (#239, docs/specs/SPEC_G1_tier_declaration.md): `docs/guides/ACCESS_CONTROL.md` §3 and §4 say
 which tier every page and every route gives each reader, and this module holds both to the code.
 
 What fails here, each the way the declaration was measured drifting (five routes and four tabs behind on 5c03a9b1):
@@ -754,7 +754,7 @@ from gsd.api import build_app
 from test_visibility import H, _MapResolver, _seed, _settings
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-DOC = REPO / "docs" / "ACCESS_CONTROL.md"
+DOC = REPO / "docs" / "guides" / "ACCESS_CONTROL.md"
 PAGE = REPO / "local-development" / "gsd" / "static" / "index.html"
 
 #: The one reader every persona but the first is. The seed makes her a member of g-adm, a user with a grant in ns1,
@@ -786,7 +786,7 @@ PATH_VALUES = {"cluster_id": "c1", "groups": "g-adm", "users": VIEWER, "namespac
 def _section(number: int) -> str:
     text = DOC.read_text()
     head = re.search(rf"^## {number}\. .*$", text, re.M)
-    assert head, f"docs/ACCESS_CONTROL.md has no section {number}"
+    assert head, f"docs/guides/ACCESS_CONTROL.md has no section {number}"
     rest = text[head.end():]
     following = re.search(r"^## ", rest, re.M)
     return rest[:following.start()] if following else rest
@@ -903,7 +903,7 @@ def test_every_route_the_app_registers_has_a_row(app):
     missing = sorted(_keys(app) - {_key(row) for row in ROUTES})
     rows = "\n".join(f"| {method} | `{path}` | <always, writes on or housekeeping on> | <gate or none> | <no identity> | <self> "
                      f"| <auditor> | <usage> | <cluster-admin> | <notes> |" for method, path in missing)
-    assert not missing, f"routes with no row in docs/ACCESS_CONTROL.md §4; add one each (§4 names the words):\n{rows}"
+    assert not missing, f"routes with no row in docs/guides/ACCESS_CONTROL.md §4; add one each (§4 names the words):\n{rows}"
 
 
 def test_every_row_names_one_route_the_app_serves(app):
@@ -1021,7 +1021,7 @@ def _home(page, base, user="alice"):
 New text:
 
 ```python
-# ── #239: the declared tabs (docs/ACCESS_CONTROL.md §3, SPEC_G1) ────────────────────────────────────
+# ── #239: the declared tabs (docs/guides/ACCESS_CONTROL.md §3, SPEC_G1) ────────────────────────────────────
 # §3 says, per persona, which tabs the strip draws and which pages are a refusal card. This loads every page as
 # every persona and holds the page to it; tests/test_access_declaration.py holds §3 to the pages index.html can draw.
 
@@ -1201,11 +1201,11 @@ def test_t1_says_what_was_delivered_and_what_was_not() -> None:
 
 ```
 
-### Block 6 — docs/ACCESS_CONTROL.md: §3, the pages: the introduction, the words and the table
+### Block 6 — docs/guides/ACCESS_CONTROL.md: §3, the pages: the introduction, the words and the table
 
 Replaces main's ten-row tab table (§3.6).
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 Old text:
 
@@ -1266,11 +1266,11 @@ loads every page as every persona and holds the tab strip and each refusal card 
 | lookup | — | self | all | self | all | the search over their own groups, users and namespaces |
 ```
 
-### Block 7 — docs/ACCESS_CONTROL.md: §3, why the refused pages are refused
+### Block 7 — docs/guides/ACCESS_CONTROL.md: §3, why the refused pages are refused
 
 Main's paragraph named two refused tabs; there are six refused pages, and two absent ones.
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 Old text:
 
@@ -1292,11 +1292,11 @@ path, above.) KPIs and Cluster Configurations are left out of the strip rather t
 the tab is not drawn for a reader the cluster-admin tier refuses.
 ```
 
-### Block 8 — docs/ACCESS_CONTROL.md: §4, the declaration
+### Block 8 — docs/guides/ACCESS_CONTROL.md: §4, the declaration
 
 Replaces main's twenty-one-row table: the posture, the personas, the words, the 44 rows, and `/report/**` in its own table (§3.1 to §3.5, note 7). The two asymmetries and the self-tier subsection after it are unchanged.
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 Old text:
 
@@ -1431,11 +1431,11 @@ to guess.
 | `/report/**` | the report service | a ticket from `/api/report/ticket` (a viewer) or the service token; a viewer without a ticket gets 401, a ticket for another identity 403 |
 ```
 
-### Block 9 — docs/ACCESS_CONTROL.md: §5, the fourth user of `require_admin_tier`
+### Block 9 — docs/guides/ACCESS_CONTROL.md: §5, the fourth user of `require_admin_tier`
 
 Note 11.
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 Old text:
 
@@ -1501,7 +1501,7 @@ New text:
 
 ```markdown
 | Status | in progress |
-| Delivered | Step T3 by #322, in another shape: one `visibility.clusterAdminSar` question gates KPIs and the whole Cluster Configurations tab and grants the lower host tiers (SPEC_T2, released in app 0.35.0). The declaration T1 asked of `TIER_BY_SURFACE` — every route and tab with its tier, and a test failing on one left out — by #239 as SPEC_G1, in `docs/ACCESS_CONTROL.md` §3 and §4 rather than in code. Not built, and open for the operator on #239: the `TIER_BY_SURFACE` registry, `visibility.tiers` on `/api/whoami`, and the `adminSar` → `auditorSar` and `usageAdminSar` → `adminSar` renames. #114 was closed as not planned on 2026-09-27. Re-derive any block below from main before building from it |
+| Delivered | Step T3 by #322, in another shape: one `visibility.clusterAdminSar` question gates KPIs and the whole Cluster Configurations tab and grants the lower host tiers (SPEC_T2, released in app 0.35.0). The declaration T1 asked of `TIER_BY_SURFACE` — every route and tab with its tier, and a test failing on one left out — by #239 as SPEC_G1, in `docs/guides/ACCESS_CONTROL.md` §3 and §4 rather than in code. Not built, and open for the operator on #239: the `TIER_BY_SURFACE` registry, `visibility.tiers` on `/api/whoami`, and the `adminSar` → `auditorSar` and `usageAdminSar` → `adminSar` renames. #114 was closed as not planned on 2026-09-27. Re-derive any block below from main before building from it |
 ```
 
 ### Block 13 — docs/specs/SPEC_T1_tier_model.md: SPEC_T1's orchestrator's notes: why the status moved
@@ -1536,7 +1536,7 @@ Under `## Unreleased`, as tests and docs: no application or chart release carrie
 
 ```markdown
 
-- **Every route and page declares its tier, and CI holds the code to it (#239, SPEC_G1).** `docs/ACCESS_CONTROL.md`
+- **Every route and page declares its tier, and CI holds the code to it (#239, SPEC_G1).** `docs/guides/ACCESS_CONTROL.md`
   §4 has one row for each route the application registers (44 with the cluster-configuration writes on), keyed by
   method and path, naming what each of five readers gets: no identity, self, auditor, usage and cluster-admin. §3 has
   one row for each page: the fourteen tabs, the Reporting status page and the search page. A new test builds the app,

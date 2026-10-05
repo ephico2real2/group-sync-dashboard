@@ -1,4 +1,4 @@
-"""docs/RUNBOOK_backup_restore.md, as #300 left it: §0 before every upgrade, §4 around recovery mode (#303) and
+"""charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md, as #300 left it: §0 before every upgrade, §4 around recovery mode (#303) and
 restore-db.sh (#302) with the manual paths as the fallback, and the section numbers the code cites.
 
 The runbook is the procedure an operator follows at 03:00, so these read it as text: a heading renumbered or a
@@ -23,7 +23,7 @@ import pytest
 import yaml
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-RUNBOOK = REPO / "docs" / "RUNBOOK_backup_restore.md"
+RUNBOOK = REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md"
 TEXT = RUNBOOK.read_text()
 HEADINGS = re.findall(r"^## (\d+)\. (.+)$", TEXT, re.M)
 

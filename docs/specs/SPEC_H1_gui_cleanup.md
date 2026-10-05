@@ -242,7 +242,7 @@ mode mounts it (`local-development/restore-db.py#catalogue`). `pre-restore/` is 
 kept under `pre-restore/<stamp>/` (`local-development/restore-db.py#keep`), and runbook §4, "Undo a restore", is the way back from it.
 Runbook §6: "the database as it was before the upgrade is the only way back to the previous image", and the copy is
 taken once per upgrade, so deleting it lets a retried upgrade copy a half-migrated database
-(`docs/RUNBOOK_backup_restore.md#6. Pre-upgrade copies`, "Once per upgrade").
+(`charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md#6. Pre-upgrade copies`, "Once per upgrade").
 
 **What it settles.** The guard keeps the newest copy of each directory: the newest scheduled backup, so `--list`
 always has a backup to restore (the mandate's minimum); the newest pre-upgrade copy, the only way back to the image
@@ -629,8 +629,8 @@ The walk, on the deployed head (built and deployed with `release-crc.sh`), with 
 | `local-development/tests/test_ui.py` | 167 | 0 |
 | `local-development/tests/test_report_ticket_api.py` | 2 | 1 |
 | `local-development/API.md` | 24 | 0 |
-| `docs/ACCESS_CONTROL.md` | 1 | 0 |
-| `docs/RUNBOOK_backup_restore.md` | 9 | 1 |
+| `docs/guides/ACCESS_CONTROL.md` | 1 | 0 |
+| `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` | 9 | 1 |
 | `docs/CHANGELOG.md` | 20 | 0 |
 | `docs/specs/SPEC_D6_scrub_span.md` (the live emit count, block 42) | 6 | 3 |
 | `charts/group-sync-dashboard/values.yaml` | 25 | 0 |
@@ -659,7 +659,7 @@ it. This module holds what both pods share (the request shapes and the set diges
 the database copies on its data volume, in exactly three directories.
 
 THE GUARD. In each directory the newest copy is never deleted from the page: the newest scheduled backup (a
-restore needs a copy, docs/RUNBOOK_backup_restore.md §4), the newest pre-upgrade copy (the only way back across the
+restore needs a copy, charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4), the newest pre-upgrade copy (the only way back across the
 last schema upgrade, §6) and the newest pre-restore set (the way back from the last restore, §4 "Undo a restore").
 
 THE BINDING. A cleanup's confirm carries the digest of the set its preview showed. The set is computed again under
@@ -700,11 +700,11 @@ _STAMP = re.compile(r"(\d{8}T\d{6})(?:\.(\d{6}))?Z")
 #: Why the newest copy of each kind is kept, in the words the page and the 409 say.
 GUARDS = {
     "backup": "the newest scheduled backup is kept, so a restore always has a copy to restore "
-              "(docs/RUNBOOK_backup_restore.md §4)",
+              "(charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4)",
     "pre-upgrade": "the newest pre-upgrade copy is kept: it is the only way back to the image before the last "
-                   "schema upgrade (docs/RUNBOOK_backup_restore.md §6)",
+                   "schema upgrade (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §6)",
     "pre-restore": "the newest pre-restore set is kept: it is the way back from the last restore "
-                   "(docs/RUNBOOK_backup_restore.md §4, \"Undo a restore\")",
+                   "(charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4, \"Undo a restore\")",
 }
 #: A schedule's name as the chart and the report service accept it: a short DNS label.
 _SCHEDULE = r"[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?"
@@ -2649,11 +2649,11 @@ New text:
 | `DELETE /report/api/runs/{id}`, `POST /report/api/runs/cleanup` | **token only**, with `housekeeping.enabled` | the dashboard's deletes (#542, above): one finished run, or a cleanup's preview and confirm. A viewer's ticket is refused (`403`): the cluster-admin tier is decided by the dashboard, which holds the cluster credential this service does not |
 ```
 
-### Block 38 — docs/ACCESS_CONTROL.md: §4's row
+### Block 38 — docs/guides/ACCESS_CONTROL.md: §4's row
 
 Every route names the tier each reader gets (SPEC_G1's rule).
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 Old text:
 
@@ -2668,11 +2668,11 @@ New text:
 | `/api/housekeeping/**`: the copies listing and the four delete routes (#542) | **403** | **403** unless the reader passes the cluster-admin tier (#322) with a proxy-verified identity; exist only with `housekeeping.enabled` |
 ```
 
-### Block 39 — docs/RUNBOOK_backup_restore.md: §4: the page deletes copies, and never the newest
+### Block 39 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §4: the page deletes copies, and never the newest
 
 Where the runbook names `pre-restore/` and the undo; recovery mode is unchanged (§3.12).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -2693,11 +2693,11 @@ pre-upgrade copy (§6) and the newest pre-restore set (the undo of the last rest
 app serves, so it plays no part in recovery mode and changes nothing in the steps above.
 ```
 
-### Block 40 — docs/RUNBOOK_backup_restore.md: §6: an older pre-upgrade copy may be deleted from the page
+### Block 40 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md: §6: an older pre-upgrade copy may be deleted from the page
 
 Where the runbook says what keeps the copies.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -2870,13 +2870,13 @@ Every value has its row; this one after Backups, which it acts on.
 Old text:
 
 ```text
-them ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
+them ([runbook §6](../../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
 ```
 
 New text:
 
 ```text
-them ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
+them ([runbook §6](../../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
 
 ### Deleting reports and database copies — `housekeeping`
 

@@ -8,7 +8,7 @@
 | Version on release | app and chart minor bumps per step, assigned at each step's PR |
 | Issue | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) |
 | Status | released |
-| Delivered | Step T3 by #322, in another shape: one `visibility.clusterAdminSar` question gates KPIs and the whole Cluster Configurations tab and grants the lower host tiers (SPEC_T2, released in app 0.35.0). The declaration T1 asked of `TIER_BY_SURFACE` — every route and tab with its tier, and a test failing on one left out — by #239 as SPEC_G1, in `docs/ACCESS_CONTROL.md` §3 and §4 rather than in code. Not built, and open for the operator on #239: the `TIER_BY_SURFACE` registry, `visibility.tiers` on `/api/whoami`, and the `adminSar` → `auditorSar` and `usageAdminSar` → `adminSar` renames. #114 was closed as not planned on 2026-09-27. Re-derive any block below from main before building from it |
+| Delivered | Step T3 by #322, in another shape: one `visibility.clusterAdminSar` question gates KPIs and the whole Cluster Configurations tab and grants the lower host tiers (SPEC_T2, released in app 0.35.0). The declaration T1 asked of `TIER_BY_SURFACE` — every route and tab with its tier, and a test failing on one left out — by #239 as SPEC_G1, in `docs/guides/ACCESS_CONTROL.md` §3 and §4 rather than in code. Not built, and open for the operator on #239: the `TIER_BY_SURFACE` registry, `visibility.tiers` on `/api/whoami`, and the `adminSar` → `auditorSar` and `usageAdminSar` → `adminSar` renames. #114 was closed as not planned on 2026-09-27. Re-derive any block below from main before building from it |
 | Withdrawn | The remaining parts, by the operator's decision of 2026-10-03 on #239 ("Withdraw them"): the `TIER_BY_SURFACE` registry in code, `visibility.tiers` on `/api/whoami`, and the `adminSar` → `auditorSar` / `usageAdminSar` → `adminSar` renames with their alias. None changes who sees what. SPEC_G1's test already fails CI on a route without a declared tier, and the renames would cost every estate a values migration. With what was delivered released (SPEC_T2 in app 0.35.0, SPEC_G1 in 4.0.0) and the rest withdrawn, the spec is `released`.
 | Source | this document is the orchestrator's own design, measured on CRC on 2026-09-20 with the commands quoted below; there is no separate design-agent output |
 
@@ -45,7 +45,7 @@ The operator's rulings this spec rests on, one line each, verbatim where quoted:
 - 2026-09-20 (#239): one table in code, `TIER_BY_SURFACE`, that every route and every tab reads; tabs a tier does not grant are not rendered, and a URL to one shows the refusal card naming itself.
 - 2026-09-20 (#239): the migration ships with the tier on `/api/whoami`, a CHANGELOG line naming the change, and a values knob to keep the old behaviour for one release.
 - 2026-09-20 (#239): T1 the registry, T2 the migration of the existing gates (closes #114), T3 the cluster-configuration tier as the fourth rung; #238's bootstrap controls sit at `cluster_admin:manage`.
-- Standing rulings the model inherits: the Usage ruling — *"we can grant them cluster reader and not cluster admin. But it means cluster-admin need to see all and not gated all"* (`docs/SPEC_usage_admin_tier.md#The operator's ruling`); the refusal sentence *"For administrators only."* is the operator's exact phrase and leads both the card and the API `detail` (`gsd/api.py#require_admin_tier`); a refusal names no role, grant, chart value or route (`gsd/static/index.html#refusalCard`); *"Hiding a tab is never the control"* — the server 403 is (`docs/ACCESS_CONTROL.md#Hiding a tab is never the control`); chart booleans default on (2026-09-05).
+- Standing rulings the model inherits: the Usage ruling — *"we can grant them cluster reader and not cluster admin. But it means cluster-admin need to see all and not gated all"* (`docs/design/SPEC_usage_admin_tier.md#The operator's ruling`); the refusal sentence *"For administrators only."* is the operator's exact phrase and leads both the card and the API `detail` (`gsd/api.py#require_admin_tier`); a refusal names no role, grant, chart value or route (`gsd/static/index.html#refusalCard`); *"Hiding a tab is never the control"* — the server 403 is (`docs/guides/ACCESS_CONTROL.md#Hiding a tab is never the control`); chart booleans default on (2026-09-05).
 
 Decisions this spec makes where the issue is silent, by the best-practice rule (posted on #239 with this spec; each is the orchestrator's, dated 2026-09-20, and stands until the operator rules otherwise):
 
@@ -188,7 +188,7 @@ setting is empty).
 
 **Rules, each one already stated somewhere in this repository and now general:**
 
-1. **Own resolver, own cache, never shared.** `docs/SPEC_usage_admin_tier.md#Cache`: *"Reuse the
+1. **Own resolver, own cache, never shared.** `docs/design/SPEC_usage_admin_tier.md#Cache`: *"Reuse the
    existing 60s per-viewer TTL, in a resolver instance SEPARATE from the wide tier's. It is a
    different question about the same person and must not share a cache entry."* One
    `TierResolver` per tier (per cluster for the auditor tier under `remote-sar`), each constructed
@@ -324,7 +324,7 @@ TIER_BY_SURFACE: dict[str, Surface] = {
 SURFACE_WORDS: dict[str, str] = {}
 
 #: The tab half of the table, in the page's order, served to the browser on /api/whoami as
-#: `tabs` so the page never derives a tier (docs/ACCESS_CONTROL.md §7). The page reads it; a
+#: `tabs` so the page never derives a tier (docs/guides/ACCESS_CONTROL.md §7). The page reads it; a
 #: static test holds index.html's `tab(...)` calls to exactly this set.
 TAB_TIERS = {k.removeprefix("tab:"): v for k, v in TIER_BY_SURFACE.items() if k.startswith("tab:")}
 ```
@@ -473,15 +473,15 @@ render, as every unknown key does). The issue's phrasing, `adminSar` pointed bac
 |---|---|---|
 | `gsd/metrics.py#note_tier_check` / `note_decision` labels (`gsd/metrics.py#TIER_THRESHOLDS` = `("admin", "usage")`) | `threshold="admin"` is the wide tier, `"usage"` the Usage tier | `THRESHOLD_LABEL`: `auditor`, `admin`, `cluster_admin_view`, `cluster_admin_manage`, every (threshold, outcome) and (threshold, tier) pre-seeded to 0; the shipped alert `templates/monitoring.yaml#GroupSyncDashboardVisibilityChecksFailing` and the Grafana panels select on `outcome` / `sum by (threshold, …)` and keep working; an operator's own query on `threshold="admin"` now reads the admin tier — said in the CHANGELOG |
 | `gsd_visibility_admin_refusals_total` (`gsd/metrics.py#note_admin_refusal`) | one unlabelled counter for the wide gate | gains a `tier` label (`note_tier_refusal`), pre-seeded per decided tier; `sum(increase(…))` — the shipped panel — is unchanged |
-| the report ticket (`gsd/api.py#report_ticket` → `gsd/reporting/ticket.py#mint`) | minted at `require_admin_tier` with the literal claim `all` | minted at `require_tier(Tier.AUDITOR)`; the claim stays `all` (D4); `docs/ACCESS_CONTROL.md` and `local-development/API.md#GET /api/report/ticket` say "the auditor tier" |
-| the D2 remote resolvers (`gsd/api.py#build_app`, `remote_resolvers`) | constructed with `visibility_admin_sar_*` | constructed with `visibility_auditor_sar_*`; `docs/ACCESS_CONTROL.md#Several clusters in one instance` row for `remote-sar` says `visibility.auditorSar` |
+| the report ticket (`gsd/api.py#report_ticket` → `gsd/reporting/ticket.py#mint`) | minted at `require_admin_tier` with the literal claim `all` | minted at `require_tier(Tier.AUDITOR)`; the claim stays `all` (D4); `docs/guides/ACCESS_CONTROL.md` and `local-development/API.md#GET /api/report/ticket` say "the auditor tier" |
+| the D2 remote resolvers (`gsd/api.py#build_app`, `remote_resolvers`) | constructed with `visibility_admin_sar_*` | constructed with `visibility_auditor_sar_*`; `docs/guides/ACCESS_CONTROL.md#Several clusters in one instance` row for `remote-sar` says `visibility.auditorSar` |
 | `/api/whoami` `visibility.scope`, `visibility.clusters[id].scope`; `/api/clusters` rows' `visibility.scope`; `/api/alerts` `scope` | the wide decision | the auditor decision, same values; `tiers` and `tabs` added |
 | the page: `narrowedReader()`, `narrowedOnHost()`, `renderScopePill()`, the `tab(...)` list, the fetch guards | read `visibility.scope`; the nav is static; refusal cards below the wide tier | `scope` unchanged; the nav is `visibility.tabs`; the pill names the tier; a refused tab is absent and its URL shows the card naming the tier |
 | `templates/rbac-auditors.yaml#gsd.visibilitySarVerb` — the guard that the chart's auditor role covers the wide check | reads `adminSar`; **would fail every default render after the flip** (`update` is a non-read verb) | reads `auditorSar` through the new helper family; the guard's sentence names `visibility.auditorSar` |
 | `templates/NOTES.txt#This is a custom check (visibility.adminSar)` | prints the wide check | prints the auditor check, then the admin check, each with the personas it admits |
 | `templates/configmap.yaml#visibilityAdminSarVerb` (and the four `visibilityUsageAdminSar*` keys) | two key sets | `visibilityAuditorSar*` added; `visibilityAdminSar*` re-pointed; `visibilityUsageAdminSar*` rendered from the alias for one release; `gsd/config.py#_visibility_sar_setting` / `#_usage_visibility_sar_setting` become one `_tier_sar_setting(raw, tier)` |
 | `charts/group-sync-dashboard/README.md#visibility.usageAdminSar` rows, the `rbacAuditors.*` rows ("reaches the wide report tier", "Must cover the `visibility.adminSar` gate") | name the two thresholds | name the four tiers; `rbacAuditors` reaches **the auditor tier**; `existingClusterRole` must cover `visibility.auditorSar` |
-| `docs/ACCESS_CONTROL.md#The two thresholds` (§2), §3, §4, §7, §11; `local-development/API.md#GET /api/whoami`; `docs/SPEC_per_user_visibility.md`'s dated line; `docs/SPEC_usage_admin_tier.md` | two thresholds | four tiers, each doc's table re-keyed by tier name; the old docs keep their reasoning as the record of why the bars differ, with a dated line pointing here |
+| `docs/guides/ACCESS_CONTROL.md#The two thresholds` (§2), §3, §4, §7, §11; `local-development/API.md#GET /api/whoami`; `docs/design/SPEC_per_user_visibility.md`'s dated line; `docs/design/SPEC_usage_admin_tier.md` | two thresholds | four tiers, each doc's table re-keyed by tier name; the old docs keep their reasoning as the record of why the bars differ, with a dated line pointing here |
 | tests: `local-development/tests/test_visibility.py#_usage_app` (the two seams), `#TestUsageAdminTier`, `tests/test_metrics.py`'s label assertions, `tests/test_activity.py`'s exact-equality whoami body | `app.state.tier_resolver`, `app.state.usage_tier_resolver`; `threshold="admin"`/`"usage"` | `app.state.tier_resolvers[Tier.X]`; the new labels; whoami gains `tiers`/`tabs` (the body "written so that a new key comes to it for a ruling" — this is the ruling) |
 
 **Does `/api/whoami`'s payload change shape?** Additively only: `visibility.tiers` and

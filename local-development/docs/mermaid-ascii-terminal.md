@@ -48,7 +48,7 @@ out and preview it — the same extraction the CI job does:
 ```sh
 python3 - <<'PY' | mermaid-ascii --ascii -f -
 import re, pathlib, sys
-md = pathlib.Path("docs/reference-architecture.md").read_text()
+md = pathlib.Path("docs/guides/reference-architecture.md").read_text()
 sys.stdout.write(re.findall(r"```mermaid\n(.*?)```", md, re.S)[0])   # the first block; [n] for the nth
 PY
 ```

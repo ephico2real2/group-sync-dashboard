@@ -147,7 +147,7 @@ Sign out.
 |---|---|---|
 | **Refresh** | `button#refresh` | a manual poll of the current page's data, beside the automatic 60 s repaint |
 | **Sign out** | `a#logout` (shown behind the proxy) | ends the oauth-proxy session |
-| **Idle timeout** | the `Still there?` dialog — *Stay signed in* / *Sign out now* | `docs/DESIGN_session_and_signout.md`; a page may not hide or restyle it away |
+| **Idle timeout** | the `Still there?` dialog — *Stay signed in* / *Sign out now* | `docs/design/DESIGN_session_and_signout.md`; a page may not hide or restyle it away |
 | **Tier chip** | "Full view — you are seeing everything" / the narrowed wording | what the viewer is seeing, stated |
 | **Version · updated** | `v0.24.0 · 52bba392b2 · updated 17:21:04` (`data.version`) | which build, and how fresh |
 | **Cluster selector** | `select#f-cluster` | a **position** — part of the URL, travels with Back |

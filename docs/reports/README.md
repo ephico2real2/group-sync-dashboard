@@ -94,7 +94,7 @@ Three things the Reports tab does around a manual run (#143):
 Automated runs are configured under `reporting.schedules` in the chart's `charts/group-sync-dashboard/values.yaml`.
 **Each entry is one report on its own cron** — so every report can have its own cadence, and the same
 report can appear more than once with different parameters. The chart renders one CronJob per entry; the
-CronJob POSTs a run with the service token, gated by the [run window](../reference-architecture.md), and
+CronJob POSTs a run with the service token, gated by the [run window](../guides/reference-architecture.md), and
 the artefact lands in the store like any other.
 
 ```yaml

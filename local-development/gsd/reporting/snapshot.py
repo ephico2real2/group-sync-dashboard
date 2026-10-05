@@ -263,7 +263,7 @@ class Snapshot:
         """Namespace names matching EVERY selector dimension (AND across labels), where a dimension
         matches ANY of its values (OR within). Composes the single-key `namespaces_for_metadata`
         expansion and intersects in Python, so the SQL stays the form already tested and the AND is
-        explicit (docs/DESIGN_reporting_selectors_snapshots_and_windows.md §3). Empty selection -> [].
+        explicit (docs/design/DESIGN_reporting_selectors_snapshots_and_windows.md §3). Empty selection -> [].
 
         A sqlite3.Error from a table read after a clean open becomes SnapshotError HERE, the same wrap
         as namespace_selector_dimensions, so GET /namespace-count degrades to a null count instead of a
@@ -479,7 +479,7 @@ class Snapshot:
 
     def group_rosters(self, cluster_id: str, group_names: list[str]) -> dict[str, list[dict]]:
         """Members per group with the logged-in flag (a User object WITH an identity, the 0.9.0
-        definition — docs/DESIGN_users_tab_logins.md). Opt-in on every report that calls it."""
+        definition — docs/design/DESIGN_users_tab_logins.md). Opt-in on every report that calls it."""
         if not group_names:
             return {}
         out: dict[str, list[dict]] = {}

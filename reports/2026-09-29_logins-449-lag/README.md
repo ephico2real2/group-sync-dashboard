@@ -105,7 +105,7 @@ lines, partial reads, rotation, failures and other poll work can add more. Reten
 API's scope also decide whether a given event is kept and shown, so passing its byte offset is not on its own a
 guarantee. This run's row was kept and shown at the API read after the fourth capture. The scaling was read from the
 code above and was not measured beyond this one file. The first-sight backfill and its 8 MiB-per-cycle drain are the
-documented design (`docs/AUDIT_LOG_CAPTURE.md`, section 5; `docs/REVIEW_D1.md`: "drained in four cycles under the 8
+documented design (`docs/guides/AUDIT_LOG_CAPTURE.md`, section 5; `docs/reviews/REVIEW_D1.md`: "drained in four cycles under the 8
 MiB budget"). This measurement supports that design as the explanation for this row.
 
 ## What #448 saw

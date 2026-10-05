@@ -1,6 +1,6 @@
 """The API documents itself, and this makes that non-optional.
 
-`docs/api-contract.md` states the rules; this file enforces them. A rule nobody checks is a
+`docs/guides/api-contract.md` states the rules; this file enforces them. A rule nobody checks is a
 rule that lasts until the first hurried afternoon, and this repository has the receipts: an
 endpoint shipped whose `(cluster-scoped)` sentinel was undiscoverable, a chart value went six
 weeks undocumented, and a list endpoint was unbounded at three layers at once.
@@ -23,7 +23,7 @@ from gsd.api import build_app
 from gsd.config import Settings
 
 API_SRC = pathlib.Path(__file__).resolve().parents[1] / "gsd" / "api.py"
-CONTRACT = pathlib.Path(__file__).resolve().parents[2] / "docs" / "api-contract.md"
+CONTRACT = pathlib.Path(__file__).resolve().parents[2] / "docs" / "guides" / "api-contract.md"
 
 # Not every path is an endpoint a reader consumes: the SPA shell and the three
 # unauthenticated probe paths are infrastructure. They are listed rather than pattern-matched
@@ -245,7 +245,7 @@ def test_r6_the_api_is_read_only(spec):
     writes = _writes(spec)
     assert not writes, (
         "non-GET endpoints: " + ", ".join(writes)
-        + ". See docs/unmanaged-audit-design.md before adding a write path."
+        + ". See docs/design/unmanaged-audit-design.md before adding a write path."
     )
 
 

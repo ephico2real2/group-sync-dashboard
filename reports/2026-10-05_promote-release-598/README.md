@@ -40,7 +40,7 @@ says, and SPEC_P1 §5's lab check passed. The PVC UIDs were the same throughout
 `7f505595-…`.
 
 ## Recorded elsewhere
-- **The one-time GitHub setup** is in `docs/RELEASE_BRANCH_SETUP.md`, with the record of 2026-10-05: the deploy key,
+- **The one-time GitHub setup** is in `docs/guides/RELEASE_BRANCH_SETUP.md`, with the record of 2026-10-05: the deploy key,
   the environment and its secret, the empty branch, and the ruleset with a deploy-key bypass. A hand push to `release`
   was refused with GH013.
 - **Seen, not ours:**

@@ -74,7 +74,7 @@ Everything below is grounded in files read during this pass; each claim is cited
 | Chart: the data claim is `persistence.existingClaim | default "<fullname>-data"`, mounted at `/data`; access mode comes from `gsd.accessMode` (explicit value, else RWX above one replica, else RWOP); `config.backup.dir` defaults to `/data/backup`; `securityContext` has `readOnlyRootFilesystem: true`; `podSecurityContext` has no fsGroup | `charts/group-sync-dashboard/templates/deployment.yaml#claimName`, `charts/group-sync-dashboard/templates/_helpers.tpl#gsd.accessMode`, `charts/group-sync-dashboard/values.yaml#HALF AN ANSWER BY DESIGN` |
 | The Service selects pods by `gsd.selectorLabels` (`app.kubernetes.io/name`, `instance`, **and** `app: <fullname>`) | `charts/group-sync-dashboard/templates/_helpers.tpl#gsd.selectorLabels` |
 | The chart's Job precedent uses an operator-supplied image for a CLI the dashboard image lacks | `charts/group-sync-dashboard/templates/auth-loglevel-job.yaml#authLogLevel.image` |
-| The pod has sh, curl, jq, ls, cat, base64, mkdir, chgrp, chmod, rm, rmdir, python3.14 — no tar/gzip/rsync/aws/head/wc/grep; the interpreter is `python3.14`; `PYTHONDONTWRITEBYTECODE=1` | `docs/DESIGN_hardened_image.md#What it changed for operators`, `local-development/Containerfile#PYTHONDONTWRITEBYTECODE` |
+| The pod has sh, curl, jq, ls, cat, base64, mkdir, chgrp, chmod, rm, rmdir, python3.14 — no tar/gzip/rsync/aws/head/wc/grep; the interpreter is `python3.14`; `PYTHONDONTWRITEBYTECODE=1` | `docs/design/DESIGN_hardened_image.md#What it changed for operators`, `local-development/Containerfile#PYTHONDONTWRITEBYTECODE` |
 | Alert-rule tests extract only `gsd_*` names from `expr`, so a `kube_*` metric in a rule does not need a collector HELP line | `tests/test_metrics.py` (`test_every_metric_an_alert_references_is_declared_by_the_collector`) |
 | README and chart README both say "eleven" alerts | `README.md#eleven alerting`, `charts/group-sync-dashboard/README.md#The seventeen alerts` |
 | The `helm template` test helper is `render(**values)` with `__` → `.` | `tests/test_chart_strategy.py#render` |
@@ -126,7 +126,7 @@ App history line, inserted directly above `appVersion:`:
   destination to `keep`, and fails loudly otherwise. Under `ReadWriteOnce` the Job is pinned to
   the dashboard's node; `ReadWriteOncePod` is refused at render. Two alerts on
   `kube_cronjob_status_last_successful_time` when `monitoring.prometheusRule` is on. Restore and
-  verify: `docs/RUNBOOK_backup_restore.md`. (design `DESIGN_backup_offsite_and_retention.md`)
+  verify: `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`. (design `DESIGN_backup_offsite_and_retention.md`)
 - **Retention for the accumulated history, `config.retention`.** `membershipEventsDays: 0`
   (forever) and `syncEventsDays: 730` by default; the leader prunes after the cycle's backup, never
   before one has succeeded in this process's life, 5,000 rows per table per cycle, counted into
@@ -145,7 +145,7 @@ App history line, inserted directly above `appVersion:`:
 
 ### 3.1 Goal
 
-Bound the two tables that grow forever (`docs/DESIGN_metrics_refresh.md#0.2`), without ever deleting a row that has not been backed up, without ever holding the single writer for long, and without letting the page or the API imply that nothing happened before the cut.
+Bound the two tables that grow forever (`docs/design/DESIGN_metrics_refresh.md#0.2`), without ever deleting a row that has not been backed up, without ever holding the single writer for long, and without letting the page or the API imply that nothing happened before the cut.
 
 ### 3.2 Switch, defaults, why
 
@@ -821,7 +821,7 @@ Effective-permission expansion, log-scrape enrichment, the group-count cliff ale
 floor as well as a ratio), per-namespace PDF reports
 ```
 
-#### 3.4.13 `docs/DESIGN_metrics_refresh.md` — §0.2
+#### 3.4.13 `docs/design/DESIGN_metrics_refresh.md` — §0.2
 
 After the paragraph ending `…vocabulary is written to be extended if those tables ever gain one.`, add:
 

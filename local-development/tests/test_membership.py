@@ -112,7 +112,7 @@ class TestReverseLookup:
     def test_users_index(self, store):
         sync(store, {"a": ["alice", "bob"], "b": ["alice"]}, T1)
         # The index is the User objects — people who have logged in — with membership as an
-        # attribute (docs/DESIGN_users_tab_logins.md). Without any, there are no rows, and the
+        # attribute (docs/design/DESIGN_users_tab_logins.md). Without any, there are no rows, and the
         # synced members are reported separately as never having logged in.
         assert store.users("crc") == []
         assert store.synced_members_without_user("crc") == ["alice", "bob"]

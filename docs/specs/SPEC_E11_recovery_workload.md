@@ -867,7 +867,7 @@ data:
 # ---------------------------------------------------------------------------
 # Recovery mode (#303) — the pod with the data volume mounted and the app stopped
 # ---------------------------------------------------------------------------
-# For a restore or a rollback (docs/RUNBOOK_backup_restore.md section 4). recovery.enabled=true
+# For a restore or a rollback (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4). recovery.enabled=true
 # runs the chart's recovery script (scripts/recovery_mode.py, shipped in a ConfigMap) in the
 # dashboard container instead of uvicorn, on the same pod spec and the same /data volume: no process opens
 # gsd.db, so you can replace it from `oc exec`, and a dropped session does not end the pod. The
@@ -884,7 +884,7 @@ data:
 # ---------------------------------------------------------------------------
 # Recovery mode (#303) — the app stopped and a recovery pod holding the data volume
 # ---------------------------------------------------------------------------
-# For a restore or a rollback (docs/RUNBOOK_backup_restore.md section 4). The chart renders a second
+# For a restore or a rollback (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4). The chart renders a second
 # Deployment, <fullname>-recovery, on every release (#532): the app's pod spec and the same /data
 # volume, with the chart's recovery script (scripts/recovery_mode.py, shipped in a ConfigMap) in the
 # dashboard container instead of uvicorn, at 0 replicas. recovery.enabled=true scales the app's
@@ -1107,7 +1107,7 @@ preflight() {
     if not lay.offsite.is_dir():
         say(f"# offsite: {lay.offsite} is not mounted in this pod. The chart's recovery pod mounts the offsite claim, "
             "read-only, when backup.offsite uses its pvc destination; restore a copy that is only on that claim with "
-            "docs/RUNBOOK_backup_restore.md section 4b")
+            "charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4b")
     for line in notes + aside_notes(lay, known):
         say(line)
     return 0
@@ -1122,7 +1122,7 @@ preflight() {
     say("restored. Set recovery.enabled: false in this release's values file and roll it out through the release's "
         "deployment pipeline: the app starts on the restored file.")
     if kept:
-        say(f"way back     {kept}/ is the database as it was; docs/RUNBOOK_backup_restore.md section 4, \"Undo a "
+        say(f"way back     {kept}/ is the database as it was; charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4, \"Undo a "
             "restore\", puts it back (fold it first: its rows may be only in its -wal)")
 ```
 
@@ -1132,14 +1132,14 @@ preflight() {
     say(f"user_version {'absent' if before is None else before} -> {after}")
     say("restored. Turn recovery mode off the way it was turned on: set recovery.enabled: false in this release's "
         "values file and roll it out through the release's deployment pipeline, or, under the break glass "
-        "(docs/RUNBOOK_backup_restore.md section 4d), give the release back to Git (its step 5). The app starts on "
+        "(charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4d), give the release back to Git (its step 5). The app starts on "
         "the restored file once the recovery pod is gone.")
     if kept:
-        say(f"way back     {kept}/ is the database as it was; docs/RUNBOOK_backup_restore.md section 4, \"Undo a "
+        say(f"way back     {kept}/ is the database as it was; charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md section 4, \"Undo a "
             "restore\", puts it back (fold it first: its rows may be only in its -wal)")
 ```
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 ```
 >   Application reading Synced). A hand recovery edit is both: self-heal would restore the app's command and liveness
@@ -1174,7 +1174,7 @@ in the release's values file), run `local-development/restore-db.sh --list` from
 in the release's values file), run `local-development/restore-db.sh --list` from your laptop, then
 ```
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 ```
    `recovery.enabled: true` and `recovery.ttl` (for example `2h`, longer than the restore needs), and roll it
@@ -1221,7 +1221,7 @@ in the release's values file), run `local-development/restore-db.sh --list` from
    included, which leaves `gsd.db` half written. If the restore may not finish in time, extend first.
 ```
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 ```
    monotonic clock, so setting the wall clock back does not lengthen it; if the node restarts under the pod,
@@ -1250,7 +1250,7 @@ Nothing is recorded while recovery mode is on, and no rule says so: `GroupSyncDa
 gauge the stopped process no longer emits, so it returns nothing. With reporting on,
 ```
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 ```
 
@@ -1275,7 +1275,7 @@ mode and `restore-db.sh` need exactly one pod).
 1. **Find the Application, and whether an ApplicationSet owns it.** The Deployment's tracking annotation reads
 ```
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 ```
    It must print `false` and a phase that is not `Running`, and the same a minute later. With `enabled: false` Argo CD
@@ -1338,7 +1338,7 @@ mode and `restore-db.sh` need exactly one pod).
    rows discarded):
 ```
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 ```
    oc rollout status -n $NS deploy/$REL
@@ -1841,9 +1841,9 @@ S3 = {"backup__offsite__destination__type": "s3", "backup__offsite__destination_
     assert "GroupSyncDashboardReportSnapshotStale" in comment and "The TTL is the bound" in comment
     # what the TTL ends (measured: an exec'd process is killed when PID 1 exits) and what restarts it
     assert "every process in the container stops" in comment and "evicted" in comment and "0/1" in comment
-    runbook = (REPO / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     assert "Check the time left first" in runbook and "every process in the container stops" in runbook
-    for doc in (CHART / "README.md", REPO / "docs" / "RUNBOOK_backup_restore.md", CHART / "values.yaml"):
+    for doc in (CHART / "README.md", REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md", CHART / "values.yaml"):
 ```
 
 ```
@@ -1851,9 +1851,9 @@ S3 = {"backup__offsite__destination__type": "s3", "backup__offsite__destination_
     assert "GroupSyncDashboardReportSnapshotStale" in comment and "The TTL is the bound" in comment
     # what the TTL ends (measured: an exec'd process is killed when PID 1 exits) and what restarts it
     assert "every process in the container stops" in comment and "evicted" in comment and "1/1" in comment
-    runbook = (REPO / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     assert "Check the time left first" in runbook and "every process in the container stops" in runbook
-    for doc in (CHART / "README.md", REPO / "docs" / "RUNBOOK_backup_restore.md", CHART / "values.yaml"):
+    for doc in (CHART / "README.md", REPO / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md", CHART / "values.yaml"):
 ```
 
 <!-- block: local-development/tests/test_chart_backup_offsite.py | edit -->

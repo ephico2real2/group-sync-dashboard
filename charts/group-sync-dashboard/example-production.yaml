@@ -2,18 +2,18 @@
 #
 #   helm install gsd charts/group-sync-dashboard -f example-production.yaml
 #
-# Every cluster combination used below is one of the twelve in docs/CLUSTER_STANZA.md §4, each of
+# Every cluster combination used below is one of the twelve in charts/group-sync-dashboard/docs/CLUSTER_STANZA.md §4, each of
 # which is rendered and loaded by tests/test_cluster_stanza_matrix.py — so this file is an example
 # that provably works, not an illustration.
 #
-# READ FIRST: docs/CLUSTER_STANZA.md. In particular §5, which says WHERE each refusal fires. Fourteen
+# READ FIRST: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md. In particular §5, which says WHERE each refusal fires. Fourteen
 # bad stanzas fail `helm template` and never reach a cluster. FOUR render cleanly and are refused by
 # the pod at startup — an unknown key, a duplicate `name`, an `apiUrl` with no scheme, and
 # `insecureSkipVerify` together with `caBundleFile`. Those four fail AFTER a green upgrade, which
 # looks like an outage rather than a config error, so check them by eye before a rollout.
 
 # ---------------------------------------------------------------------------
-# clusters — see docs/CLUSTER_STANZA.md
+# clusters — see charts/group-sync-dashboard/docs/CLUSTER_STANZA.md
 # ---------------------------------------------------------------------------
 # Most fleets should declare ONLY the host here and add every other cluster as a labelled Secret
 # (docs/specs/SPEC_S1_cluster_secrets.md), because a Secret needs no redeploy. A stanza is the right

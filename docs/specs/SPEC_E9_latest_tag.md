@@ -6,7 +6,7 @@
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
 | Version on release | app 2.4.0, chart 0.61.2 |
-| Version note | `publish.yml` lists itself in its own `on.push.paths` (`.github/workflows/publish.yml#this file`), so this change is an image input and takes an application MINOR (`docs/RELEASING.md#Neither`); it changes no chart template or value, and the chart moves only because `appVersion` does. Every `specified` row on origin/main `3acfda37` that claims an application version claims 2.1.0 (SPEC_G2, SPEC_E4, SPEC_E3, SPEC_E6) or 2.2.0 (SPEC_G3); SPEC_E7 and SPEC_E8 claim none, so the next free MINOR is 2.3.0. The CI gate holds the number to exactly the next MINOR of the pull request's base (`local-development/check-app-version-bump.py#check`; measured in §4.3: from `6d532178` with §7 applied it refuses 2.3.0, `expected exactly 2.1.0 (next MINOR) or 3.0.0 (next MAJOR), got 2.3.0`, and accepts 2.1.0), so the implementing pull request takes main's next MINOR when it is opened and, by SPEC_E5's rule (its Version note), moves every other `specified` row whose application version is no longer above `pyproject.toml` to the next MINOR above it, keeping each row's chart cell: if this spec merges first at 2.1.0, SPEC_G2, SPEC_E4, SPEC_E3 and SPEC_E6 move from app 2.1.0 to 2.2.0 in header and row, and SPEC_G3 (2.2.0) stays above and is left alone; if one of them merges first, its pull request moves this spec's cell instead. No block carries a version field: the implementing pull request applies §7, commits, then runs `prepare-release.py --app <main's next MINOR> --no-commit "…"`, as SPEC_E4 and SPEC_E3 do |
+| Version note | `publish.yml` lists itself in its own `on.push.paths` (`.github/workflows/publish.yml#this file`), so this change is an image input and takes an application MINOR (`docs/guides/RELEASING.md#Neither`); it changes no chart template or value, and the chart moves only because `appVersion` does. Every `specified` row on origin/main `3acfda37` that claims an application version claims 2.1.0 (SPEC_G2, SPEC_E4, SPEC_E3, SPEC_E6) or 2.2.0 (SPEC_G3); SPEC_E7 and SPEC_E8 claim none, so the next free MINOR is 2.3.0. The CI gate holds the number to exactly the next MINOR of the pull request's base (`local-development/check-app-version-bump.py#check`; measured in §4.3: from `6d532178` with §7 applied it refuses 2.3.0, `expected exactly 2.1.0 (next MINOR) or 3.0.0 (next MAJOR), got 2.3.0`, and accepts 2.1.0), so the implementing pull request takes main's next MINOR when it is opened and, by SPEC_E5's rule (its Version note), moves every other `specified` row whose application version is no longer above `pyproject.toml` to the next MINOR above it, keeping each row's chart cell: if this spec merges first at 2.1.0, SPEC_G2, SPEC_E4, SPEC_E3 and SPEC_E6 move from app 2.1.0 to 2.2.0 in header and row, and SPEC_G3 (2.2.0) stays above and is left alone; if one of them merges first, its pull request moves this spec's cell instead. No block carries a version field: the implementing pull request applies §7, commits, then runs `prepare-release.py --app <main's next MINOR> --no-commit "…"`, as SPEC_E4 and SPEC_E3 do |
 | Issue | [#425](https://github.com/ephico2real2/group-sync-dashboard/issues/425) |
 | Status | released |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "What must be accomplished", Test cases and "Decisions and corrections (2026-10-01)") and the epic's "Decisions settled (2026-10-01)". Measured on origin/main `6d532178` (application 2.0.0, chart 0.59.25) with the repository's Python 3.14 venv, helm v4.3.0, shellcheck and actionlint v1.7.12 (built from source into the scratch directory); read-only on quay.io (its public tag API, the registry's referrers endpoint and `oc image info`) and on the CRC lab (`oc get`); the last publish run, 36690887346, read with `gh run view --log`. §7's blocks were cut from a copy of `6d532178` with the design implemented and proved against a clean worktree of `6d532178` (§4.3). Before the commit origin/main moved to `eade4c2a` (SPEC_E6, #513), which changes only `docs/specs/` and the index test; the branch was fast-forwarded to it, the index row placed after E6's, and the blocks re-checked there |
@@ -79,7 +79,7 @@ their line numbers come from `curl -s <raw-url> | nl -ba`.
    Measured on this branch: with the pin, E9 mistyped as #525 in its row and header fails `AssertionError: ('E9 is
    #425', '525')`; with the pin removed, the same mutant passes every index test (§4.3).
 8. **Composition with SPEC_E8** (#410, PR A, merged on origin/main `3acfda37` as #515; 18 blocks). Whichever applies second commits the first spec's blocks before applying its own: `apply-spec-blocks.py` refuses a dirty tree. Both specs add a class at the
-   end of `local-development/tests/test_supply_chain.py`, both edit `docs/RELEASING.md`, `docs/DESIGN_supply_chain.md`
+   end of `local-development/tests/test_supply_chain.py`, both edit `docs/guides/RELEASING.md`, `docs/design/DESIGN_supply_chain.md`
    and `docs/CHANGELOG.md`. Their Old texts do not overlap, and the one shared anchor (the file's last line, which
    E8's block 7 edits and this spec's block 3 inserts after) occurs once before and after either is applied. This
    spec's tests define no module-level name and add no import, so E8's import edit (its block 5) and its module
@@ -517,10 +517,10 @@ and touches no other tag; quay keeps each previous `:latest` as a closed history
 
 ### 3.6 The documents
 
-- `docs/DESIGN_supply_chain.md` gains decision D11 (what `:latest` names, when it moves, the two residuals).
-- `docs/RELEASING.md`: the publish flow draws the `latest` job; "Three tags" becomes "Four tags" with a `latest`
+- `docs/design/DESIGN_supply_chain.md` gains decision D11 (what `:latest` names, when it moves, the two residuals).
+- `docs/guides/RELEASING.md`: the publish flow draws the `latest` job; "Three tags" becomes "Four tags" with a `latest`
   row; "What can go wrong" gains the red `latest` job and the backward move.
-- `docs/HELM_DOWNLOAD_AND_INSTALL.md` §7: `:latest` is one more name for a signed digest.
+- `charts/group-sync-dashboard/docs/HELM_DOWNLOAD_AND_INSTALL.md` §7: `:latest` is one more name for a signed digest.
 - `local-development/build-and-push-external.sh`: the header says the script does not move `:latest`.
 - `docs/CHANGELOG.md`: the entry under `## Unreleased`.
 
@@ -1012,8 +1012,8 @@ esac
         assert _jobs(PUBLISH)["publish"]["permissions"] == {"contents": "read"}
 
     def test_the_docs_say_what_latest_names(self) -> None:
-        releasing = (REPO / "docs" / "RELEASING.md").read_text()
-        design = (REPO / "docs" / "DESIGN_supply_chain.md").read_text()
+        releasing = (REPO / "docs" / "guides" / "RELEASING.md").read_text()
+        design = (REPO / "docs" / "design" / "DESIGN_supply_chain.md").read_text()
         assert "**D11 — `:latest` is the newest signed `main` build" in design
         assert "│ latest               │" in releasing
         assert "latest  job" in releasing
@@ -1080,9 +1080,9 @@ def test_the_default_render_never_resolves_latest() -> None:
 #
 ```
 
-### Block 6 — `docs/DESIGN_supply_chain.md`: decision D11
+### Block 6 — `docs/design/DESIGN_supply_chain.md`: decision D11
 
-<!-- block: docs/DESIGN_supply_chain.md | edit -->
+<!-- block: docs/design/DESIGN_supply_chain.md | edit -->
 ```markdown
 unknown reference to an empty string rather than an error.
 
@@ -1108,14 +1108,14 @@ Two limits, stated: the two copies are two writes, so a failure between them lea
 `:latest` one build ahead of the report's until the job is re-run (the run is red and names the image);
 and a re-run of an older run's `latest` job moves `:latest` back to that run's digests, because a
 re-run keeps its run's commit and job outputs — re-running the newest green run's `latest` job puts it
-right (`docs/RELEASING.md#What can go wrong, and what it looks like`).
+right (`docs/guides/RELEASING.md#What can go wrong, and what it looks like`).
 
 ## What this does not do
 ```
 
-### Block 7 — `docs/HELM_DOWNLOAD_AND_INSTALL.md`: `:latest` verifies like any name of a signed digest
+### Block 7 — `charts/group-sync-dashboard/docs/HELM_DOWNLOAD_AND_INSTALL.md`: `:latest` verifies like any name of a signed digest
 
-<!-- block: docs/HELM_DOWNLOAD_AND_INSTALL.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/HELM_DOWNLOAD_AND_INSTALL.md | edit -->
 ```markdown
 mirror copies them with `oras cp --recursive` (or re-signs at the destination), then verifies there.
 ```
@@ -1129,9 +1129,9 @@ is copied from the digest that run signed, once the signature has been read back
 the newest `main` build. It is not a release, and the chart never resolves it.
 ```
 
-### Block 8 — `docs/RELEASING.md`: the publish flow draws the `latest` job
+### Block 8 — `docs/guides/RELEASING.md`: the publish flow draws the `latest` job
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 ```text
    attest  job   cosign sign (keyless) · SBOM attached · SLSA          SUPPLY_CHAIN_SIGNING
                  provenance in GitHub's store — each read back
@@ -1147,9 +1147,9 @@ the newest `main` build. It is not a release, and the chart never resolves it.
                  resolves (DESIGN_supply_chain.md D11)                 signing is off
 ```
 
-### Block 9 — `docs/RELEASING.md`: four tags
+### Block 9 — `docs/guides/RELEASING.md`: four tags
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 ```markdown
 ## Three tags, and why there are three
 ```
@@ -1158,9 +1158,9 @@ the newest `main` build. It is not a release, and the chart never resolves it.
 ## Four tags, and why there are four
 ```
 
-### Block 10 — `docs/RELEASING.md`: the `latest` row of the tag table
+### Block 10 — `docs/guides/RELEASING.md`: the `latest` row of the tag table
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 ```text
   │ <chartVersion>       │ release   │ (never a build)  │ deploy?"                    │
   └──────────────────────┴───────────┴──────────────────┴─────────────────────────────┘
@@ -1176,9 +1176,9 @@ the newest `main` build. It is not a release, and the chart never resolves it.
   └──────────────────────┴───────────┴──────────────────┴─────────────────────────────┘
 ```
 
-### Block 11 — `docs/RELEASING.md`: what can go wrong with `:latest`
+### Block 11 — `docs/guides/RELEASING.md`: what can go wrong with `:latest`
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 ```markdown
 | the first publish of a NEW image name (the report image was the first, 0.18.0) is red at its push, or green and then every fresh install pulls `unauthorized` for that image | quay.io creates a repository on push only if the pushing account may create one in the namespace, and creates it **private**; the chart pulls anonymously | create the repository in the quay.io UI **public**, grant the robot account write on it, then publish. Measured 2026-09-11: `group-sync-dashboard-report` did not exist before 0.18.0's first publish |
 ```
@@ -1206,6 +1206,6 @@ the newest `main` build. It is not a release, and the chart never resolves it.
   signed them and read the signatures back (straight after `publish` when `SUPPLY_CHAIN_SIGNING` is `false`), with
   the release aliases' server-side `skopeo copy --all --preserve-digests`, and reads each name back: a mismatch is a
   red run. The chart never resolves `:latest`, so no cluster changes; the immutable tags, the `:<appVersion>` alias rule and the `publish` job's
-  `contents: read` are unchanged. `docs/RELEASING.md` gains the fourth tag, `DESIGN_supply_chain.md` decision D11.
+  `contents: read` are unchanged. `docs/guides/RELEASING.md` gains the fourth tag, `DESIGN_supply_chain.md` decision D11.
 
 ```

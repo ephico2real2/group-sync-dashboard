@@ -205,7 +205,7 @@ _BIND_ERROR = re.compile(
 # Because the measure is silence, a chain whose lines keep arriving may span longer than this. The
 # lines that count are verdicts and causes: the progress lines (`searching`, `found dn=`,
 # `identitymapper`) never touch a pending, so a login whose only intervening lines are progress still
-# splits at this boundary. That is a known and documented gap — see docs/REVIEW_login_capture_seams.md.
+# splits at this boundary. That is a known and documented gap — see docs/reviews/REVIEW_login_capture_seams.md.
 ATTEMPT_WINDOW = timedelta(seconds=1)
 
 

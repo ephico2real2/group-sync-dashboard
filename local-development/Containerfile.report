@@ -1,5 +1,5 @@
 # group-sync-dashboard-report — the report service's image. The SAME recipe as Containerfile
-# (docs/DESIGN_hardened_image.md), stage for stage, with three differences, each marked
+# (docs/design/DESIGN_hardened_image.md), stage for stage, with three differences, each marked
 # `REPORT:` below. tests/test_containerfile_report.py holds the two files identical everywhere
 # else, so a fix to one recipe cannot be forgotten in the other.
 #

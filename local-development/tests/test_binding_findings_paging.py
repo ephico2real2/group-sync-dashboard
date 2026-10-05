@@ -1,7 +1,7 @@
 """The binding-findings response is bounded, and its counts still describe the cluster.
 
 Third endpoint with this defect, and the reason the pattern is now a rule in
-`docs/api-contract.md`. Measured before the fix at ten times the reference cluster: 2,280
+`docs/guides/api-contract.md`. Measured before the fix at ten times the reference cluster: 2,280
 rows and 545,800 bytes in one response, re-fetched every 30 seconds by the page's own
 auto-refresh — 5.3x the payload that got `list_users` bounded.
 

@@ -40,10 +40,10 @@ HELM = REPO / ".github" / "workflows" / "helm.yaml"
 CI = REPO / ".github" / "workflows" / "ci.yml"
 SCRIPT = REPO / "local-development" / "build-and-push-external.sh"
 REPORT_WRAPPER = REPO / "local-development" / "build-and-push-report.sh"   # the report image (C3)
-SCAN_DOC = REPO / "docs" / "image-vulnerability-scan.md"
-INSTALL_GUIDE = REPO / "docs" / "HELM_DOWNLOAD_AND_INSTALL.md"
+SCAN_DOC = REPO / "docs" / "guides" / "image-vulnerability-scan.md"
+INSTALL_GUIDE = REPO / "charts" / "group-sync-dashboard" / "docs" / "HELM_DOWNLOAD_AND_INSTALL.md"
 RELEASE_CRC = REPO / "local-development" / "release-crc.sh"   # the deploy-side label guard (#414)
-RELEASING = REPO / "docs" / "RELEASING.md"
+RELEASING = REPO / "docs" / "guides" / "RELEASING.md"
 
 
 def _jobs(path: pathlib.Path) -> dict:
@@ -292,9 +292,9 @@ class TestWhatIsSignedAndHow:
 
     def test_the_sbom_is_produced_by_the_syft_the_scan_document_measured(self) -> None:
         """A Syft that does not know Hummingbird OS writes an SBOM with no OS packages: complete-
-        looking and wrong. The version is held to the one docs/image-vulnerability-scan.md measured."""
+        looking and wrong. The version is held to the one docs/guides/image-vulnerability-scan.md measured."""
         measured = re.search(r"\*\*Syft (\d+\.\d+\.\d+)\*\*", SCAN_DOC.read_text())
-        assert measured, "docs/image-vulnerability-scan.md no longer names the Syft version it measured"
+        assert measured, "docs/guides/image-vulnerability-scan.md no longer names the Syft version it measured"
         step = _step(_jobs(PUBLISH)["sbom"], "Catalogue the image")
         assert step["with"]["syft-version"] == f"v{measured.group(1)}"
 
@@ -634,8 +634,8 @@ esac
         assert _jobs(PUBLISH)["publish"]["permissions"] == {"contents": "read"}
 
     def test_the_docs_say_what_latest_names(self) -> None:
-        releasing = (REPO / "docs" / "RELEASING.md").read_text()
-        design = (REPO / "docs" / "DESIGN_supply_chain.md").read_text()
+        releasing = (REPO / "docs" / "guides" / "RELEASING.md").read_text()
+        design = (REPO / "docs" / "design" / "DESIGN_supply_chain.md").read_text()
         assert "**D11 — `:latest` is the newest signed `main` build" in design
         assert "│ latest               │" in releasing
         assert "latest  job" in releasing

@@ -1,6 +1,6 @@
 # The backup and restore runbook on the CRC lab: the SPEC_E7 §5 walk (#300)
 
-Walked 2026-10-02 05:32–06:20 UTC on CRC (OpenShift 4.22.7). The commands came from `docs/RUNBOOK_backup_restore.md`
+Walked 2026-10-02 05:32–06:20 UTC on CRC (OpenShift 4.22.7). The commands came from `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`
 §0 and §4 as merged on main (PR #528, `2e7d33be`). The lab runs application 2.3.0 (`c57f292707`) and chart 0.61.1,
 with the offsite backup on its `pvc` destination. On this lab `NS=group-sync-dashboard` and `REL=group-sync-dashboard`.
 The runbook's example line sets `NS=group-sync`.

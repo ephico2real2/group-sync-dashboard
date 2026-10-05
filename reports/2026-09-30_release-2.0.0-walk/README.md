@@ -165,7 +165,7 @@ history from those walks and were not read here (`evidence/clusterconfigs-1280.j
    route (`local-development/mock-app/mock_app/app.py`). The 2026-09-28 walk recorded the same answer on all three
    mocks (`reports/2026-09-28_batch-1110-walk/evidence/walk-output.txt`). The card above the answer still shows the last poll's
    `verified` chip and `ok · reachable`. That is the split the runbook describes since #496: the card's connection
-   row and TLS chip are the last poll's, not Refresh's (`charts/group-sync-dashboard/RUNBOOK.md`, section 1).
+   row and TLS chip are the last poll's, not Refresh's (`charts/group-sync-dashboard/docs/RUNBOOK.md`, section 1).
 3. **Six of the eleven reports name the fleet account, so their artefacts are not committed.** On this lab the
    fleet account is a real user, so users, groups, access-matrix, access-certification, binding-findings and
    dormant-access list it. Their PDF, HTML and JSON are left out, and `integrity.jsonl` keeps their hashes and

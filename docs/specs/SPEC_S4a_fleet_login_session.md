@@ -130,7 +130,7 @@ serves are `docs/specs/SPEC_S3_connection_modes.md` §3; the account is §3.1 th
   remains the proof of the logout. The module's behaviour did not change.
 
 - **Review of PR #289 (Codex gpt-5.6-sol xhigh, Cursor Grok 4.6, OB1-lite; decisions by the business
-  owner; record in `docs/REVIEW_S4a.md`).** Six findings, each applied to the blocks above BEFORE the
+  owner; record in `docs/reviews/REVIEW_S4a.md`).** Six findings, each applied to the blocks above BEFORE the
   code was regenerated from them:
   1. *P0-1, all three seats:* `expires_in=999999999999999` passed `int()` and `<= 0`, then
      `expires_at_iso` raised `OverflowError` — not a `LoginError` — before `self.session` was set, so
@@ -239,7 +239,7 @@ serves are `docs/specs/SPEC_S3_connection_modes.md` §3; the account is §3.1 th
   for an exception while handling an accepted connection, so it cannot hide a bind failure.
 
 - **Third pass on the restructured control flow (Codex, harness-driven; record in
-  `docs/REVIEW_S4a.md`). Four findings; one is a REVERSAL OF AN ORCHESTRATOR DECISION.**
+  `docs/reviews/REVIEW_S4a.md`). Four findings; one is a REVERSAL OF AN ORCHESTRATOR DECISION.**
   1. *R3-1 (P0):* the guard was still one step too late — an interruption inside `_token_from` after
      the token was bound measured `authorize=1 DELETE=0`, the third time "the moment the token is
      bound" moved with a refactor. **Made structural rather than moved:** the guard is anchored on the
@@ -266,7 +266,7 @@ serves are `docs/specs/SPEC_S3_connection_modes.md` §3; the account is §3.1 th
   Codex's measured case, and fails before the fix.
 
 - **Final scoped pass (round five; the reviewer could execute nothing, every claim verified by the
-  business owner and re-measured by OB1; record in `docs/REVIEW_S4a.md`).** F2 passed: `revoked` is
+  business owner and re-measured by OB1; record in `docs/reviews/REVIEW_S4a.md`).** F2 passed: `revoked` is
   truthful from every site and the structural guard covers the previous window; the guard's shape is
   unchanged. Four claims:
   1. *R5-1 (P0), real:* httpx comma-joins repeated `Location` headers in `get`, so the first-`#` split

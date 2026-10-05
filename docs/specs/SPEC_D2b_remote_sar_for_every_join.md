@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Extends | `docs/specs/SPEC_D2_per_cluster_authorization.md` (per-cluster authorization, released in 0.19.0) |
-| Design | `docs/DESIGN_remote_cluster_access.md` — D1, D2, D3, D5 and D6, directed by the operator on 2026-09-23 |
+| Design | `docs/design/DESIGN_remote_cluster_access.md` — D1, D2, D3, D5 and D6, directed by the operator on 2026-09-23 |
 | Release | — (post-programme; D2's step b, like E1 after the programme's R7) |
 | Version on release | app and chart minor bumps at the PR |
 | Version note | §7's blocks write application 0.32.0 and chart 0.53.0 — the next minors after main's 0.31.0 and 0.52.1 on 2026-09-23 — and move S4c, specified on those two rungs and not begun, to 0.33.0 and 0.54.0 (§3.9). A release that lands first makes the version blocks fail their check, because each one's Old text is the version it replaces; the implementing pull request then corrects them here before applying (`docs/specs/README.md`) |
@@ -532,7 +532,7 @@ Group with its members, because a local Group exists only on the host.
 **Decided by the operator (2026-09-23): `group-sync-operator-helm` installs them on every remote**, alongside the
 Groups it already syncs in advance for RBAC and the joining ServiceAccount and ClusterRole it already installs
 (§2.9). That chart lives in another repository; this spec records the objects and the contract, and the implementing
-pull request names them for an operator in `docs/ACCESS_CONTROL.md` §11 (§3.8).
+pull request names them for an operator in `docs/guides/ACCESS_CONTROL.md` §11 (§3.8).
 
 On the lab the mock stands in for a remote that has not got them: its fixture binds its own auditor Group
 `app-ocp-rbac-demo-report-auditors` (member `developer`) to its own `group-sync-dashboard-report-auditor` through
@@ -547,15 +547,15 @@ auditor `jane.smith` is self on the mock, and the mock's `developer` is wide the
   `charts/group-sync-dashboard/README.md`, and the page's `same-as-host` hint — each says the reader is matched by
   OpenShift username, the `User` object's name.
 - "the first enabled entry" for the host: `values.yaml`, the chart README and `environments/crc.yaml` say "the
-  hosting entry" (`dashboardController: true`, else the first enabled one), as `docs/ACCESS_CONTROL.md` §11 now does.
+  hosting entry" (`dashboardController: true`, else the first enabled one), as `docs/guides/ACCESS_CONTROL.md` §11 now does.
 - "self-only / none is the default for a remote" becomes the §3.2 rule in: `values.yaml` (the `visibility` comment's
   "THE DEFAULT FOR EVERY ENTRY BUT THE FIRST ENABLED ONE" and the `identity` comment's "THE DEFAULT for a remote"), the
-  chart README's default column, `docs/ACCESS_CONTROL.md` §11's default column, the `ClusterConfig` field comment in
-  `config.py`, `environments/crc.yaml`'s comments on `shared-rnd` and `mock`, `docs/reference-architecture.md`'s one
-  sentence, and `docs/CLUSTER_STANZA.md` (rows 13 and 14 for `remote-sar` alone and beside `saTokenLookup`; the
+  chart README's default column, `docs/guides/ACCESS_CONTROL.md` §11's default column, the `ClusterConfig` field comment in
+  `config.py`, `environments/crc.yaml`'s comments on `shared-rnd` and `mock`, `docs/guides/reference-architecture.md`'s one
+  sentence, and `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md` (rows 13 and 14 for `remote-sar` alone and beside `saTokenLookup`; the
   "remote-sar without identity: same-as-host" row becomes "remote-sar with identity: none"; the "saTokenLookup with
   visibility: remote-sar" refusal row goes).
-- `docs/ACCESS_CONTROL.md` §11, "How `remote-sar` decides": three sentences become false. "One
+- `docs/guides/ACCESS_CONTROL.md` §11, "How `remote-sar` decides": three sentences become false. "One
   `gsd/kube.py#TierResolver` per remote-sar cluster, constructed on that cluster's `ClusterConfig`" becomes a resolver
   found or built per request from the cluster's current configuration and rebuilt when its connection changes (§3.1);
   "is the self tier and is not cached" gains the hold (§3.5); "The remote RBAC is the operator's, by hand — this chart
@@ -565,7 +565,7 @@ auditor `jane.smith` is self on the mock, and the mock's `developer` is wide the
   ClusterRoleBinding per auditor Group, and a locally created auditor Group with its members (§3.7). The identity
   paragraph drops "today `none` is the default for a remote entry that states nothing", and the UI sentence names
   D5's line (§3.11).
-- `docs/DESIGN_remote_cluster_access.md`: §6's support table turns its two "refused" cells to "yes" and its
+- `docs/design/DESIGN_remote_cluster_access.md`: §6's support table turns its two "refused" cells to "yes" and its
   explanation to the past; the status row and §8's D5 row say D5 is directed and built here.
 - `local-development/API.md`: the create request's `visibility` and `identity` may be omitted, and how the pair is
   then resolved (§3.3).
@@ -743,7 +743,7 @@ suite included (measured 2026-09-23; OB3's validation record of this revision).
   …`, which the object does not support, and the remote is reviewed on its own API; `test_clusterconfig.py` and
   `test_clusterconfig_tab.py` — the explicit pair is the refused one, a discovered `east` is `remote-sar`, and
   `app.state.remote_tier_resolvers = {}` where no remote may be asked; `test_clusterconfig_logging.py`;
-  `test_fleet_lookup.py`; `test_cluster_stanza_matrix.py`, with `docs/CLUSTER_STANZA.md`;
+  `test_fleet_lookup.py`; `test_cluster_stanza_matrix.py`, with `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`;
   `test_chart_connection_modes.py`; `test_chart_strategy.py`; `test_chart_dashboard_controller.py`; prose only in
   `test_home_api.py` and `test_visibility.py`.
 - **No test reaches a host it did not reach before.** A fixture with an unstated remote and restrictions on now asks
@@ -1248,7 +1248,7 @@ poller uses this one every cycle.
   - N2, OB1-lite: the hold, checked before single-flight, answered the probe's own sibling requests self while the
     probe returned `all`, and the steal path skipped it (the same hole as F1);
   - N3, OB1-lite: the mock has no `explain` endpoint; the route is `POST /_mock/sar-probe`;
-  - N4, OB1-lite: §3.7 said `docs/ACCESS_CONTROL.md` §11 named the auditor objects, and it did not; §3.8 now names
+  - N4, OB1-lite: §3.7 said `docs/guides/ACCESS_CONTROL.md` §11 named the auditor objects, and it did not; §3.8 now names
     the three sentences of §11 that this change makes false, and §7 rewrites them.
 - **Decided: N2's gate over F1's guard.** Both close the steal-path hole. F1 kept the hold ahead of single-flight and
   added a guard to the steal path, so the probe's own sibling requests still answered self while the probe returned
@@ -1297,12 +1297,12 @@ poller uses this one every cycle.
   PUT carried the live 4242: `replaced`), so the restore that strips the saved, stale one stands as first written.
 - **Confirmation pass on the corrections** (OB3 on `890f04c`): R1–R4 hold as measured; its findings, written as nine
   more blocks and text edits: the design document and the diagram page still called D5 a proposal in Figure 3's page
-  caption and said both lab remotes are `self-only`, and §8/§9 did not say D1 is built; `docs/ACCESS_CONTROL.md` §11
+  caption and said both lab remotes are `self-only`, and §8/§9 did not say D1 is built; `docs/guides/ACCESS_CONTROL.md` §11
   and §3.5 said no request calls a held remote, while one already in flight may finish its attempt; §3.1's quote and
   §3.5's no longer matched §7, and `kube.py`'s docstring had a 206-character line; §3.1 said a resolver never keeps a
   retired cluster's credential; `docs/diagrams/render.py` exited 0 with its web fonts unreachable.
 - **Review of the confirmation pass** (`12d9d8d`; Codex on `gpt-6-astra` at high effort, and OB1-lite). Accepted:
-  OB1-lite's three — §3.5's and `docs/ACCESS_CONTROL.md`'s hold sentence said no request that begins during the hold
+  OB1-lite's three — §3.5's and `docs/guides/ACCESS_CONTROL.md`'s hold sentence said no request that begins during the hold
   calls, while a request that arrived during it and outwaited a stuck resolution for its viewer may be the one probe
   after it expires (measured by both reviewers: a follower begun during the hold called once it expired, at t=1032
   from t=1010 in OB1-lite's run and at t=1031 from t=1029 in Codex's); §3.1's retention
@@ -2115,7 +2115,7 @@ from ..config import ClusterConfig
         # resolvers); a cluster that appears at runtime has none, so viewer_scope would answer self
         # for every reader — it fails CLOSED ("a remote cluster with no resolver is a remote cluster
         # nobody may see wide"), which would make remote-sar silently mean self-only. D1 of
-        # docs/DESIGN_remote_cluster_access.md builds them at discovery; until then the Secret says
+        # docs/design/DESIGN_remote_cluster_access.md builds them at discovery; until then the Secret says
         # inherit, self-only or hidden.
         return finding("visibility-invalid", f"data.visibility must be one of {', '.join(allowed)}"
                        + (" (remote-sar for a Secret-sourced cluster is S2)" if visibility == VISIBILITY_REMOTE_SAR else ""))
@@ -2346,7 +2346,7 @@ function scopeWhy(w, cluster) {
 # this file has to make, per entry, and it used to make it silently: the host's tier gated
 # every cluster's rows, so a host cluster-admin saw a remote cluster's membership, bindings and
 # login failures whether or not they held anything there. Two keys per entry now model it
-# (docs/ACCESS_CONTROL.md §11):
+# (docs/guides/ACCESS_CONTROL.md §11):
 ```
 
 ```yaml
@@ -2355,7 +2355,7 @@ function scopeWhy(w, cluster) {
 # ANOTHER cluster is therefore a decision this file has to make, per entry, and it used to make
 # it silently: the host's tier gated every cluster's rows, so a host cluster-admin saw a remote
 # cluster's membership, bindings and login failures whether or not they held anything there.
-# Two keys per entry now model it (docs/ACCESS_CONTROL.md §11):
+# Two keys per entry now model it (docs/guides/ACCESS_CONTROL.md §11):
 ```
 
 <!-- block: charts/group-sync-dashboard/values.yaml | edit -->
@@ -2581,11 +2581,11 @@ appVersion: "0.32.0"
     # should, and the reader is matched by OpenShift username.
 ```
 
-#### `docs/ACCESS_CONTROL.md`
+#### `docs/guides/ACCESS_CONTROL.md`
 
 §3.7 and §3.8: §11's default column, "How `remote-sar` decides" (the three sentences N4 names), the identity paragraph and the UI sentence.
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 | | `self-only` | every other entry | nobody is ever wide on this cluster; it costs no RBAC, no credential and no cluster call, and can only narrow |
@@ -2595,7 +2595,7 @@ appVersion: "0.32.0"
 | | `self-only` | a remote that states only `identity: none` | nobody is ever wide on this cluster; it costs no RBAC, no credential and no cluster call, and can only narrow |
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 | | `remote-sar` | | that cluster's own RBAC decides: the same SubjectAccessReview as `visibility.adminSar`, created on the remote API with that entry's token, naming the reader and the Group memberships read from the remote; refused on the host entry, and needs `identity: same-as-host` |
@@ -2609,7 +2609,7 @@ appVersion: "0.32.0"
 | | `same-as-host` | the hosting entry, forced; beside `remote-sar`; a remote that states neither key | the reader is matched on this cluster by OpenShift username, the `User` object's name, so the reader's self views apply to this cluster too |
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 **How `remote-sar` decides.** One `gsd/kube.py#TierResolver` per remote-sar cluster, constructed on
@@ -2623,7 +2623,7 @@ Secret, written by hand, by the tab or by the lookup — and rebuilds it when th
 token or CA), so the review is created on the remote API with the remote token and
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 review, unreachable, junk) is the self tier and is not cached. Failures count under the same signal
@@ -2635,7 +2635,7 @@ review, unreachable, junk) is the self tier and is not cached — and it holds t
 first one after it is the one probe. Failures count under the same signal
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 The remote RBAC is the operator's, by hand — this chart manages no remote RBAC: a
@@ -2652,21 +2652,21 @@ one ClusterRoleBinding per auditor Group, and each auditor Group the host create
 (`rbacAuditors.groups[].createLocal`) with its members (`docs/specs/SPEC_D2b_remote_sar_for_every_join.md` §3.7).
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
-`docs/DESIGN_remote_cluster_access.md`, the operator's decision of 2026-09-23). `identity` is still stated per entry:
+`docs/design/DESIGN_remote_cluster_access.md`, the operator's decision of 2026-09-23). `identity` is still stated per entry:
 today `none` is the default for a remote entry that states nothing and fails closed, and `remote-sar` refuses to render or
 start without `same-as-host`, because its review names that username on the remote.
 ```
 
 ```markdown
-`docs/DESIGN_remote_cluster_access.md`, the operator's decision of 2026-09-23). A remote entry that states nothing
+`docs/design/DESIGN_remote_cluster_access.md`, the operator's decision of 2026-09-23). A remote entry that states nothing
 is `same-as-host` with `remote-sar` (SPEC_D2b); `none` fails closed and, stated alone, keeps `self-only`; and
 `remote-sar` refuses to render or start beside `identity: none`, because its review names that username on the remote.
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 The UI renders these — the selector marks a narrowed cluster, the header pill and the cluster-scoped
@@ -2677,11 +2677,11 @@ The UI renders these — the selector marks a narrowed cluster, one line beside 
 selected cluster's view (the host, the cluster's own RBAC, or self-only), the header pill and the cluster-scoped
 ```
 
-#### `docs/CLUSTER_STANZA.md`
+#### `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`
 
 §3.8: rows 13 and 14, the default sentence, and the two refusal rows.
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 
 ```markdown
 Each rendered and loaded. All twelve are accepted by both readers.
@@ -2691,7 +2691,7 @@ Each rendered and loaded. All twelve are accepted by both readers.
 Each rendered and loaded. All fourteen are accepted by both readers.
 ```
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 
 ```markdown
 | 12 | remote + `enabled: false` | kept in the config, not polled |
@@ -2707,7 +2707,7 @@ A remote that states neither `visibility` nor `identity` — rows 2 to 8 and 12 
 `self-only`.
 ```
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 
 ```markdown
 | `remote-sar` without `identity: same-as-host` | **refused** | refused |
@@ -2717,7 +2717,7 @@ A remote that states neither `visibility` nor `identity` — rows 2 to 8 and 12 
 | `remote-sar` with `identity: none` | **refused** | refused |
 ```
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 
 ```markdown
 | `saTokenLookup` with `visibility: remote-sar` | **refused** | starts; the write would be refused `visibility-invalid` |
@@ -2726,11 +2726,11 @@ A remote that states neither `visibility` nor `identity` — rows 2 to 8 and 12 
 ```markdown
 ```
 
-#### `docs/DESIGN_remote_cluster_access.md`
+#### `docs/design/DESIGN_remote_cluster_access.md`
 
 §3.8 and §3.11: the status row, §6's two cells and its explanation, §8's D5 row.
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 | Status | **Proposed.** D1, D2 (`remote-sar` + `same-as-host` is the standard for every way a cluster is joined), D3, D6 and D7 directed by the operator; D4's fail-closed fallback directed, its named finding recommended; D5 and D8 open (§8) |
@@ -2740,7 +2740,7 @@ A remote that states neither `visibility` nor `identity` — rows 2 to 8 and 12 
 | Status | **Proposed.** D1, D2 (`remote-sar` + `same-as-host` is the standard for every way a cluster is joined), D3, D5, D6 and D7 directed by the operator; D4's fail-closed fallback directed, its named finding recommended; D8 open (§8) |
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 | a Secret created on the Cluster Configurations tab | yes | **refused** | yes | yes |
@@ -2752,7 +2752,7 @@ A remote that states neither `visibility` nor `identity` — rows 2 to 8 and 12 
 | `saTokenLookup` (the lookup writes a Secret) | yes | yes | yes | yes |
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 **Why refused.** The per-cluster `TierResolver` that asks a remote (`local-development/gsd/kube.py#TierResolver`) is
@@ -2762,7 +2762,7 @@ A remote that states neither `visibility` nor `identity` — rows 2 to 8 and 12 
 **Why they were refused until SPEC_D2b.** The per-cluster `TierResolver` that asks a remote (`local-development/gsd/kube.py#TierResolver`) was
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 The way clusters are now joined is exactly the way that cannot ask the remote.
@@ -2773,7 +2773,7 @@ The way clusters are now joined was exactly the way that could not ask the remot
 each resolver per request from the cluster's current configuration, and both refusals are gone.
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 | **D5** | Say which rule decided the reader's view of a cluster | one line under the cluster selector: *the host decides* · *this cluster says you may see everything* · *this cluster says: your own rows* · *this cluster cannot check access* · *this cluster is self-only* | **Open**, recommended. The missing reason is why the lab's narrowing looked like a defect. |
@@ -2783,22 +2783,22 @@ each resolver per request from the cluster's current configuration, and both ref
 | **D5** | Say which rule decided the reader's view of a cluster | one line under the cluster selector: *the host decides* · *this cluster says you may see everything* · *this cluster says: your own rows* · *this cluster cannot check access* · *this cluster is self-only* | **Directed** (2026-09-23), built in D2b (`docs/specs/SPEC_D2b_remote_sar_for_every_join.md` §3.11): one line beside the selector, read from `/api/whoami` alone. *this cluster cannot check access* needs D4's field and is not built, so a `remote-sar` cluster's self line says the cluster either answered "your own rows" or could not be asked. |
 ```
 
-#### `docs/reference-architecture.md`
+#### `docs/guides/reference-architecture.md`
 
 §3.8: the one sentence that states the old default.
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 
 ```markdown
 `gsd/api.py#viewer_scope`): a second cluster is `self-only` with no identity by default, may be
 hidden from the API entirely, may inherit the host's tier as an explicit choice, or may be decided
-by its own RBAC through the same review on its own API (`remote-sar`). `docs/ACCESS_CONTROL.md` §11
+by its own RBAC through the same review on its own API (`remote-sar`). `docs/guides/ACCESS_CONTROL.md` §11
 ```
 
 ```markdown
 `gsd/api.py#viewer_scope`): a second cluster that states nothing is decided by its own RBAC through
 the same review on its own API (`remote-sar`, SPEC_D2b), and may instead be `self-only`, be hidden
-from the API entirely, or inherit the host's tier as an explicit choice. `docs/ACCESS_CONTROL.md` §11
+from the API entirely, or inherit the host's tier as an explicit choice. `docs/guides/ACCESS_CONTROL.md` §11
 ```
 
 #### `local-development/API.md`
@@ -2885,13 +2885,13 @@ alone is `self-only` + `none`, and `remote-sar` beside `identity: none` is `422 
 <!-- block: docs/CHANGELOG.md | edit -->
 
 ```markdown
-- **Cluster credentials are documented beside the chart's values (chart 0.52.1).** `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` records the separation the design rests on — an LDAP account bootstraps the connection, a long-lived ServiceAccount token does the polling, and the polling token deliberately carries no `exp` because renewing it would turn a once-per-onboarding bind into a recurring one against an account the whole estate shares. It also states what each failure outcome means (`auth_failed`, `forbidden`, `unreachable`, the cert outcomes), the limit that a bare 401 cannot distinguish an expired token from a revoked one, and the manual recovery that is the only path today — which needs cluster-admin on **both** clusters with two sessions. The planned Refresh (#311) and Rejoin (#316) flow is described and marked as not built, with the rule that governs it: Refresh probes with the stored credential and never re-binds; Rejoin takes the administrator's own credentials, uses them once, and stores nothing.
+- **Cluster credentials are documented beside the chart's values (chart 0.52.1).** `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md` records the separation the design rests on — an LDAP account bootstraps the connection, a long-lived ServiceAccount token does the polling, and the polling token deliberately carries no `exp` because renewing it would turn a once-per-onboarding bind into a recurring one against an account the whole estate shares. It also states what each failure outcome means (`auth_failed`, `forbidden`, `unreachable`, the cert outcomes), the limit that a bare 401 cannot distinguish an expired token from a revoked one, and the manual recovery that is the only path today — which needs cluster-admin on **both** clusters with two sessions. The planned Refresh (#311) and Rejoin (#316) flow is described and marked as not built, with the rule that governs it: Refresh probes with the stored credential and never re-binds; Rejoin takes the administrator's own credentials, uses them once, and stores nothing.
 ```
 
 ```markdown
 - **`remote-sar` for every way a cluster is joined, and the default for a remote (application 0.32.0, chart 0.53.0; #338, `docs/specs/SPEC_D2b_remote_sar_for_every_join.md`).** A remote cluster's own RBAC decides who sees its data wide whether it was declared in values with a token, as a Secret made on the Cluster Configurations tab or by hand, or through `saTokenLookup`: the resolver is found or built per request from the cluster's current configuration and rebuilt when its URL, token or CA changes, with no restart. The Secret parser, the tab and the chart accept `remote-sar`; only an explicit `identity: none` beside it is refused. A failing remote is held for 30 s — asked at most once per hold, whatever the traffic — and the review's error text is redacted before it is truncated. A Secret the lookup wrote for a `saTokenLookup` stanza keeps its credential and serves the stanza's `visibility`, `identity` and `enabled`. `/api/clusters` and `/api/alerts` decide each cluster's tier before they open their database snapshot. One line beside the cluster selector names the rule that decided the selected cluster's view (design D5). **Upgrade note — a remote that states neither `visibility` nor `identity` changes behaviour:** (1) it is `remote-sar` + `same-as-host`, so a reader that cluster's own RBAC allows (`list clusterrolebindings` by default) sees it wide on every tab — Bindings, Operator configs and Kyverno included — with the card's operator-config summary and its administrator alerts; (2) a reader it denies, or one it cannot be asked about, gets their own rows under their OpenShift username on groups, users, logins, cluster access, namespaces, user bindings, the two change feeds and that cluster's Home instead of a 403, and the host's Home counts that cluster's memberships and changes; (3) a remote that states only `identity: same-as-host` moves from `self-only` to `remote-sar` the same way; (4) `/api/whoami`, `/api/clusters` and `/api/alerts` ask that cluster about each reader once per `visibility.tierTtlSeconds`, and an unreachable one costs up to 5 s per remote, one remote after another, on the request that asks — before its hold engages and again on the first request after each hold expires; (5) a remote whose joining ServiceAccount lacks `list groups` or `create subjectaccessreviews` makes `GroupSyncDashboardVisibilityChecksFailing` fire (the pod log names the cluster; the metric does not); (6) a `POST /api/clusterconfigs` that omits both keys writes `remote-sar` + `same-as-host`, and one that states only `identity: none` writes `self-only` + `none`; (7) a Secret the lookup wrote for a `saTokenLookup` stanza serves the stanza's `visibility`, `identity` and `enabled` — a stanza that states no policy moves to `remote-sar` although its Secret was written with `self-only`, and a stanza set to `enabled: false` disables its cluster while the Secret exists. Keep the old view for a cluster with `visibility: self-only` and `identity: none` — in its values stanza, or in its Secret for a Secret-declared cluster; a Secret that already states `self-only` keeps it, unless the lookup wrote it for a stanza (7).
 
-- **Cluster credentials are documented beside the chart's values (chart 0.52.1).** `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` records the separation the design rests on — an LDAP account bootstraps the connection, a long-lived ServiceAccount token does the polling, and the polling token deliberately carries no `exp` because renewing it would turn a once-per-onboarding bind into a recurring one against an account the whole estate shares. It also states what each failure outcome means (`auth_failed`, `forbidden`, `unreachable`, the cert outcomes), the limit that a bare 401 cannot distinguish an expired token from a revoked one, and the manual recovery that is the only path today — which needs cluster-admin on **both** clusters with two sessions. The planned Refresh (#311) and Rejoin (#316) flow is described and marked as not built, with the rule that governs it: Refresh probes with the stored credential and never re-binds; Rejoin takes the administrator's own credentials, uses them once, and stores nothing.
+- **Cluster credentials are documented beside the chart's values (chart 0.52.1).** `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md` records the separation the design rests on — an LDAP account bootstraps the connection, a long-lived ServiceAccount token does the polling, and the polling token deliberately carries no `exp` because renewing it would turn a once-per-onboarding bind into a recurring one against an account the whole estate shares. It also states what each failure outcome means (`auth_failed`, `forbidden`, `unreachable`, the cert outcomes), the limit that a bare 401 cannot distinguish an expired token from a revoked one, and the manual recovery that is the only path today — which needs cluster-admin on **both** clusters with two sessions. The planned Refresh (#311) and Rejoin (#316) flow is described and marked as not built, with the rule that governs it: Refresh probes with the stored credential and never re-binds; Rejoin takes the administrator's own credentials, uses them once, and stores nothing.
 ```
 
 #### `local-development/tests/test_remote_tier_hold.py` — new
@@ -4203,7 +4203,7 @@ A fixture comment that named the old default.
 
 #### `local-development/tests/test_cluster_stanza_matrix.py`
 
-The matrix follows `docs/CLUSTER_STANZA.md`.
+The matrix follows `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`.
 
 <!-- block: local-development/tests/test_cluster_stanza_matrix.py | edit -->
 
@@ -4619,7 +4619,7 @@ class TestTheRuleBesideTheSelector:
 
 #### Corrections from the review of the blocks
 
-Written after the review of the 154 blocks (Orchestrator's notes): OB1-lite's twenty (the per-cluster routes, the alerts' predicate, the unaskable resolvers and their tests), Codex's three wording and three design-document blocks, and the orchestrator's twenty (`kube.py`'s hold docstring, the design document, the diagram page and `docs/diagrams/render.py`), then OB3's nine from the confirmation pass (`docs/ACCESS_CONTROL.md`'s hold, the design document's and the diagram page's remaining D1/D5 and lab statements), then OB1-lite's two from the review of that pass (`shared-qa` "has always been `self-only`", in the design document and on the diagram page), then the orchestrator's ten from Codex's review of it (the renderer's 375 px page and its test, and the design document's and the diagram page's status, D2, D5 and D6 statements). Each applies to the files as the earlier blocks leave them.
+Written after the review of the 154 blocks (Orchestrator's notes): OB1-lite's twenty (the per-cluster routes, the alerts' predicate, the unaskable resolvers and their tests), Codex's three wording and three design-document blocks, and the orchestrator's twenty (`kube.py`'s hold docstring, the design document, the diagram page and `docs/diagrams/render.py`), then OB3's nine from the confirmation pass (`docs/guides/ACCESS_CONTROL.md`'s hold, the design document's and the diagram page's remaining D1/D5 and lab statements), then OB1-lite's two from the review of that pass (`shared-qa` "has always been `self-only`", in the design document and on the diagram page), then the orchestrator's ten from Codex's review of it (the renderer's 375 px page and its test, and the design document's and the diagram page's status, D2, D5 and D6 statements). Each applies to the files as the earlier blocks leave them.
 
 <!-- block: local-development/gsd/api.py | edit -->
 
@@ -4914,7 +4914,7 @@ Written after the review of the 154 blocks (Orchestrator's notes): OB1-lite's tw
 - **`remote-sar` for every way a cluster is joined, and the default for a remote (application 0.32.0, chart 0.53.0; #338, `docs/specs/SPEC_D2b_remote_sar_for_every_join.md`).** A remote cluster's own RBAC decides who sees its data wide whether it was declared in values with a token, as a Secret made on the Cluster Configurations tab or by hand, or through `saTokenLookup`: the resolver is found or built per request from the cluster's current configuration and rebuilt when its URL, token or CA changes, with no restart. The Secret parser, the tab and the chart accept `remote-sar`; only an explicit `identity: none` beside it is refused. Distinct viewers already in flight may each pay that first attempt; after the first failure lands, the remote is held for 30 s and probed at most once per hold, whatever later traffic — and the review's error text is redacted before it is truncated. A Secret the lookup wrote for a `saTokenLookup` stanza keeps its credential and serves the stanza's `visibility`, `identity` and `enabled`. `/api/clusters` and `/api/alerts` decide each cluster's tier before they open their database snapshot. One line beside the cluster selector names the rule that decided the selected cluster's view (design D5). **Upgrade note — a remote that states neither `visibility` nor `identity` changes behaviour:** (1) it is `remote-sar` + `same-as-host`, so a reader that cluster's own RBAC allows (`list clusterrolebindings` by default) sees it wide on every tab — Bindings, Operator configs and Kyverno included — with the card's operator-config summary and its administrator alerts; (2) a reader it denies, or one it cannot be asked about, gets their own rows under their OpenShift username on groups, users, logins, cluster access, namespaces, user bindings, the two change feeds and that cluster's Home instead of a 403, and the host's Home counts that cluster's memberships and changes; (3) a remote that states only `identity: same-as-host` moves from `self-only` to `remote-sar` the same way; (4) `/api/whoami`, `/api/clusters` and `/api/alerts` ask that cluster about each reader once per `visibility.tierTtlSeconds`, and an unreachable one costs up to 5 s per remote, one remote after another, on the request that asks — before its hold engages and again on the first request after each hold expires; (5) a remote whose joining ServiceAccount lacks `list groups` or `create subjectaccessreviews` makes `GroupSyncDashboardVisibilityChecksFailing` fire (the pod log names the cluster; the metric does not); (6) a `POST /api/clusterconfigs` that omits both keys writes `remote-sar` + `same-as-host`, and one that states only `identity: none` writes `self-only` + `none`; (7) a Secret the lookup wrote for a `saTokenLookup` stanza serves the stanza's `visibility`, `identity` and `enabled` — a stanza that states no policy moves to `remote-sar` although its Secret was written with `self-only`, and a stanza set to `enabled: false` disables its cluster while the Secret exists. Keep the old view for a cluster with `visibility: self-only` and `identity: none` — in its values stanza, or in its Secret for a Secret-declared cluster; a Secret that already states `self-only` keeps it, unless the lookup wrote it for a stanza (7).
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
 *Figure 1. Only the middle row differs. `inherit` never contacts the remote about the reader; `remote-sar` asks the
 remote with the credential the dashboard already holds for it; `self-only` asks nobody. The example is `shared-rnd`;
@@ -4926,7 +4926,7 @@ remote with the credential the dashboard already holds for it; `self-only` asks 
 path can take all three columns, and an unstated remote defaults to `remote-sar`.*
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
 *Figure 3. Today every path except "allowed" narrows, which is the fail-closed direction. Allowed and denied are
 cached; failures are not. A failure at either remote call reaches only the pod log and the tier-check metric, and
@@ -4940,7 +4940,7 @@ resolver for 30 s, and D5 names the deciding rule beside the selector. D4's sepa
 proposal, so denied and could-not-ask deliberately share D5's narrowed sentence.*
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
 | Outcome | Reader sees | Cached | What the page says today | Proposed |
 |---|---|---|---|---|
@@ -4975,7 +4975,7 @@ one probe; distinct viewers already in flight when the first failure lands may e
 Under the 60 s tier TTL and far under the alert's 15 minutes, so a remote that keeps failing under
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 `shared-rnd`'s own RBAC, and it answers correctly for every reader measured (§5). The dashboard cannot use that
@@ -4990,7 +4990,7 @@ any cluster declared through a Secret, and both are (§6). Since SPEC_D2b (#338)
 remote that states no policy defaults to it.
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```text
              group-sync-dashboard-cluster-poller; once D1 lands, under remote-sar the same token asks
@@ -5002,7 +5002,7 @@ remote that states no policy defaults to it.
              about each reader (Figure 3)
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 clusterrolebindings` (D7, #322). A Rejoin may still hold a working poller token, and once D1 lands that token could
@@ -5014,7 +5014,7 @@ clusterrolebindings` (D7, #322). A Rejoin may still hold a working poller token,
 ask the remote about the person's host username (§4). It would still say nothing about the credential just typed; that
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 SVG, light and dark palettes), at twice the pixel density: open it in a browser, set `data-theme` on the root element
@@ -5274,7 +5274,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 review, unreachable, junk) is the self tier and is not cached — and it holds that cluster's resolver for
@@ -5289,7 +5289,7 @@ first request that would call after it expires is the one probe; distinct viewer
 failure lands may each finish their attempt. Failures count under the same signal
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 On the lab, `kubeadmin` is `cluster-admin` and sees everything on the host cluster, `dashboard`. On `shared-rnd` and
@@ -5303,7 +5303,7 @@ only its own rows on `shared-rnd` and `shared-qa`: both remotes resolved to `vis
 pod's `cluster-resolved` log line, 2026-09-23), so **nobody was asked** whether a reader may see them wide.
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 | See a joined remote wide | the cluster's policy (`self-only` on both lab remotes) | `remote-sar` + `same-as-host`, the standard (D2) | the remote, with the poller's token | none: the token is already held |
@@ -5313,7 +5313,7 @@ pod's `cluster-resolved` log line, 2026-09-23), so **nobody was asked** whether 
 | See a joined remote wide | the cluster's policy: `remote-sar` + `same-as-host`, the standard (D2), on both lab remotes since SPEC_D2b (`self-only` before it) | unchanged | the remote, with the poller's token | none: the token is already held |
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 | **D1** | Support `remote-sar` for every way a cluster is joined | build the remote resolver when discovery finds the cluster, rebuild it when the Secret's credential changes, drop it when the cluster is retired; accept `remote-sar` from a Secret and from a `saTokenLookup` stanza | **Directed** by the operator: *"we need to have both supported and clearly defined"*, and the mandate of 2026-09-23: *"this is what I want: remote-sar for whatever method the cluster was joined"* |
@@ -5323,7 +5323,7 @@ pod's `cluster-resolved` log line, 2026-09-23), so **nobody was asked** whether 
 | **D1** | Support `remote-sar` for every way a cluster is joined | build the remote resolver when discovery finds the cluster, rebuild it when the Secret's credential changes, drop it when the cluster is retired; accept `remote-sar` from a Secret and from a `saTokenLookup` stanza | **Directed** by the operator: *"we need to have both supported and clearly defined"*, and the mandate of 2026-09-23: *"this is what I want: remote-sar for whatever method the cluster was joined"*. Built in SPEC_D2b (#338): the resolver is found or built on each request from the cluster's current configuration, with no discovery hook, and dropped at the next lookup once its cluster is no longer askable |
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 | **D6** | The lab until D1 ships | `inherit` + `same-as-host` on `shared-rnd` now, or `self-only` until D1 lands and `remote-sar` after | **Directed**: no `inherit` stopgap. `inherit` would copy the host's answer to the remote rather than ask it, which is the model the mandate replaces (D1). `shared-rnd` and `shared-qa` stay `self-only` until D1 ships, then take `remote-sar` + `same-as-host`. |
@@ -5333,7 +5333,7 @@ pod's `cluster-resolved` log line, 2026-09-23), so **nobody was asked** whether 
 | **D6** | The lab until D1 ships | `inherit` + `same-as-host` on `shared-rnd` now, or `self-only` until D1 lands and `remote-sar` after | **Directed**: no `inherit` stopgap. `inherit` would copy the host's answer to the remote rather than ask it, which is the model the mandate replaces (D1). `shared-rnd` and `shared-qa` stayed `self-only` until D1 shipped in SPEC_D2b, and now take `remote-sar` + `same-as-host`. |
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 - **Code (D1, D2):** a `TierResolver` per `remote-sar` cluster owned by the discovery registry instead of built once
@@ -5371,7 +5371,7 @@ pod's `cluster-resolved` log line, 2026-09-23), so **nobody was asked** whether 
         denied are cached, failures are not. A failure at either remote call is visible only in the pod log and the
         tier-check metric. The reader sees the same generic text for every narrowed outcome. Naming the failure (D4)
         and saying which rule decided (D5) are proposals, in the decisions below. Both behaviours are in
-        <code>docs/ACCESS_CONTROL.md</code> §11.</figcaption>
+        <code>docs/guides/ACCESS_CONTROL.md</code> §11.</figcaption>
 ```
 
 ```html
@@ -5380,7 +5380,7 @@ pod's `cluster-resolved` log line, 2026-09-23), so **nobody was asked** whether 
         visible only in the pod log and the tier-check metric. Since SPEC_D2b the line beside the selector (D5) names
         the rule that decided; naming the failure (D4) is still a proposal, in the decisions below, so a denied reader
         and one the remote could not be asked about read the same narrowed line. Both behaviours are in
-        <code>docs/ACCESS_CONTROL.md</code> §11.</figcaption>
+        <code>docs/guides/ACCESS_CONTROL.md</code> §11.</figcaption>
 ```
 
 <!-- block: docs/diagrams/remote-cluster-access/source.html | edit -->
@@ -5393,7 +5393,7 @@ pod's `cluster-resolved` log line, 2026-09-23), so **nobody was asked** whether 
           <tr><td>See a joined remote wide</td><td>the policy: <code>remote-sar</code> + <code>same-as-host</code>, the standard (D2), on both lab remotes since SPEC_D2b (<code>self-only</code> before it)</td><td>unchanged</td><td>remote, with the poller's token</td><td>none: the token is already held</td></tr>
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 `self-only`, and the host's cluster-admin stopped being wide there. `shared-qa` is a hand-made Secret from #310's
@@ -5584,7 +5584,7 @@ def test_every_page_turns_a_failure_into_a_non_zero_exit(monkeypatch, tmp_path, 
         assert len(list(out.glob("*.png"))) == 8
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 | Status | **Proposed.** D1, D2 (`remote-sar` + `same-as-host` is the standard for every way a cluster is joined), D3, D5, D6 and D7 directed by the operator; D4's fail-closed fallback directed, its named finding recommended; D8 open (§8) |
@@ -5594,7 +5594,7 @@ def test_every_page_turns_a_failure_into_a_non_zero_exit(monkeypatch, tmp_path, 
 | Status | D1, D2 (`remote-sar` + `same-as-host`, the standard for every way a cluster is joined) and D5 built in SPEC_D2b (#338), the remote failure hold with them; D3 needs no code; D6's lab policy applied there; D4's fail-closed fallback built, its named finding recommended, not built; D7 directed, not built (#322); D8 open (§8) |
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 | **D2** | The default for a newly joined remote | `self-only` (today) or `remote-sar` | **Directed**: `remote-sar` + `same-as-host` is the standard. The operator: *"we should be looking up user's permission on the remote host to determine their access … unless the service account that joined the remote cluster doesn't have the right permissions"*, and *"I agree with your recommendation to build out remote-sar + same-as-host as our standard"* |
@@ -5604,7 +5604,7 @@ def test_every_page_turns_a_failure_into_a_non_zero_exit(monkeypatch, tmp_path, 
 | **D2** | The default for a newly joined remote | `self-only` (the default until SPEC_D2b) or `remote-sar` | **Directed**: `remote-sar` + `same-as-host` is the standard. The operator: *"we should be looking up user's permission on the remote host to determine their access … unless the service account that joined the remote cluster doesn't have the right permissions"*, and *"I agree with your recommendation to build out remote-sar + same-as-host as our standard"* |
 ```
 
-<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+<!-- block: docs/design/DESIGN_remote_cluster_access.md | edit -->
 
 ```markdown
 | **D6** | The lab until D1 ships | `inherit` + `same-as-host` on `shared-rnd` now, or `self-only` until D1 lands and `remote-sar` after | **Directed**: no `inherit` stopgap. `inherit` would copy the host's answer to the remote rather than ask it, which is the model the mandate replaces (D1). `shared-rnd` and `shared-qa` stayed `self-only` until D1 shipped in SPEC_D2b, and now take `remote-sar` + `same-as-host`. |
@@ -5654,7 +5654,7 @@ def test_every_page_turns_a_failure_into_a_non_zero_exit(monkeypatch, tmp_path, 
 
 #### After the blocks
 
-The figures of `docs/DESIGN_remote_cluster_access.md` are PNGs, which a block cannot carry. With the blocks applied,
+The figures of `docs/design/DESIGN_remote_cluster_access.md` are PNGs, which a block cannot carry. With the blocks applied,
 re-render them from the updated page and commit the PNGs that changed (Figures 2, 3 and 4 carry text these blocks
 change; Figure 1 does not), from the repository root:
 

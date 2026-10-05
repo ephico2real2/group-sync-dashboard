@@ -1,9 +1,9 @@
 """/users lists the people who have logged in, and says so honestly at every edge.
 
-docs/DESIGN_users_tab_logins.md: the row is the OpenShift User object, which the cluster creates at a
+docs/design/DESIGN_users_tab_logins.md: the row is the OpenShift User object, which the cluster creates at a
 person's first login and never before. Group membership is an attribute of a row; a synced member who
 has never logged in is not a row but a count. These tests pin the wire shape the tab reads, the
-paging rule (docs/api-contract.md R3) the endpoint never met before, the tier scoping on BOTH
+paging rule (docs/guides/api-contract.md R3) the endpoint never met before, the tier scoping on BOTH
 sources, and the one behaviour that matters most on a fresh or under-granted install: an empty table
 is never presented as "nobody has logged in".
 """

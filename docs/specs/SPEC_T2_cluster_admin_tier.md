@@ -42,7 +42,7 @@ implementation is written back here, under "Orchestrator's notes", with the reas
     `secrets.writes` switch beside it.
   - **D4 — the hierarchy is decided in `viewer_scope` and `usage_scope`**, after the `self-only` and
     `remote-sar` branches and before the host resolver, so per-cluster policies stay exactly as
-    `docs/ACCESS_CONTROL.md` §11 states them. The consulted verdict is uncounted; the decision served
+    `docs/guides/ACCESS_CONTROL.md` §11 states them. The consulted verdict is uncounted; the decision served
     is counted under the threshold that served it (`admin` / `usage`), so
     `gsd_visibility_decisions_total` keeps meaning "decisions served".
   - **D5 — the built resolver's empty namespace is cluster-scoped**, like `adminSar`'s: the #230 tier's
@@ -330,7 +330,7 @@ it was missing from, D8). The CRC walk with screenshots
     # and usageAdminSar answer for them (gsd/api.py, viewer_scope and usage_scope). One way only:
     # passing adminSar or usageAdminSar never implies this tier.
     #
-    # WHY THIS CHECK, measured on CRC (docs/SPEC_usage_admin_tier.md and the adminSar comment above):
+    # WHY THIS CHECK, measured on CRC (docs/design/SPEC_usage_admin_tier.md and the adminSar comment above):
     # no read check separates cluster-admin from cluster-reader, so `list clusterrolebindings` (the
     # wide tier) admitted the auditor persona to the KPI page; `create secrets` in the release
     # namespace (the two-level tier this replaces, #230) kept the auditor out but admitted anyone
@@ -1467,9 +1467,9 @@ __version__ = "0.35.0"
 - **The cluster-admin tier: `visibility.clusterAdminSar` gates the Cluster Configurations tab and the KPI page, and grants every host tier (application 0.35.0, chart 0.57.0; #322, `docs/specs/SPEC_T2_cluster_admin_tier.md`).** One SubjectAccessReview — `update clusterrolebindings.rbac.authorization.k8s.io`, cluster-scoped, on the host — decides who may open `GET /api/kpi` and the whole Cluster Configurations tab (`GET /api/clusterconfigs`, its existence in the tab strip, and the Create / Rotate / Delete / Test routes, which `clusterConfig.secrets.writes.enabled` still switches). It is asked whatever `visibility.enabled` says, and a reader who passes it is granted every tier this cluster decides — the wide view on the host and on `inherit` clusters, and Usage — whatever `visibility.adminSar` and `visibility.usageAdminSar` answer for them; one way only, so those two settings can still be loosened without handing anyone this tab. A `remote-sar` cluster still asks its own API, a `self-only` cluster stays self. `/api/whoami` carries `visibility.cluster_admin` and drops `clusterconfig`; both tabs are absent, not disabled, for a reader who fails it; the refusal leads with *For cluster administrators only.* The `cluster_admin` threshold label replaces `clusterconfig_view` and `clusterconfig_manage` on `gsd_visibility_tier_checks_total` and `gsd_visibility_decisions_total`. **Who loses access on upgrade:** cluster-readers (the auditor persona, who passes `list clusterrolebindings`) lose the KPI page; holders of `admin` or `edit` in the release namespace — by RoleBinding or cluster-wide — who are not cluster administrators lose the Cluster Configurations tab, which `get`/`create secrets` used to open for them; and with the oauth-proxy off there is no identity to ask about, so the KPI page is withheld where the proxy-less install served it wide. **Upgrade:** `visibility.clusterConfigViewSar` and `visibility.clusterConfigManageSar` are removed; a values file that still sets either fails the render with a message naming `visibility.clusterAdminSar` — delete the block, and set `visibility.clusterAdminSar.{apiGroup,resource,verb,namespace}` only to ask a different question. The `auth-delegator` grant now renders whenever `oauthProxy.enabled` is on — new only where `visibility.enabled`, `oauthProxy.apiTokenAccess.enabled` and `clusterConfig.secrets.enabled` were all off, which rendered none — because without it both surfaces would refuse everyone; no grant is removed. SPEC_S4c's reserved versions move to app 0.36.0, chart 0.58.0.
 ```
 
-### `docs/ACCESS_CONTROL.md` — the tiers
+### `docs/guides/ACCESS_CONTROL.md` — the tiers
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 ## 2. The two thresholds
@@ -1508,7 +1508,7 @@ question as its own setting — a cluster-reader fails it, a cluster-admin passe
 namespace.
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 | Access granted | their own grants, via their groups | all | all |
@@ -1522,7 +1522,7 @@ namespace.
 | Cluster Configurations | *For cluster administrators only* | **absent** | all |
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 | `/api/clusters/{c}/operator-configs` | **403** | all |
@@ -1534,7 +1534,7 @@ namespace.
 | `/api/clusterconfigs` and its four write routes | **403** | **403** unless the reader passes the cluster-admin tier (#322); the writes also need `clusterConfig.secrets.writes.enabled` |
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 With `visibility.enabled=false` the usage tier is **not consulted at all** — measured — so no
@@ -1553,7 +1553,7 @@ with `visibility.enabled: false` too; without it every such review errors and bo
 everyone. With the proxy off there is no identity to ask about, so both are withheld.
 ```
 
-<!-- block: docs/ACCESS_CONTROL.md | edit -->
+<!-- block: docs/guides/ACCESS_CONTROL.md | edit -->
 
 ```markdown
 | use a different bar for Usage | `visibility.usageAdminSar.{...}` |
@@ -1654,9 +1654,9 @@ data about the clusters, not about the reader. The refusal leads with *For clust
 only.*
 ```
 
-### `docs/SPEC_usage_admin_tier.md` — the record
+### `docs/design/SPEC_usage_admin_tier.md` — the record
 
-<!-- block: docs/SPEC_usage_admin_tier.md | after: # Spec: a second, stricter tier for the Usage tab -->
+<!-- block: docs/design/SPEC_usage_admin_tier.md | after: # Spec: a second, stricter tier for the Usage tab -->
 
 ```markdown
 

@@ -1,5 +1,5 @@
 """Report 1 — the namespace access report (the C3 report, kept): per namespace, who is granted
-what, findings first, deterministically sorted (docs/namespace-report-design.md §6)."""
+what, findings first, deterministically sorted (docs/design/namespace-report-design.md §6)."""
 
 from __future__ import annotations
 

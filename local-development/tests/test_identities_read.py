@@ -171,7 +171,7 @@ class TestThePollerReadsIdentitiesOnlyWhenGranted:
         new row carries the User time with `first_login_source: user`, and the status stays `ok` with
         the OBSERVED_AT OF THE LAST SUCCESSFUL READ — the mixed page is honest because the note
         describes the source per row and the chips say which. Codex's alternative, an `error` state
-        that downgrades every row on one 503, was rejected in docs/REVIEW_C2.md."""
+        that downgrades every row on one 503, was rejected in docs/reviews/REVIEW_C2.md."""
         store = Store(str(tmp_path / "t.db"))
         try:
             _poll(store, monkeypatch, 200, identities_read=True)

@@ -6,7 +6,7 @@
 | Batch | P — promotion |
 | Release | — (post-programme; its own PR and its own review) |
 | Version on release | app 5.2.0, chart 0.70.3 |
-| Version note | `local-development/README.md` and `local-development/build-and-push-external.sh` are image inputs (.github/workflows/publish.yml:84, :89), and this change edits both, so `check-app-version-bump.py` requires the next application MINOR after main's 5.1.0: 5.2.0 (`docs/RELEASING.md`, "MINOR per merged issue changing the image"). The script change makes its existing `<sha10>` contract exactly ten characters; no tag name changes unless Git would otherwise have lengthened an ambiguous abbreviation. No other image input changes. The chart moves only because `appVersion` moves: no template, value or RBAC change, so a PATCH, 0.70.2 to 0.70.3, as 0.70.2 was for 5.1.0. W1 stays `specified` at chart 0.71.0, above 0.70.3. Read on `6421cff7` (application 5.1.0, chart 0.70.2). A release that lands first makes the version blocks (17 to 21) fail their check; the implementing pull request corrects them here first. |
+| Version note | `local-development/README.md` and `local-development/build-and-push-external.sh` are image inputs (.github/workflows/publish.yml:84, :89), and this change edits both, so `check-app-version-bump.py` requires the next application MINOR after main's 5.1.0: 5.2.0 (`docs/guides/RELEASING.md`, "MINOR per merged issue changing the image"). The script change makes its existing `<sha10>` contract exactly ten characters; no tag name changes unless Git would otherwise have lengthened an ambiguous abbreviation. No other image input changes. The chart moves only because `appVersion` moves: no template, value or RBAC change, so a PATCH, 0.70.2 to 0.70.3, as 0.70.2 was for 5.1.0. W1 stays `specified` at chart 0.71.0, above 0.70.3. Read on `6421cff7` (application 5.1.0, chart 0.70.2). A release that lands first makes the version blocks (17 to 21) fail their check; the implementing pull request corrects them here first. |
 | Issue | [#598](https://github.com/ephico2real2/group-sync-dashboard/issues/598) |
 | Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-04 (implementer seat), from #598 and #410, the old SPEC_P1 and its two review rounds (`bb1f8b91`, `dc027eda`), the code read on `6421cff7`, read-only `gh` and `oc get` against GitHub and the lab, and the upstream documents in §2.1. No cluster, branch, ruleset or GitHub setting was changed. Revised the same day on the operator's decisions "main by default; release optional" and the two-namespace end state (Orchestrator's notes 10, 11), then on the confirmation review's exact-sha10 finding. §7's 22 blocks check against a clean copy of `6421cff7` with this spec in it (§4.3) |
@@ -55,7 +55,7 @@ Line citations into the code at `6421cff7` are file:line in plain text inside ta
      touching `publish.yml`'s image inputs, reads the immutable `<appVersion>-<sha10>` image built for that commit,
      and requires `:<appVersion>` to resolve to the same digest. No runs API, no `actions: read`. The whole step is
      inline bash in `promote.yml`, tested by running it (§4).
-   - **`docs/CICD.md` and its figure** (215 + 155 lines). The flow is one section of `docs/RELEASING.md`.
+   - **`docs/CICD.md` and its figure** (215 + 155 lines). The flow is one section of `docs/guides/RELEASING.md`.
    - **The 17-block rename of the test branch.** `--argocd main` keeps today's behaviour, so no test changes branch.
 2. **The research does not overturn the operator's design.** The common advice is "do not use a branch per
    environment" (Kostis Kapelonis: "Promotion is never a simple Git merge"), because people merge between environment
@@ -106,7 +106,7 @@ Line citations into the code at `6421cff7` are file:line in plain text inside ta
     - `promote.yml`, the ready rule, `promotion.yaml`, the deploy key, the environment, the ruleset and the
       operator's one-time steps are unchanged: `release` is kept current on every green publish, so it is ready
       whenever it is chosen.
-    - The consequence, said plainly in `docs/RELEASING.md`, `gitops/README.md`, `local-development/README.md` and
+    - The consequence, said plainly in `docs/guides/RELEASING.md`, `gitops/README.md`, `local-development/README.md` and
       the epic skill: while the lab tracks `main`, the image race remains there (measured at 4.1.0, 4.4.0 and
       5.1.0, §2.3); it heals on its own, and `--argocd release` removes it whenever chosen.
 11. **The end state (2026-10-04, not built here).** The operator, verbatim: *"Ideally once our lab is built
@@ -127,7 +127,7 @@ Line citations into the code at `6421cff7` are file:line in plain text inside ta
     for a second environment, the lab follows `main` day to day, and at each epic release the post-release walk runs
     on the promoted path: `release-crc.sh --argocd release`, the walk, then `release-crc.sh --argocd main`. Written
     into `.claude/skills/epic/SKILL.md` section 6, step 3 "Deploy", and its Definition of Done (Blocks 15, 16), and
-    into `docs/RELEASING.md` (Block 11). The room, as the orchestrator measured it: CPU requests 86% of 11.8 cores,
+    into `docs/guides/RELEASING.md` (Block 11). The room, as the orchestrator measured it: CPU requests 86% of 11.8 cores,
     memory requests 89% of 27.6 GiB, memory used 79%. Re-read for this spec, read-only (`oc describe nodes`,
     `oc adm top nodes`): requests `cpu 10222m (86%)` and `memory 24758Mi (89%)` of allocatable `cpu=11800m`,
     `mem=28216052Ki`; usage `3549m` CPU (30%) and `21371Mi` memory (77%).
@@ -221,7 +221,7 @@ Line citations into the code at `6421cff7` are file:line in plain text inside ta
     - **OB2's other orders, kept as permanent tests (R12).** A `release` that moved after the fetch refuses the push;
       a hand-run publish at a commit that changed no image input promotes nothing; a green publish that pushed nothing
       is red; an identical chart at a new target writes a new commit. They pass before and after: they hold
-      behaviour. The hand-run order gets a troubleshooting row in `docs/RELEASING.md` (R16).
+      behaviour. The hand-run order gets a troubleshooting row in `docs/guides/RELEASING.md` (R16).
     - **The version:** no R block touches an image input or `charts/`, so 5.2.0 and 0.70.3 stand.
     - **Proofs** (the repository's venv, Python 3.14):
       - the oracle: `git archive 51fbb781` + this spec + the index row, all 39 blocks applied, equals the worktree:
@@ -244,7 +244,7 @@ Line citations into the code at `6421cff7` are file:line in plain text inside ta
       repository (ruleset `24475607`).
     - **The lock is proven:** a hand push on top of `release` was refused with `GH013 … Cannot update this protected
       ref`.
-    - **The runbook:** at the operator's request, `docs/RELEASE_BRANCH_SETUP.md` (Block R17) records the steps for a
+    - **The runbook:** at the operator's request, `docs/guides/RELEASE_BRANCH_SETUP.md` (Block R17) records the steps for a
       junior engineer. For each step it gives what it does and why, the web and `gh` ways, a check, the record of
       the setup, upkeep, and a glossary. RELEASING points to it (Block R18).
     - **It is written with indented code samples,** because a fenced sample inside a block's fence would end the
@@ -491,7 +491,7 @@ file, pins GitHub's published Ed25519 host key, pushes over SSH without force, a
 
 ### 3.5 The operator's one-time steps
 
-These are GitHub settings, not code. In this order, before the first promotion (also in `docs/RELEASING.md`,
+These are GitHub settings, not code. In this order, before the first promotion (also in `docs/guides/RELEASING.md`,
 "Promotion to the lab", Block 11):
 
 1. **The deploy key.** On a laptop: `ssh-keygen -t ed25519 -N '' -C promote-release -f promote-release`. Add
@@ -521,7 +521,7 @@ Until steps 1 to 3 are done, every promote run is red and names this section.
 - `--argocd main` is unchanged: the chart's default images, read back as `:<appVersion>` (#414), and no `valueFiles`
   in the patch, so the Application file's own `crc.yaml` returns. That is how the lab leaves `release`.
 - Every other mode sends what it sent before; the mode table gains the two `release` rows (Blocks 2, 3).
-- `local-development/README.md`, `gitops/README.md`, `docs/RELEASING.md` and the epic skill say that during
+- `local-development/README.md`, `gitops/README.md`, `docs/guides/RELEASING.md` and the epic skill say that during
   development the lab tracks `main`, that the race remains there and heals on its own, and that `--argocd release`
   removes it (Blocks 11 to 16). The epic skill's deploy step walks each epic release on `release` and then returns the lab to `main` (Orchestrator's notes 13).
 
@@ -579,7 +579,7 @@ resolves `:<appVersion>` (part A's gate guards it).
 | 7: `--argocd release` re-reads the pinned digests, lists `promotion.yaml` last, refuses a missing pin and a wrong digest | `test_release_crc.py::test_argocd_release_reads_the_pinned_digests_back_and_lists_promotion_yaml_last`; `test_argocd_release_without_a_promotion_is_refused_before_anything_is_written`; `test_argocd_release_refuses_a_pinned_digest_that_is_not_the_release` |
 | 7 (amended): `--argocd main` switches back with the file's values and the aliases | `test_argocd_main_after_release_returns_to_the_files_values_and_the_aliases` (a regression guard: it passes on main too) |
 | 8: when chosen, the lab tracks `release`, pods on the pinned digests; PVC UIDs unchanged | §5, on the lab |
-| 9: the release docs | `docs/RELEASING.md` "Promotion to the lab" and five troubleshooting rows (Blocks 11, 12) |
+| 9: the release docs | `docs/guides/RELEASING.md` "Promotion to the lab" and five troubleshooting rows (Blocks 11, 12) |
 
 ### 4.2 Each test fails without the change, and why
 
@@ -664,7 +664,7 @@ operator's steps 1 to 4 (§3.5):
 Twenty-two blocks over thirteen files, in apply order: the workflow, `release-crc.sh`, the tests, the docs, the versions,
 the CHANGELOG, and the publisher's exact sha10 derivation. `gitops/argocd-application-dashboard.yaml` is not edited (Orchestrator's notes 10). Lines added /
 removed per file (the proof tree): `promote.yml` +270, `test_promote.py` +371, `test_release_crc.py` +67,
-`release-crc.sh` +32 −10, `docs/RELEASING.md` +71, `docs/CHANGELOG.md` +14, `.claude/skills/epic/SKILL.md` +11 −10,
+`release-crc.sh` +32 −10, `docs/guides/RELEASING.md` +71, `docs/CHANGELOG.md` +14, `.claude/skills/epic/SKILL.md` +11 −10,
 `Chart.yaml` +5 −2, `local-development/README.md` +4 −1, `gitops/README.md` +1, `pyproject.toml` and
 `gsd/__init__.py` +1 −1 each, `build-and-push-external.sh` +2 −1.
 
@@ -676,7 +676,7 @@ The review of the implementation (PR #614) adds sixteen review blocks, R1 to R16
 <!-- block: .github/workflows/promote.yml | create -->
 
 ```yaml
-# Promote main to the `release` branch (#598, docs/RELEASING.md "Promotion to the lab").
+# Promote main to the `release` branch (#598, docs/guides/RELEASING.md "Promotion to the lab").
 #
 # BUILD ONCE, PROMOTE THE ARTEFACT. publish.yml builds and signs each image once; this workflow builds
 # nothing. It reads both images back (the version label on every Linux image, the signature when signing is
@@ -740,7 +740,7 @@ jobs:
         run: |
           if [ "${KEY_SET}" != true ]; then
             echo "::error::RELEASE_DEPLOY_KEY is not set in the release environment, so nothing can be promoted."
-            echo "::error::The operator's one-time steps are in docs/RELEASING.md, \"Promotion to the lab\"."
+            echo "::error::The operator's one-time steps are in docs/guides/RELEASING.md, \"Promotion to the lab\"."
             exit 1
           fi
 
@@ -808,7 +808,7 @@ jobs:
           git fetch -q origin "+refs/heads/main:refs/remotes/origin/main"
           if ! git fetch -q origin "+refs/heads/release:refs/remotes/origin/release"; then
             echo "::error::origin has no release branch, so nothing was promoted. The operator creates it once"
-            echo "::error::(docs/RELEASING.md, \"Promotion to the lab\"), then runs this workflow by hand."
+            echo "::error::(docs/guides/RELEASING.md, \"Promotion to the lab\"), then runs this workflow by hand."
             exit 1
           fi
           target=$(git rev-parse --verify "${SHA:-origin/main}^{commit}")
@@ -1599,9 +1599,9 @@ def test_argocd_main_after_release_returns_to_the_files_values_and_the_aliases(l
 ```
 
 
-### Block 11 — `docs/RELEASING.md` (1 of 2): "Promotion to the lab": main by default, release optional, the end state and the operator's one-time steps
+### Block 11 — `docs/guides/RELEASING.md` (1 of 2): "Promotion to the lab": main by default, release optional, the end state and the operator's one-time steps
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 
 ```markdown
 carry a MINOR bump, so their merges publish both the immutable tag and the version alias. The
@@ -1683,9 +1683,9 @@ names its cluster-scoped objects by release (SPEC_P1 §2.3, "two-namespace readi
 ```
 
 
-### Block 12 — `docs/RELEASING.md` (2 of 2): five troubleshooting rows
+### Block 12 — `docs/guides/RELEASING.md` (2 of 2): five troubleshooting rows
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 
 ```markdown
 | chart release run is red at "Label the image this chart version deploys" with `<image>:<appVersion> is application X, not <appVersion> (#410)` | the tag exists but names another build: `publish.yml` has not moved the alias yet on the release merge, or the tag is a chart-version label on an old image (`:0.39.0` was application 0.24.0). Nothing was copied and no chart was published | wait for `publish.yml` on the release merge to finish green, then re-run the release. Never retag or delete the old tag by hand: a cluster, a mirror or a Helm release may pin it |
@@ -1722,7 +1722,7 @@ names its cluster-scoped objects by release (SPEC_P1 §2.3, "two-namespace readi
 ```markdown
 | `argocd-rbac-kubeadmin.yaml` | a patch for the `openshift-gitops` ArgoCD CR: OpenShift GitOps' default policy grants `role:admin` to the *groups* `system:cluster-admins` / `cluster-admins`, but Dex's OpenShift connector puts only `system:authenticated` in a token's `groups` (kubeadmin's cluster-admin membership is a virtual group Dex never sees — measured on CRC 2026-09-19: `PermissionDenied` on every list, an empty UI). This matches the `name` claim too and grants `kubeadmin` admin. On a cluster where a `cluster-admins` Group object exists this is not needed |
 | `argocd-repo-github.yaml` | the repository connection: a Secret in `openshift-gitops` with the label `argocd.argoproj.io/secret-type: repository` and the repo `url` — that label is what registers it (Argo's declarative setup). This repository is public; a private one adds `username`/`password` or `sshPrivateKey` |
-| `argocd-application-dashboard.yaml` | the dashboard chart from `main` with `environments/crc.yaml`, the default while the project is in development. `main`'s image race remains: a release merge can sync before `publish.yml` has pushed its image, and the pods wait in `ErrImagePull` until it exists (measured at 4.1.0, 4.4.0, 5.1.0). `local-development/release-crc.sh --argocd release` removes the race: it points this Application at the `release` branch with `promotion.yaml`, the digests `promote.yml` read back, as the last values file; `--argocd main` switches back (#598; `docs/RELEASING.md`, "Promotion to the lab") |
+| `argocd-application-dashboard.yaml` | the dashboard chart from `main` with `environments/crc.yaml`, the default while the project is in development. `main`'s image race remains: a release merge can sync before `publish.yml` has pushed its image, and the pods wait in `ErrImagePull` until it exists (measured at 4.1.0, 4.4.0, 5.1.0). `local-development/release-crc.sh --argocd release` removes the race: it points this Application at the `release` branch with `promotion.yaml`, the digests `promote.yml` read back, as the last values file; `--argocd main` switches back (#598; `docs/guides/RELEASING.md`, "Promotion to the lab") |
 | `argocd-application-grafana.yaml` | the `openshift-grafana` chart from this git repository (`charts/openshift-grafana` on `main`), release `grafana`, destination `group-sync-dashboard`, automated sync |
 
 ```
@@ -1745,7 +1745,7 @@ spec, records what is deployed. The typical loop: iterate with the bare script (
 a local variant), `--argocd` on the pushed head before the PR is called ready, `--argocd main`
 after a merge once the app release is cut. During development the lab tracks `main`, and a release merge can still
 reach it before its image is pushed (`ErrImagePull` until it is). `--argocd release` deploys only what `promote.yml`
-read back, pinned by digest, and `--argocd main` switches back (#598; `docs/RELEASING.md`, "Promotion to the
+read back, pinned by digest, and `--argocd main` switches back (#598; `docs/guides/RELEASING.md`, "Promotion to the
 lab"). `./argocd-wait.sh` is the waiter the Argo modes use: it
 accepts Synced/Healthy/Succeeded only once the status was computed for the current spec
 (`status.sync.comparedTo.source`) and for the expected commit, and names the failed hook or
@@ -1801,7 +1801,7 @@ Then:
    `local-development/release-crc.sh --argocd release` (the chart on `release` and the two digests `promote.yml`
    pinned in `promotion.yaml`, read back before the Application is written), walk it, then
    `local-development/release-crc.sh --argocd main` to return the lab to `main`, its day-to-day branch (#598;
-   `docs/RELEASING.md`, "Promotion to the lab"). Bare `--argocd` builds HEAD and pins that image, so it is not the
+   `docs/guides/RELEASING.md`, "Promotion to the lab"). Bare `--argocd` builds HEAD and pins that image, so it is not the
    published release. Both modes refuse an image whose `org.opencontainers.image.version` label is not the release's
    (#410): wait for `publish.yml` and `promote.yml`, then re-run; never retag or edit `release` by hand. Between
    epics the lab tracks `main`, which can sync a release merge before its image is pushed (`ErrImagePull` until it
@@ -1923,7 +1923,7 @@ __version__ = "5.2.0"
   2026-10-04: "main by default; release optional"), so the `ErrImagePull` race seen at 4.1.0, 4.4.0 and 5.1.0 remains
   there and heals on its own. `release-crc.sh --argocd release` removes it: it reads the pinned digests back, then
   points the Application at `release` with `promotion.yaml` as its last values file; `--argocd main` switches back.
-  The `release` branch, its ruleset and the deploy key are the operator's one-time steps (`docs/RELEASING.md`,
+  The `release` branch, its ruleset and the deploy key are the operator's one-time steps (`docs/guides/RELEASING.md`,
   "Promotion to the lab"). The application moves because `local-development/README.md` and the publisher's exact-sha10
   derivation are image inputs; no application code, template, value or RBAC change.
 
@@ -2377,7 +2377,7 @@ exec {real_git} "$@"
 
 def test_a_dispatch_rebuild_at_a_commit_that_changed_no_image_input_promotes_nothing(lab) -> None:
     """Review of #614 (OB2): publish.yml run by hand at such a tip tags that tip's sha; promote needs the
-    image-input commit's own tag (docs/RELEASING.md, its troubleshooting row)."""
+    image-input commit's own tag (docs/guides/RELEASING.md, its troubleshooting row)."""
     image = _main_at(lab, APP)
     tip = _commit(lab["repo"], "a template", {"charts/group-sync-dashboard/templates/x.yaml": "kind: Secret\n"})
     registry = _released()
@@ -2524,9 +2524,9 @@ def _version() -> str:
 ```
 
 
-### Block R16 — `docs/RELEASING.md`: the dispatch-rebuild row; the notice row names both notices (review of #614)
+### Block R16 — `docs/guides/RELEASING.md`: the dispatch-rebuild row; the notice row names both notices (review of #614)
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 
 ```markdown
 | promote run says `whose images publish.yml has not finished`, `immutable image … is not ready` or the version alias `does not yet name` it, and promotes nothing | main's exact image is still publishing | nothing to do: its green completion, or a later chart/environment push, promotes main. If publish is red, fix it; `release` stays on the last promotion |
@@ -2543,15 +2543,15 @@ def _version() -> str:
 | promote run is red with `origin has no release branch` or `RELEASE_DEPLOY_KEY is not set` | the operator's one-time steps are not done | "Promotion to the lab", steps 1 to 5 |
 ```
 
-### Block R17 — `docs/RELEASE_BRANCH_SETUP.md`: the one-time setup runbook (the operator's request, 2026-10-05)
+### Block R17 — `docs/guides/RELEASE_BRANCH_SETUP.md`: the one-time setup runbook (the operator's request, 2026-10-05)
 
-<!-- block: docs/RELEASE_BRANCH_SETUP.md | create -->
+<!-- block: docs/guides/RELEASE_BRANCH_SETUP.md | create -->
 ```markdown
 # The `release` branch: one-time setup, checks and upkeep
 
 This page is for whoever sets up or looks after the `release` branch. Each step says what it does and why, then gives
 two ways to do it (the GitHub web pages, and the `gh` command line) and a check. How promotion itself works is in
-`docs/RELEASING.md`, "Promotion to the lab" (#598).
+`docs/guides/RELEASING.md`, "Promotion to the lab" (#598).
 
 ## In one minute
 
@@ -2776,16 +2776,16 @@ Which commands were run against the repository on that day:
   image.
 ```
 
-### Block R18 — `docs/RELEASING.md`: point the one-time steps at the runbook
+### Block R18 — `docs/guides/RELEASING.md`: point the one-time steps at the runbook
 
-<!-- block: docs/RELEASING.md | edit -->
+<!-- block: docs/guides/RELEASING.md | edit -->
 ```markdown
 **The operator's one-time steps** (in this order, before the first promotion):
 ```
 
 ```markdown
 **The operator's one-time steps** (in this order, before the first promotion). The runbook with each command, its
-check, the record of the setup on 2026-10-05, key rotation and undoing it is `docs/RELEASE_BRANCH_SETUP.md`:
+check, the record of the setup on 2026-10-05, key rotation and undoing it is `docs/guides/RELEASE_BRANCH_SETUP.md`:
 ```
 
 ### Block R19 — `docs/README.md`: link the runbook in the docs index
@@ -2794,10 +2794,10 @@ check, the record of the setup on 2026-10-05, key rotation and undoing it is `do
 
 <!-- block: docs/README.md | edit -->
 ```markdown
-- [RELEASING.md](RELEASING.md) — application and chart release procedures and version ownership.
+- [RELEASING.md](guides/RELEASING.md) — application and chart release procedures and version ownership.
 ```
 
 ```markdown
-- [RELEASING.md](RELEASING.md) — application and chart release procedures and version ownership.
-- [RELEASE_BRANCH_SETUP.md](RELEASE_BRANCH_SETUP.md) — the `release` branch's one-time GitHub setup (deploy key, environment, branch, ruleset), its checks and upkeep.
+- [RELEASING.md](guides/RELEASING.md) — application and chart release procedures and version ownership.
+- [RELEASE_BRANCH_SETUP.md](guides/RELEASE_BRANCH_SETUP.md) — the `release` branch's one-time GitHub setup (deploy key, environment, branch, ruleset), its checks and upkeep.
 ```

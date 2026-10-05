@@ -452,7 +452,7 @@ jobs:
       # there, with dnf, and copied into the shipped image as files; the shipped image's RPM
       # database never lists them, and a scanner sees them there only through the ELF package
       # notes Red Hat's builds carry. Scanning the stage they were installed in is the reading
-      # that cannot miss one. docs/image-vulnerability-scan.md has the measurements.
+      # that cannot miss one. docs/guides/image-vulnerability-scan.md has the measurements.
       - name: Build the pack stage
         working-directory: local-development
         run: docker build -f Containerfile --target pack -t gsd:pack .

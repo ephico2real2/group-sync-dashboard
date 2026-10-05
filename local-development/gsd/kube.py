@@ -43,7 +43,7 @@ GROUP_API = "/apis/user.openshift.io/v1/groups"
 # objects, 61 with an identity; 11 distinct group members, 8 with a User, 3 with none — one of which
 # (`hello1`) has no directory entry either, so it can never acquire one.
 #
-# That is why the Users tab is sourced from here (docs/DESIGN_users_tab_logins.md): its rows are the
+# That is why the Users tab is sourced from here (docs/design/DESIGN_users_tab_logins.md): its rows are the
 # people who have logged in, and group membership is an attribute of a row. A member with no User is
 # not a user of the cluster yet; the tab reports them once, by count, and their group pages — which
 # come from the Group objects above — are unchanged. fullName is still read for every member surface,
@@ -54,7 +54,7 @@ NAMESPACE_API = "/api/v1/namespaces"
 # claim or add (the default and the common case) OpenShift creates it at the first successful login
 # through that provider and never before, so its creationTimestamp IS that first login — where a
 # User's creationTimestamp is only the first login for a User the provider created, and earlier
-# than it for one an administrator made ahead of time (docs/DESIGN_users_tab_logins.md, open
+# than it for one an administrator made ahead of time (docs/design/DESIGN_users_tab_logins.md, open
 # question 2). With mappingMethod lookup an administrator creates the Identity BEFORE the first
 # login, so there it is the mapping's creation; the page says so and never calls the time "exact"
 # (review of C2, Codex). Read only when the chart grants it (rbac.identities →
@@ -64,13 +64,13 @@ IDENTITY_API = "/apis/user.openshift.io/v1/identities"
 # The cluster's OAuth configuration — the object that holds the identity providers, and the ONLY
 # place the login-gate group is written down. Three similarly named resources exist and only this one
 # has identityProviders: `authentications.operator.openshift.io/cluster` carries logLevel (see
-# docs/LOGIN_CAPTURE_QUICKCHECK.md) and `authentications.config.openshift.io/cluster` carries `type`.
+# docs/guides/LOGIN_CAPTURE_QUICKCHECK.md) and `authentications.config.openshift.io/cluster` carries `type`.
 # A single object, so this is a get rather than a list, and the grant can be narrowed with
 # resourceNames — which Kubernetes honours for get, unlike list.
 OAUTH_API = "/apis/config.openshift.io/v1/oauths/cluster"
 
 # The nodes and the kubelet's file server behind them, for the oauth-server AUDIT log
-# (docs/DESIGN_login_capture.md, "The oauth-server AUDIT LOG"). `oc adm node-logs <node>
+# (docs/design/DESIGN_login_capture.md, "The oauth-server AUDIT LOG"). `oc adm node-logs <node>
 # --path=oauth-server/audit.log` is GET /api/v1/nodes/<node>/proxy/logs/oauth-server/audit.log —
 # the API server authorises it as `get nodes/proxy` and forwards it to the kubelet, which serves
 # /var/log through Go's http.FileServer (kubelet.go: `http.StripPrefix("/logs/",
@@ -93,7 +93,7 @@ ROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/rolebindings"
 LOG_READ_BUDGET_SECONDS = 20.0
 CLUSTERROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
 
-# ── Per-user visibility: the tier decision (docs/SPEC_per_user_visibility.md) ──────────────────
+# ── Per-user visibility: the tier decision (docs/design/SPEC_per_user_visibility.md) ──────────────────
 
 SAR_API = "/apis/authorization.k8s.io/v1/subjectaccessreviews"
 
@@ -846,7 +846,7 @@ class ClusterClient:
         `created_at` (metadata.creationTimestamp), `phase` (status.phase, Active/Terminating) and
         `metadata` — a {key: value} of exactly the configured `label_keys` that are present on the
         namespace, never the whole label map, so the namespace-access report can group namespaces
-        by them (docs/DESIGN_reporting_auditors_and_ns_selector.md §3.3). The keys are a PARAMETER:
+        by them (docs/design/DESIGN_reporting_auditors_and_ns_selector.md §3.3). The keys are a PARAMETER:
         ClusterClient holds no Settings, so the poller passes the configured labels in.
 
         None means FORBIDDEN and is distinct from [] for the same reason fetch_users draws the
@@ -887,7 +887,7 @@ class ClusterClient:
         One list call. A record per User — not, as before, a display name per User that happened to
         have one — because the Users tab counts the people who have LOGGED IN, and the User object is
         the cluster's own record of that: OpenShift creates it at first login through an identity
-        provider and never before (docs/DESIGN_users_tab_logins.md). Per record:
+        provider and never before (docs/design/DESIGN_users_tab_logins.md). Per record:
 
           user_name     metadata.name
           full_name     fullName, or None when unset or blank — never ""
@@ -965,7 +965,7 @@ class ClusterClient:
         generate provider that created the object. A `mappingMethod: lookup` provider needs its
         Identity created by an administrator BEFORE the first login, so there the time is the
         admin's create; `_user_row` labels every Identity time `identity`, never "exact", and the
-        page states the lookup caveat (docs/DESIGN_users_tab_logins.md, "Decisions after 0.9.0")."""
+        page states the lookup caveat (docs/design/DESIGN_users_tab_logins.md, "Decisions after 0.9.0")."""
         with self._client() as client:
             try:
                 items = self._list_all(client, IDENTITY_API)
@@ -1492,7 +1492,7 @@ class TierResolver:
         # under _lock.
         self._hold = failure_hold_seconds
         self._held_until = 0.0
-        # The metrics seam (docs/DESIGN_metrics_refresh.md §3.1): called with one enum
+        # The metrics seam (docs/design/DESIGN_metrics_refresh.md §3.1): called with one enum
         # outcome per FRESH resolution. A callback and not a metrics import, so this module
         # stays cluster I/O, buildable and testable without the metrics module — the app
         # wires the two at build time.

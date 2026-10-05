@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import Any
 
 #: The caveat the parked design made mandatory on any artefact titled "who has access"
-#: (docs/namespace-report-design.md §6). Printed verbatim on every report, never paraphrased.
+#: (docs/design/namespace-report-design.md §6). Printed verbatim on every report, never paraphrased.
 DIRECT_BINDINGS_CAVEAT = ("direct bindings only; role rules are not evaluated — "
                           "this is not an effective-permissions calculation")
 #: What replaces any diagnostic text that could carry a secret (§7.5), so an empty column can

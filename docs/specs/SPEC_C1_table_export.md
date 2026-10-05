@@ -25,7 +25,7 @@ request, with the reason, under "Orchestrator's notes".
 ## Orchestrator's notes
 
 - First feature of R3: app 0.14.0, chart 0.15.0; the body's version numbers are superseded. Default answer to the design's question 1: exports are not recorded in `dashboard_user_activity` (client-side action).
-- Applied at implementation (PR #78) with every OLD anchor matching once; no deviation was needed to apply. Deviations from the adversarial review (`docs/REVIEW_C1.md`), applied in the same PR: (1) `exportDescriptor`'s bindings branch returns null when `readerTierKnown()` is false, the same fail-closed `bindingsPage` paints Loading on — the body's version could offer the previous cycle's wide findings after a failed `/api/whoami`; (2) `csvField` tests the formula characters after any leading whitespace run, so `" =cmd"` is prefixed like `"=cmd"`; (3) `downloadBlob` keeps the object URL until the next export replaces it instead of revoking on a one-second timer, which a save dialog can outlive; (4) the narrowed Access granted export's JSON `sort` names the server's order (`binding_kind,binding_namespace,binding_name`) because the page does not re-sort those rows; (5) `test_the_export_makes_no_request` no longer sleeps after the download; (6) the formula guard also covers LF and the full-width `＝＋－＠` initiators (Codex, citing OWASP); (7) the narrowed Namespace audit export's JSON `sort` names the store's order (cluster-admin first, cluster-scoped first, namespace, user) instead of the wide view's retained sort keys, because the page paints a narrowed reader's rows as served; (8) `docs/DESIGN_export.md` names the Users paint cap as the one deliberate difference between paint and export. Five tests were added for (1), (2), (4), (6) and (7). Second pass (`docs/REVIEW_C1.md`): (9) the wide Access granted export's JSON `sort` names `finding,<column>` because the file is written section by section (dangling, unresolved, unmanaged, ok) with the column sort inside each; (10) the module comment and `docs/DESIGN_export.md` no longer say the projection holds only painted cells — `managed_source`, `exception` and `is_platform` are the classification inputs the page renders as labels, kept in the file by this spec's explicit choice, and the rule is stated as such. Two more tests: the wide envelope, and a narrowed reader's control returning after the tier resolves. Codex's second pass added (11) `exportFilename` bounds each part at 120 characters with an FNV-1a suffix of the original, because `config.py` accepts a 300-character cluster id and filesystems cap a name at 255 bytes; (12) the partial note's warning edge uses a new token `--status-warning-edge` (`#b45309` in the light theme, the badge amber in the dark) because the badge amber measured 2.5–2.9:1 on the page gradient, below the suite's 3:1 graphical floor; `tests/test_accessibility.py` measures the edge against the 8%-tinted page in both themes. A pre-existing `refresh()` defect Codex found (a narrowed session changing user aborts the refresh on the previous user's path) is routed to `SPEC_D2_per_cluster_authorization.md`, which owns the reader-tier flow.
+- Applied at implementation (PR #78) with every OLD anchor matching once; no deviation was needed to apply. Deviations from the adversarial review (`docs/reviews/REVIEW_C1.md`), applied in the same PR: (1) `exportDescriptor`'s bindings branch returns null when `readerTierKnown()` is false, the same fail-closed `bindingsPage` paints Loading on — the body's version could offer the previous cycle's wide findings after a failed `/api/whoami`; (2) `csvField` tests the formula characters after any leading whitespace run, so `" =cmd"` is prefixed like `"=cmd"`; (3) `downloadBlob` keeps the object URL until the next export replaces it instead of revoking on a one-second timer, which a save dialog can outlive; (4) the narrowed Access granted export's JSON `sort` names the server's order (`binding_kind,binding_namespace,binding_name`) because the page does not re-sort those rows; (5) `test_the_export_makes_no_request` no longer sleeps after the download; (6) the formula guard also covers LF and the full-width `＝＋－＠` initiators (Codex, citing OWASP); (7) the narrowed Namespace audit export's JSON `sort` names the store's order (cluster-admin first, cluster-scoped first, namespace, user) instead of the wide view's retained sort keys, because the page paints a narrowed reader's rows as served; (8) `docs/design/DESIGN_export.md` names the Users paint cap as the one deliberate difference between paint and export. Five tests were added for (1), (2), (4), (6) and (7). Second pass (`docs/reviews/REVIEW_C1.md`): (9) the wide Access granted export's JSON `sort` names `finding,<column>` because the file is written section by section (dangling, unresolved, unmanaged, ok) with the column sort inside each; (10) the module comment and `docs/design/DESIGN_export.md` no longer say the projection holds only painted cells — `managed_source`, `exception` and `is_platform` are the classification inputs the page renders as labels, kept in the file by this spec's explicit choice, and the rule is stated as such. Two more tests: the wide envelope, and a narrowed reader's control returning after the tier resolves. Codex's second pass added (11) `exportFilename` bounds each part at 120 characters with an FNV-1a suffix of the original, because `config.py` accepts a 300-character cluster id and filesystems cap a name at 255 bytes; (12) the partial note's warning edge uses a new token `--status-warning-edge` (`#b45309` in the light theme, the badge amber in the dark) because the badge amber measured 2.5–2.9:1 on the page gradient, below the suite's 3:1 graphical floor; `tests/test_accessibility.py` measures the edge against the 8%-tinted page in both themes. A pre-existing `refresh()` defect Codex found (a narrowed session changing user aborts the refresh on the previous user's path) is routed to `SPEC_D2_per_cluster_authorization.md`, which owns the reader-tier flow.
 
 ## Batch preamble (verbatim from the design)
 
@@ -66,7 +66,7 @@ Each PR: bump `pyproject.toml` `version`, `gsd/__init__.py` `__version__`, `Char
 
 - Config keys parse through `gsd/config.py#_bool_setting` / `_num_setting` (env wins over ConfigMap), strict where a wrong value is a security consequence, fallback-with-warning where it is not — the discipline `_duration_setting`'s docstring states.
 - Chart helpers are nil-safe (`default dict` on every hop, never `dig` — `_helpers.tpl#gsd.cookieExpire` explains why) and refuse bad shapes at render time.
-- New endpoints: GET, docstring whose first line stands alone (R1), every `Query` described (R2), `total`/`truncated` beside any `limit` (R3), `@consistent` for more than one store call (R5) — `docs/api-contract.md`, enforced by `tests/test_api_contract.py`. Every new path is added to `local-development/API.md` (`test_every_endpoint_appears_in_api_md`).
+- New endpoints: GET, docstring whose first line stands alone (R1), every `Query` described (R2), `total`/`truncated` beside any `limit` (R3), `@consistent` for more than one store call (R5) — `docs/guides/api-contract.md`, enforced by `tests/test_api_contract.py`. Every new path is added to `local-development/API.md` (`test_every_endpoint_appears_in_api_md`).
 - Visibility: nothing is exported or reported except what `viewer_scope`/`require_admin_tier` served. C1 exports from `data` (what arrived on the wire for this reader); C3's endpoints sit behind `require_admin_tier` exactly like `/bindings/findings`.
 - UI: one file, no build step; colours only via `app.css` tokens (`tests/test_accessibility.py`), sizes only via `--text-*` (`tests/test_type_scale.py`), every control a real `<button>`/`<a>`/`<input>`, ids on anything focus must survive the 60 s repaint (`index.html#function renderFilters` restore-by-id), Playwright tests following `tests/test_ui.py`'s fixtures.
 
@@ -90,11 +90,11 @@ Compared:
 | Exports "what was served after filter and sort" | Yes by construction: the filter (`index.html#function matchesSearch`, chips) and sort (`sortBy`) are client-side; the export reads the same arrays the table paints. | No: the server does not know the client filter/sort; it would export a different set from the one on screen, or the six filter/sort rules would have to be re-implemented server-side. |
 | Tier safety | Cannot widen: the browser only holds what `viewer_scope`/`require_admin_tier` served. | A seventh scoping path that must be kept identical to six handlers — the shape `gsd/api.py#SKIP_AUTH_PATHS` records as the one that drifted and was exploitable. |
 | `@consistent` | n/a | Streaming is forbidden inside a snapshot (`gsd/api.py#consistent`: "must not stream, yield or await"), so the CSV would be fully materialised anyway. |
-| Session | No request. | Every request re-stamps the proxy cookie (`docs/DESIGN_session_and_signout.md` §"What ships") and, with `X-GSD-Interaction`, counts. |
+| Session | No request. | Every request re-stamps the proxy cookie (`docs/design/DESIGN_session_and_signout.md` §"What ships") and, with `X-GSD-Interaction`, counts. |
 
 Audit: `dashboard_user_activity` is one row per user per UTC day with a request count, "deliberately not a page-view log" (`charts/group-sync-dashboard/values.yaml#userActivity`, `gsd/api.py#record_dashboard_use`). An export is a client action over rows whose serving request was already counted (the tab fetch carries the interaction mark, `index.html#async function refresh`). Recording "an export happened" would need a per-action event kind — the thing that table was designed not to be — and a synthetic request to carry it would be the page talking to itself, which the interaction header exists to exclude. So exports are **not** recorded, the design doc says so, and the JSON envelope carries `exported_at`, `viewer` and `scope` so the file itself states its provenance. (Operator question Q1 below records the alternative.)
 
-UTF-8 BOM: **CSV carries the BOM, JSON does not.** The consumer the report designs name is a spreadsheet in an access review (`docs/namespace-report-design.md` §6); Excel opens BOM-less UTF-8 as the local code page and mangles a non-ASCII `full_name` from the directory, while every programmatic reader accepts `utf-8-sig`. JSON must not carry one (RFC 8259 §8.1). Formula-injection: a string cell beginning `= + - @ \t \r` is prefixed with `'` (OWASP CSV injection mitigation); directory-supplied text is already treated as hostile for HTML (`index.html#function esc`, the crafted-hash test), and a display name is the same source. This is the only transformation and the design doc says so.
+UTF-8 BOM: **CSV carries the BOM, JSON does not.** The consumer the report designs name is a spreadsheet in an access review (`docs/design/namespace-report-design.md` §6); Excel opens BOM-less UTF-8 as the local code page and mangles a non-ASCII `full_name` from the directory, while every programmatic reader accepts `utf-8-sig`. JSON must not carry one (RFC 8259 §8.1). Formula-injection: a string cell beginning `= + - @ \t \r` is prefixed with `'` (OWASP CSV injection mitigation); directory-supplied text is already treated as hostile for HTML (`index.html#function esc`, the crafted-hash test), and a display name is the same source. This is the only transformation and the design doc says so.
 
 Filename: `gsd_<cluster>_<tab>[_self][_partial]_<YYYYMMDDTHHMMSSZ>.<csv|json>`. `_self` when the payload declared `scope: "self"`; `_partial` when the server said the page is a cut of a larger set (`truncated`, `total` — R3 fields already on `/users`, `/bindings/findings`, `/user-bindings`, `/logins`). The note beside the buttons says the same.
 
@@ -111,7 +111,7 @@ NEW:
 ```python
     # ── OPTIONAL MODULES ───────────────────────────────────────────────────────────────────────────
     # Each module has its own switch; the default is chosen per module and the values comment
-    # says why. CSV/JSON export (docs/DESIGN_export.md) is ON: it runs in the browser over rows
+    # says why. CSV/JSON export (docs/design/DESIGN_export.md) is ON: it runs in the browser over rows
     # the server already served this reader, makes no request and needs no grant. Off removes
     # the control from the filter bar and nothing else changes.
     ui_export_enabled: bool = True
@@ -168,7 +168,7 @@ NEW:
         Stamped into the image at build time. `dirty: true` means the build included
         uncommitted changes, so no commit reproduces it — which is the honest answer when
         someone asks "is my fix in there?". `features` names the optional modules switched on
-        for this deployment (docs/DESIGN_export.md), so the page renders a control only where
+        for this deployment (docs/design/DESIGN_export.md), so the page renders a control only where
         the operator enabled it.
         """
         commit = os.environ.get("GSD_GIT_COMMIT", "unknown")
@@ -204,7 +204,7 @@ ui:
     # file names the cluster, tab, tier and UTC time, and says when the page was a cut of a
     # larger set (`_partial` in the name, `truncated` in the JSON) so a spreadsheet never implies
     # completeness. Exports are not recorded: the Usage tab counts interactions per day, not
-    # actions (docs/DESIGN_export.md). Set false to keep the control off the page.
+    # actions (docs/design/DESIGN_export.md). Set false to keep the control off the page.
     enabled: true
 
 ```
@@ -226,7 +226,7 @@ NEW:
 #### `local-development/gsd/static/app.css` — append after the `td.num.warn` rule
 
 ```css
-/* ---- Export (docs/DESIGN_export.md) ---------------------------------------------------
+/* ---- Export (docs/design/DESIGN_export.md) ---------------------------------------------------
    Two real buttons in the filter bar and a note that states what the file will hold. The note
    wears the truncation edge whenever the page is a cut of a larger set, so "partial" is read
    before the download, not discovered in the spreadsheet. Tokens only: the contrast tables in
@@ -282,7 +282,7 @@ NEW:
 Insert immediately before `function usersPage() {`:
 ```js
 /* The Users tab's row selection — chips, then the free-text box — written once so the table and
-   the export (docs/DESIGN_export.md) read the same rows. Only the PAINT is capped (USERS_RENDER);
+   the export (docs/design/DESIGN_export.md) read the same rows. Only the PAINT is capped (USERS_RENDER);
    this returns every match, which is what an export must carry. */
 function usersMatched(d) {
   const all = d.users || [];
@@ -421,7 +421,7 @@ function grantsSorted(ub) {
 
 (e) The export module. Insert immediately before `function sortableTh(` (after `sortBy`):
 ```js
-/* ── Export: what was served, and nothing more (docs/DESIGN_export.md) ────────────────────
+/* ── Export: what was served, and nothing more (docs/design/DESIGN_export.md) ────────────────────
    The file is built HERE, from `data` — the rows the server served THIS reader at THEIR tier —
    after the page's own filter and sort, read through the same selection functions the tables
    paint from. It makes no request: a server-side export would have to re-implement six
@@ -756,7 +756,7 @@ NEW:
 Append:
 ```python
 class TestExport:
-    """CSV/JSON export of the table on screen (docs/DESIGN_export.md).
+    """CSV/JSON export of the table on screen (docs/design/DESIGN_export.md).
 
     The file is built in the browser from `data`, so what these prove is the correspondence:
     the download holds exactly the rows the table shows, after the filter and sort, says when
@@ -927,7 +927,7 @@ class TestExportVisibility:
 
 ### Docs, changelog, chart
 
-- New `docs/DESIGN_export.md`: the decision table above, the BOM and formula-guard rationale, the filename grammar, the columns per tab, the "not recorded" ruling, and the R3 truncation contract, citing `gsd/static/index.html#function exportDescriptor`, `index.html#function toCsv`, `gsd/api.py#feature_flags`, `gsd/config.py#Settings`, `charts/group-sync-dashboard/values.yaml#ui`.
+- New `docs/design/DESIGN_export.md`: the decision table above, the BOM and formula-guard rationale, the filename grammar, the columns per tab, the "not recorded" ruling, and the R3 truncation contract, citing `gsd/static/index.html#function exportDescriptor`, `index.html#function toCsv`, `gsd/api.py#feature_flags`, `gsd/config.py#Settings`, `charts/group-sync-dashboard/values.yaml#ui`.
 - `docs/CHANGELOG.md`, new top section:
   ```
   ## Application 0.12.0 — chart 0.11.0 — <date>

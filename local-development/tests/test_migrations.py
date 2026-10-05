@@ -361,7 +361,7 @@ class TestSchemaNewerThanTheBuild:
         assert str(exc.value) == (
             f"database schema {KNOWN_SCHEMA_VERSION + 1} is newer than this dashboard understands "
             f"({KNOWN_SCHEMA_VERSION}); restore a backup at or below schema {KNOWN_SCHEMA_VERSION} "
-            f"(docs/RUNBOOK_backup_restore.md §4; after an upgrade, the pre-upgrade copy in §6), or deploy the image that understands {KNOWN_SCHEMA_VERSION + 1}")
+            f"(charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md §4; after an upgrade, the pre-upgrade copy in §6), or deploy the image that understands {KNOWN_SCHEMA_VERSION + 1}")
         assert hashlib.sha256(open(path, "rb").read()).hexdigest() == before
         assert not os.path.exists(path + "-wal") and not os.path.exists(path + "-shm")
         ro = sqlite3.connect(f"file:{path}?mode=ro", uri=True)

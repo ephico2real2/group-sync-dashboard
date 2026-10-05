@@ -142,7 +142,7 @@ numbers come from `curl -s <raw-url> | nl -ba`.
    §3.8, and the rest above on "easy to manage, best practice".
 12. **Re-cut at implementation, 2026-10-01, on origin/main `721a78db`** (application 2.2.0, chart 0.60.2: SPEC_E2,
     SPEC_E3 and SPEC_E4 merged after §7 was cut). `apply-spec-blocks.py` stopped at `FAIL block 14
-    (docs/RUNBOOK_backup_restore.md | edit): Old text occurs 0 times`; checked block by block past that, blocks 37,
+    (charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit): Old text occurs 0 times`; checked block by block past that, blocks 37,
     38, 39 and 41 failed the same way, and block 36 checked out against a spec that is no longer `specified`. Each
     correction is mechanical; no design changed:
     - **Block 9a, added** (note 1, "SPEC_E2 merges first"): `charts/group-sync-dashboard/templates/deployment.yaml`
@@ -765,8 +765,8 @@ migration, as SPEC_M1 §5 describes) is not part of this walk.
 | `charts/group-sync-dashboard/values.yaml` | 25 | 8 |
 | `charts/group-sync-dashboard/README.md` | 19 | 9 |
 | `charts/group-sync-dashboard/Chart.yaml` | 4 | 1 |
-| `docs/RUNBOOK_backup_restore.md` | 20 | 5 |
-| `docs/reference-architecture.md` | 10 | 4 |
+| `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md` | 20 | 5 |
+| `docs/guides/reference-architecture.md` | 10 | 4 |
 | `docs/CHANGELOG.md` | 24 | 0 |
 | `docs/specs/README.md`, `SPEC_E2_recovery_mode.md`, `SPEC_G2_platform_users.md`, `SPEC_E4_per_pod_backup_rotation.md` (version cells) | 6 | 6 |
 | `local-development/tests/test_chart_backup_offsite.py` | 138 | 16 |
@@ -1146,7 +1146,7 @@ backup.offsite.enabled=true requires config.backup.enabled=true. The CronJob shi
 {{- else if and .Values.persistence.existingClaim (not .Values.persistence.accessMode) -}}
 backup.offsite.enabled=true with persistence.existingClaim requires persistence.accessMode set to that claim's access mode: helm cannot read the live claim, and an emptied accessMode derives ReadWriteOncePod or ReadWriteMany from replicaCount, which may not be what the claim was created with. ReadWriteOncePod is refused either way.
 {{- else if eq (include "gsd.accessMode" .) "ReadWriteOncePod" -}}
-backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md covers moving the data to a new one.
+backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md covers moving the data to a new one.
 {{- end -}}
 {{- end -}}
 
@@ -1223,7 +1223,7 @@ pass, both reviewers). */}}
 {{- fail "backup.offsite.enabled=true with persistence.existingClaim requires persistence.accessMode set to that claim's access mode: helm cannot read the live claim, and an emptied accessMode derives ReadWriteOncePod or ReadWriteMany from replicaCount, which may not be what the claim was created with. ReadWriteOncePod is refused either way." }}
 {{- end }}
 {{- if eq $mode "ReadWriteOncePod" }}
-{{- fail "backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md covers moving the data to a new one." }}
+{{- fail "backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md covers moving the data to a new one." }}
 {{- end }}
 ```
 
@@ -1384,7 +1384,7 @@ Old text:
 #
 # WHO RUNS IT. The dashboard image, with a Python-stdlib script the chart ships as a
 # ConfigMap (scripts/offsite_backup.py, mounted at /scripts). The image has no tar, rsync or
-# aws on purpose (docs/DESIGN_hardened_image.md §10), and a shell copy could not verify what
+# aws on purpose (docs/design/DESIGN_hardened_image.md §10), and a shell copy could not verify what
 # it copied; the sqlite3 module is exactly what PRAGMA integrity_check needs.
 #
 # MOUNTING THE DATA CLAIM TWICE. The dashboard pod holds it.
@@ -1447,7 +1447,7 @@ New text:
 #
 # WHO RUNS IT. The dashboard image, with a Python-stdlib script the chart ships as a
 # ConfigMap (scripts/offsite_backup.py, mounted at /scripts). The image has no tar, rsync or
-# aws on purpose (docs/DESIGN_hardened_image.md §10), and a shell copy could not verify what
+# aws on purpose (docs/design/DESIGN_hardened_image.md §10), and a shell copy could not verify what
 # it copied; the sqlite3 module is exactly what PRAGMA integrity_check needs.
 #
 # MOUNTING THE DATA CLAIM TWICE. The dashboard pod holds it.
@@ -1493,7 +1493,7 @@ Old text:
 
 **Off by default** — it needs a destination the chart cannot choose for you. Once on, the copy is
 hashed, opened and integrity-checked before it counts, and the Job fails loudly otherwise.
-Restore and verification: [`docs/RUNBOOK_backup_restore.md`](../../docs/RUNBOOK_backup_restore.md).
+Restore and verification: [`charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`](../../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md).
 
 | Key | Default | Notes |
 |---|---|---|
@@ -1514,9 +1514,9 @@ class in `destination.pvc.storageClass` for that. A cluster with no default Stor
 Pending, and its bind Job fails after 600 s, so the rollout reports a failure until
 `destination.pvc.storageClass` names a class. The copy is hashed, opened and integrity-checked before it
 counts, and the Job fails loudly otherwise. At one replica with the `pvc` destination the
-same run also ships the newest pre-upgrade copy ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies))
+same run also ships the newest pre-upgrade copy ([runbook §6](../../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies))
 to `/offsite/pre-upgrade`, keeping three. Restore and verification:
-[`docs/RUNBOOK_backup_restore.md`](../../docs/RUNBOOK_backup_restore.md).
+[`charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`](../../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md).
 
 | Key | Default | Notes |
 |---|---|---|
@@ -1615,11 +1615,11 @@ New text:
 | `GroupSyncDashboardOffsiteBackupUnobserved` | *(only where the offsite CronJob renders)* `kube_cronjob_status_last_successful_time` has no series for the CronJob: it has never succeeded, or kube-state-metrics is not scraped here — in which case the stale alert can never fire and this is the only signal | `for.offsiteBackupUnobserved`, `1h` |
 ```
 
-### Block 14 — docs/RUNBOOK_backup_restore.md
+### Block 14 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md
 
 The opening list: on by default, and the pre-upgrade copy. Re-cut at implementation without SPEC_E4's on-volume line (Orchestrator's notes, 12).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1638,11 +1638,11 @@ New text:
   claim, the newest pre-upgrade copy as well (§6);
 ```
 
-### Block 15 — docs/RUNBOOK_backup_restore.md
+### Block 15 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md
 
 §2's expected log gains the second pass's line.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1657,11 +1657,11 @@ pruned 0 older copies (keep=14)
 no pre-upgrade-*.db under /data/pre-upgrade: nothing to ship (one is written only when an image upgrades the schema)
 ```
 
-### Block 16 — docs/RUNBOOK_backup_restore.md
+### Block 16 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md
 
 §2 explains the second pass, and how a refused pre-upgrade copy stops failing every run (the review's N1).
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1688,11 +1688,11 @@ does); the next run then ships the newest copy that verifies.
 A second run straight after says `already shipped: … matches its sidecar; nothing to copy`.
 ```
 
-### Block 17 — docs/RUNBOOK_backup_restore.md
+### Block 17 — charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md
 
 §6 says where the pre-upgrade copy goes off the volume.
 
-<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
@@ -1712,11 +1712,11 @@ New text:
   kept there (§2). The copies of the six-hourly backups in `/offsite` never include it.
 ```
 
-### Block 18 — docs/reference-architecture.md
+### Block 18 — docs/guides/reference-architecture.md
 
 The backup paragraph names the second pass.
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1734,11 +1734,11 @@ does the same for the newest pre-upgrade copy, into its own directory
 (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship_pre_upgrade`). Object storage goes
 ```
 
-### Block 19 — docs/reference-architecture.md
+### Block 19 — docs/guides/reference-architecture.md
 
 The refusal table: what refuses only under `true`, the access-mode row split, the word row.
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 
 Old text:
 
@@ -2326,7 +2326,7 @@ New text:
         volume, and the runbook must say how a refused pre-upgrade copy stops failing every run."""
         description = self._rules()["GroupSyncDashboardOffsiteBackupStale"]["annotations"]["description"]
         assert "pre-upgrade copy is refused" in description and "nothing newer is off it." not in description
-        runbook = (CHART.parents[1] / "docs" / "RUNBOOK_backup_restore.md").read_text().split("## 3.", 1)[0]
+        runbook = (CHART.parents[1] / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text().split("## 3.", 1)[0]
         assert "it is not the copy the store verified" in runbook and "/data/pre-restore/" in runbook
 
     def test_the_two_rules_watch_the_cronjob(self):

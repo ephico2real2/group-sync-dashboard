@@ -95,7 +95,7 @@ class TestTheUngovernedRowDescribesOneSetOfAttempts:
         )
 
     def test_the_count_and_the_list_cannot_disagree(self, store):
-        """docs/api-contract.md requires a limited list to report its whole-set total.
+        """docs/guides/api-contract.md requires a limited list to report its whole-set total.
 
         Both come from the same predicate through the same helper; this is what stops a future edit
         putting the filter in one and not the other.
@@ -358,7 +358,7 @@ def test_gate_only_summary_is_not_capped_at_ten_thousand(store):
 
 class TestRetentionSignals:
     def test_the_prune_notes_what_it_deleted(self, store):
-        """§3.8 of docs/DESIGN_metrics_refresh.md: the login_event increments come from
+        """§3.8 of docs/design/DESIGN_metrics_refresh.md: the login_event increments come from
         _prune itself — the same count the log line reports, from the same call."""
         from gsd.config import ClusterConfig, Settings
         from gsd.logincapture import _prune

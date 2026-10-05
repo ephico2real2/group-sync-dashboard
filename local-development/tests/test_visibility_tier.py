@@ -493,7 +493,7 @@ class TestSettings:
 
 
 class TestObservedOutcomes:
-    """The §3.1 observe seam (docs/DESIGN_metrics_refresh.md): one enum outcome per FRESH
+    """The §3.1 observe seam (docs/design/DESIGN_metrics_refresh.md): one enum outcome per FRESH
     check, reported through a callback so kube.py never imports the metrics module.
 
     The vocabulary is load-bearing: allowed/denied are verdicts, everything else is a check

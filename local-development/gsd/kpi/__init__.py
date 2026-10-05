@@ -10,7 +10,7 @@ THE PRIVACY CLASS IS A FIELD, NOT A CONVENTION. `/metrics` is unauthenticated by
 `public` KPI carries aggregates under bounded labels only — never a person's or a group's name, and
 never a distinct-user count: `gsd_dashboard_active_users` was exposed and deliberately removed because
 an unlabelled count of people is still personnel information on an open endpoint
-(docs/SPEC_per_user_visibility.md). Anything counting people is `internal`, and `render_prom`
+(docs/design/SPEC_per_user_visibility.md). Anything counting people is `internal`, and `render_prom`
 REFUSES an internal definition rather than trusting every caller to remember — tests/test_kpi.py
 holds the two renderers to the class.
 

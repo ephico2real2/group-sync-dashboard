@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Programme | Unmanaged-grant discovery (`docs/unmanaged-audit-design.md`), continued after #312: the finding reads Group subjects only; this makes it read every subject kind Kubernetes defines and honour the same label on all of them |
+| Programme | Unmanaged-grant discovery (`docs/design/unmanaged-audit-design.md`), continued after #312: the finding reads Group subjects only; this makes it read every subject kind Kubernetes defines and honour the same label on all of them |
 | Batch | U — unmanaged-grant discovery |
 | Release | — (post-programme) |
 | Version on release | app 0.33.0, chart 0.54.0 |
@@ -107,7 +107,7 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
 - **One table, widened in place; `group_name` keeps its name.** The rows join `rbac_group_binding`, with
   `subject_kind` and `subject_namespace` beside the subject's name, and the primary key gains both
   (migration 20, §3.2). A second table for the other kinds would have meant a second copy of the
-  classification — the one thing `docs/unmanaged-audit-design.md` I2 forbids, because two copies drift and
+  classification — the one thing `docs/design/unmanaged-audit-design.md` I2 forbids, because two copies drift and
   the log and the page then disagree about what a finding is. The column `group_name` holds the subject's
   name whatever its kind: it is read in 106 places in `store.py`, 33 in the report snapshot, 24 on the page
   and about a hundred in tests (measured with `grep -c`), so a rename is not a change this format can carry
@@ -132,7 +132,7 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
   namespace**, because that is the account the authorizer matches (§2.1, `appliesToUser`). The row names
   what RBAC grants to, not what the object happens to spell. The lab has 26 such subjects (§2.2).
 - **The binding history stays Group + User.** `binding_event` records Group subjects from this table and
-  User subjects from `user_binding` (`docs/DESIGN_binding_events.md` bounds `subject_kind` at two, and the
+  User subjects from `user_binding` (`docs/design/DESIGN_binding_events.md` bounds `subject_kind` at two, and the
   metric `gsd_binding_changes_total` is pre-seeded on that pair). Recording User rows from the widened table
   too would double every User event; a ServiceAccount stream is a change to that design, its identity rule
   (a namespace-qualified subject) and its metric vocabulary, and it is not #353's capability. So
@@ -392,7 +392,7 @@ the rebuild copies an empty table onto itself.
 neither, so every existing caller and test seed keeps its meaning; it diffs Group rows only into
 `binding_event` (the note above) and writes every row. `_OBSERVATION_SEEDS` is untouched: the `binding:Group`
 marker is consumed by the refresh that observes the cluster whether or not it finds Group rows
-(`docs/DESIGN_binding_events.md`, "empty or not"), so a cluster holding only account rows has observed groups
+(`docs/design/DESIGN_binding_events.md`, "empty or not"), so a cluster holding only account rows has observed groups
 by the existing design; and migration 14 splices those seed statements into its own list, so they must stay
 valid on every table shape a migration can meet — the first scratch application of this spec proved that a
 `WHERE subject_kind` there fails a v0 database at migration 14 with "no such column".
@@ -523,7 +523,7 @@ writes named above (measured by OB1-lite, Codex and OB2 on #360's `0199e21`).
 Application 0.33.0 (`pyproject.toml`, `gsd/__init__.py`, `Chart.yaml` `appVersion` with its paragraph);
 chart 0.54.0 with its history line, MINOR because the appVersion moves and the chart's README and values
 comment describe the finding. `docs/CHANGELOG.md` gains the entry under Unreleased.
-`docs/unmanaged-audit-design.md`, `docs/reference-architecture.md`, the chart README, the values comment and
+`docs/design/unmanaged-audit-design.md`, `docs/guides/reference-architecture.md`, the chart README, the values comment and
 `local-development/API.md` say what the finding covers now. The index edits are the spec PR's own, not
 implementation blocks: `docs/specs/README.md` gains the U1 row and SPEC_S4c's version cell moves to
 app 0.34.0, chart 0.55.0 in its header and its index row, which `local-development/tests/test_specs_index.py`
@@ -1077,7 +1077,7 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
             # The history stream stays the Group subjects' (binding:Group). User subjects are
             # recorded by replace_user_bindings from the same bindings under binding:User, and a
             # second recording here would double every one of them; ServiceAccount subjects have
-            # no stream (docs/DESIGN_binding_events.md bounds subject_kind at two), a decision
+            # no stream (docs/design/DESIGN_binding_events.md bounds subject_kind at two), a decision
             # SPEC_U1 states rather than widens here.
             changes = self._append_binding_events(
                 conn, cluster_id, "Group", "group_name",
@@ -1660,7 +1660,7 @@ from .audit import AuditLogProgress, plan_audit_stamps
                         namespaces_read=self.settings.namespaces_read_enabled,
 ```
 
-<!-- block: docs/unmanaged-audit-design.md | edit -->
+<!-- block: docs/design/unmanaged-audit-design.md | edit -->
 ```markdown
 the true total is recoverable from the line (`audit.py#plan_audit_stamps`, `poller.py#refresh_bindings`). The cap takes a
 sorted prefix, so deferred findings converge instead of being re-deferred forever. Resolutions
@@ -2499,7 +2499,7 @@ classified unmanaged are named: a binding can name two subjects and be unmanaged
 and citing the managed one would send a reader to inspect a grant that is fine.
 ```
 
-<!-- block: docs/unmanaged-audit-design.md | edit -->
+<!-- block: docs/design/unmanaged-audit-design.md | edit -->
 ```markdown
 A binding is `unmanaged` when it names an operator-synced group and carries neither the policy
 operator's `rbac.ocp.io/config-source` label nor an `rbac.ocp.io/unmanaged-exception`
@@ -2547,7 +2547,7 @@ subject is stored under the namespace RBAC matches it in — its own, or the Rol
 omits one, as the authorizer reads it.
 ```
 
-<!-- block: docs/unmanaged-audit-design.md | edit -->
+<!-- block: docs/design/unmanaged-audit-design.md | edit -->
 ```markdown
 **I2 — Finding set.** Unchanged in substance, renamed from "Target set" because nothing is
 targeted now. An object is a finding only if its group resolves, its group is operator-synced,
@@ -2575,7 +2575,7 @@ is. Tests: `test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_sta
 `test_rbac.py#TestUnmanagedFinding` and `local-development/tests/test_unmanaged_subjects.py`.
 ```
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 ```markdown
 | `built_in` | `system:*` — a virtual group that authorises real access and has no object by design |
 ```
@@ -2583,7 +2583,7 @@ is. Tests: `test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_sta
 | `built_in` | `system:*` — a virtual group that authorises real access and has no object by design; or the platform's own identity — a ServiceAccount whose effective namespace `platformNamespaces` names, OpenShift's per-project `system:image-builders`/`system:deployers` controller bindings (the third, `system:image-pullers`, is a `system:` group), a `system:` user, `kubeadmin` — never a finding (#353) |
 ```
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 ```markdown
 | `unmanaged` | the group resolves and is synced, but no policy system manages this binding and no human has annotated an exception |
 | `ok` | everything else |
@@ -2593,7 +2593,7 @@ is. Tests: `test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_sta
 | `ok` | everything else |
 ```
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- block: docs/guides/reference-architecture.md | edit -->
 ```markdown
 `unmanaged` additionally requires that the cluster demonstrably *uses* the policy operator —
 `EXISTS (… managed_source IS NOT NULL)`. Without that clause, every binding on a cluster

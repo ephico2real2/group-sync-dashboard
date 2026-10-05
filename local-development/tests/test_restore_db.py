@@ -745,7 +745,7 @@ def test_the_runbooks_undo_folds_the_kept_set_into_one_whole_file(pod: Pod) -> N
     it first: run as the runbook prints it, the kept gsd.db alone holds all 540."""
     assert pod.run("restore", f"{KNOWN - 1}-{STAMPS[2]}").returncode == 0
     (kept,) = [d for d in pod.pre_restore.iterdir() if d.is_dir()]
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     match = re.search(r"python3\.14 -c '([^']+)' /data/pre-restore/<stamp>/gsd\.db", runbook)
     assert match, "runbook §4 has no command that folds the kept set"
     subprocess.run([sys.executable, "-c", match.group(1), str(kept / "gsd.db")], check=True)
@@ -766,7 +766,7 @@ def test_the_runbooks_undo_leaves_the_old_database_whole_when_gsd_db_cannot_be_w
     stopped = pod.run("restore", f"{KNOWN - 1}-{STAMPS[2]}")
     assert stopped.returncode == 1 and "the restore failed at the step fold" in stopped.stderr, stopped.stderr
     (kept,) = [d for d in pod.pre_restore.iterdir() if d.is_dir()]
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     fold = re.search(r"python3\.14 -c '([^']+)' /data/pre-restore/<stamp>/gsd\.db", runbook).group(1)
     subprocess.run([sys.executable, "-c", fold, str(kept / "gsd.db")], check=True)
     lines = runbook.splitlines()
@@ -802,7 +802,7 @@ def test_no_manual_path_writes_the_copy_onto_gsd_db_before_its_journals_go() -> 
     """Runbook §4a, §4b and the S3 note write the copy beside gsd.db under a temporary name and rename it after the
     old side files are removed, so a write that fails (a full volume, a gsd.db the pod cannot write) stops before
     anything is removed (confirmation pass of the spec, F1: removed first and written after, gsd.db read 40 of 540)."""
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     section = runbook.split("\n## 4.", 1)[1].split("\n## 5.", 1)[0]
     assert not re.search(r"> /data/gsd\.db['\s]", section), "a manual path writes the copy onto /data/gsd.db itself"
     assert section.count("> /data/gsd.db.restore.tmp") == 3            # §4a, §4b and the S3 note
@@ -811,7 +811,7 @@ def test_no_manual_path_writes_the_copy_onto_gsd_db_before_its_journals_go() -> 
 def test_the_runbook_removes_every_journal_it_keeps() -> None:
     """Runbook §4's manual paths keep the live set, -journal included, and must remove all three side files before
     a copy takes the name: a hot -journal left beside it is rolled back into the copy (howtocorrupt §1.4)."""
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     section = runbook.split("\n## 4.", 1)[1].split("\n## 5.", 1)[0]
     removes = re.findall(r"rm -f /data/gsd\.db-wal\s+/data/gsd\.db-shm[^\n`]*", section)
     assert len(removes) == 3 and all("/data/gsd.db-journal" in line for line in removes), removes
@@ -822,7 +822,7 @@ def test_the_s3_note_counts_the_lines_it_names() -> None:
     """Runbook §4b's S3 note names three lines to finish with (the ownership line, the rm -f line, the rename):
     the copy is already streamed in under the temporary name, so §4b's `cat /offsite/… > …restore.tmp` line,
     the fourth from the end, must not be run again. The count has to match what it names."""
-    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    runbook = (LOCAL_DEV.parent / "charts" / "group-sync-dashboard" / "docs" / "RUNBOOK_backup_restore.md").read_text()
     note = runbook.split("For an S3 copy:", 1)[1].split("\n\n", 1)[0]
     assert "finish with the last three lines above" in note, note
     assert "last four lines" not in note

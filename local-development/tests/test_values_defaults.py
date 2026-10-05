@@ -55,8 +55,8 @@ CURRENT_DOCS = (
     "README.md",
     "charts/group-sync-dashboard/README.md",
     "charts/group-sync-dashboard/templates/NOTES.txt",
-    "docs/api-access.md",
-    "docs/LOGIN_CAPTURE_QUICKCHECK.md",
+    "docs/guides/api-access.md",
+    "docs/guides/LOGIN_CAPTURE_QUICKCHECK.md",
     "environments/README.md",
     "environments/example-production.yaml",
 )
@@ -150,12 +150,12 @@ def test_the_root_readme_rows_state_the_real_defaults() -> None:
 
 
 def test_the_wide_tier_check_in_the_docs_is_the_one_values_yaml_ships() -> None:
-    """Review of chart 0.14.0 (Codex): docs/ACCESS_CONTROL.md and the chart README still named the
+    """Review of chart 0.14.0 (Codex): docs/guides/ACCESS_CONTROL.md and the chart README still named the
     superseded `list groups.user.openshift.io` threshold. The default is security-sensitive, so the
     documents are held to the file."""
     sar = yaml.safe_load(VALUES.read_text())["visibility"]["adminSar"]
     dotted = f"{sar['verb']} {sar['resource']}.{sar['apiGroup']}"
-    access = (REPO / "docs" / "ACCESS_CONTROL.md").read_text()
+    access = (REPO / "docs" / "guides" / "ACCESS_CONTROL.md").read_text()
     assert f"| **wide tier** | `visibility.adminSar` | `{dotted}` |" in access
     assert (f"resourceAttributes: {{group: {sar['apiGroup']}, resource: {sar['resource']}, "
             f"verb: {sar['verb']}}}") in access

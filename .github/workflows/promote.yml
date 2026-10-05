@@ -1,4 +1,4 @@
-# Promote main to the `release` branch (#598, docs/RELEASING.md "Promotion to the lab").
+# Promote main to the `release` branch (#598, docs/guides/RELEASING.md "Promotion to the lab").
 #
 # BUILD ONCE, PROMOTE THE ARTEFACT. publish.yml builds and signs each image once; this workflow builds
 # nothing. It reads both images back (the version label on every Linux image, the signature when signing is
@@ -62,7 +62,7 @@ jobs:
         run: |
           if [ "${KEY_SET}" != true ]; then
             echo "::error::RELEASE_DEPLOY_KEY is not set in the release environment, so nothing can be promoted."
-            echo "::error::The operator's one-time steps are in docs/RELEASING.md, \"Promotion to the lab\"."
+            echo "::error::The operator's one-time steps are in docs/guides/RELEASING.md, \"Promotion to the lab\"."
             exit 1
           fi
 
@@ -134,7 +134,7 @@ jobs:
           git fetch -q origin "+refs/heads/main:refs/remotes/origin/main"
           if ! git fetch -q origin "+refs/heads/release:refs/remotes/origin/release"; then
             echo "::error::origin has no release branch, so nothing was promoted. The operator creates it once"
-            echo "::error::(docs/RELEASING.md, \"Promotion to the lab\"), then runs this workflow by hand."
+            echo "::error::(docs/guides/RELEASING.md, \"Promotion to the lab\"), then runs this workflow by hand."
             exit 1
           fi
           target=$(git rev-parse --verify "${SHA:-origin/main}^{commit}")

@@ -1,6 +1,6 @@
 # Changelog
 
-What each release changed, newest first. Two artefacts, two version lines (`docs/RELEASING.md`):
+What each release changed, newest first. Two artefacts, two version lines (`docs/guides/RELEASING.md`):
 the application (`pyproject.toml`, deployed as `quay.io/ephico2real/group-sync-dashboard:<version>`)
 and the chart (`Chart.yaml`, published to the Helm repository). A chart release that only moves
 `appVersion` is listed under the application release it carries. The reasoning behind each change
@@ -9,6 +9,11 @@ last release sit under `## Unreleased` until the release that carries them repla
 which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
+
+- **Docs reorganised into guides, design, reviews, research and history folders; the chart's install and operate
+  guides ship in the chart's `docs/` (application 5.3.0, chart 0.70.4).** Only paths changed. The application
+  moves because comments and messages under `local-development/gsd/`, the Containerfiles and
+  `local-development/README.md` are image inputs; no behaviour changed.
 
 - **The lab deploys only what `promote.yml` read back (#598, `docs/specs/SPEC_P1_promote_release_branch.md`;
   application 5.2.0, chart 0.70.3).** A new workflow, `promote.yml`, runs after a green `publish.yml` on `main`, after
@@ -20,7 +25,7 @@ which `local-development/prepare-release.py` does when the release is cut.
   2026-10-04: "main by default; release optional"), so the `ErrImagePull` race seen at 4.1.0, 4.4.0 and 5.1.0 remains
   there and heals on its own. `release-crc.sh --argocd release` removes it: it reads the pinned digests back, then
   points the Application at `release` with `promotion.yaml` as its last values file; `--argocd main` switches back.
-  The `release` branch, its ruleset and the deploy key are the operator's one-time steps (`docs/RELEASING.md`,
+  The `release` branch, its ruleset and the deploy key are the operator's one-time steps (`docs/guides/RELEASING.md`,
   "Promotion to the lab"). The application moves because `local-development/README.md` and the publisher's exact-sha10
   derivation are image inputs; no application code, template, value or RBAC change.
 

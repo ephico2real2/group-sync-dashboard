@@ -96,7 +96,7 @@ Phase 2 applies reviewed blocks and runs tests. No phase-1 test result or live v
 | `docs/specs/SPEC_S1_cluster_secrets.md:233`, `:250`, `:270`; `docs/specs/SPEC_S2_cluster_configurations_tab.md:92`, `:228`, `:251`, `:285` | Cadence/no-watch decision, failure/retirement and no-credential exposure; UI writes/tier and write wake-up. Current code wins over superseded body statements. |
 | `docs/specs/SPEC_S3_connection_modes.md:237`, `:269`, `:691`, `:706`, `:752`, `:918` | Shared stanza discipline; level-triggered reconciliation; ownership is bookkeeping, raw data identity and UID/RV delete preconditions; lockout risk. Borrow these requirements, not the stale vocabulary. |
 | `docs/specs/SPEC_S4b_sa_token_lookup.md:25`, `:43`, `:76`, `:122`, `:323`, `:783`, `:937`, `:1281`, `:1696`, `:1994`, `:2859`, `:2942` | One grant/switch; declared trust; discovery-thread schedule; review's lockout corrections; reader/writer/lookup/test implementation model; deferred durable gate and #293 seam. |
-| `docs/CLUSTER_STANZA.md:14`, `:35`, `:90`, `:136`; `docs/polling-and-discovery.md:30`, `:46`, `:70`, `:96`; `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md:10`, `:36`, `:72`, `:100` | Existing public key/mode/refusal matrices, timing measurements and credential/recovery limits. Extend these documents without calling historic measurements a ConfigMap test. |
+| `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md:14`, `:35`, `:90`, `:136`; `docs/design/polling-and-discovery.md:30`, `:46`, `:70`, `:96`; `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md:10`, `:36`, `:72`, `:100` | Existing public key/mode/refusal matrices, timing measurements and credential/recovery limits. Extend these documents without calling historic measurements a ConfigMap test. |
 | `local-development/API.md:141`, `:200`, `:211`; `docs/specs/README.md:33`, `:94`, `:115`; `local-development/apply-spec-blocks.py:24`, `:43`, `:67` | API compatibility, status/version lifecycle and exact block grammar/check-only semantics. The checker does not execute the proposed code. |
 | `local-development/tests/test_specs_index.py:49`, `:94`, `:108`; `local-development/tests/test_clusterconfig.py:427`; `local-development/tests/test_clusterconfig_tab.py:671` | Index count/issue-set and exact chart grants need explicit test blocks; weakening assertions is not necessary. |
 
@@ -151,7 +151,7 @@ our declaration contains no kubeconfig or token, while the generated credential 
 stanzas. `clusters: []` is an intentional empty desired set. Refuse duplicate YAML keys, extra data
 keys, binaryData and malformed envelopes without echoing their contents. The exact sample is in the
 CLUSTER_STANZA documentation block. This chooses one predictable file shape consistent with the
-existing values envelope (`local-development/gsd/config.py:1444`; `docs/CLUSTER_STANZA.md:14`).
+existing values envelope (`local-development/gsd/config.py:1444`; `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md:14`).
 
 Extract the values loop and second pass into `config.parse_cluster_entries`, then have both
 `load_settings` and the ConfigMap reader call it. The ConfigMap invocation supplies the known values
@@ -191,7 +191,7 @@ a fresh LIST must observe absence before create is attempted. Generated credenti
 health recovery; no new remote probe or automatic auth-failure repair is added (#285/#316 remain
 separate). These choices extend `fleetlookup.declared_trust` and the existing policy overlay pattern
 (`local-development/gsd/fleetlookup.py:286`; `local-development/gsd/clusterconfig/registry.py:74`;
-`charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md:100`).
+`charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md:100`).
 
 A malformed whole document holds outputs from that ConfigMap without polling them; an identifiable
 invalid stanza holds that stanza's output. An unidentifiable malformed entry conservatively freezes
@@ -2692,11 +2692,11 @@ New text:
 __version__ = "0.34.0"
 ```
 
-### Block 61 — `docs/CLUSTER_STANZA.md`
+### Block 61 — `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`
 
 Document SPEC_S5 at the relevant contract; prior measured tables remain historical.
 
-<!-- block: docs/CLUSTER_STANZA.md | after: # The cluster stanza — every accepted combination, measured -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | after: # The cluster stanza — every accepted combination, measured -->
 
 ```text
 
@@ -2760,11 +2760,11 @@ remove declarations and wait for cleanup before disabling the feed.
 
 ```
 
-### Block 62 — `docs/polling-and-discovery.md`
+### Block 62 — `docs/design/polling-and-discovery.md`
 
 Document SPEC_S5 at the relevant contract; prior measured tables remain historical.
 
-<!-- block: docs/polling-and-discovery.md | after: # Polling, cluster discovery, and forcing a refresh -->
+<!-- block: docs/design/polling-and-discovery.md | after: # Polling, cluster discovery, and forcing a refresh -->
 
 ```text
 
@@ -2773,7 +2773,7 @@ Document SPEC_S5 at the relevant contract; prior measured tables remain historic
 The runtime sources now include release-namespace ConfigMaps selected by
 `groupsync-dashboard.io/config-type in (onboard,sideload)`. Each has `data.clusters.yaml` containing
 the same `clusters:` stanzas as values, with `saTokenLookup: true` and no credential or token reference.
-The manifest and refusal rules are in `docs/CLUSTER_STANZA.md`.
+The manifest and refusal rules are in `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`.
 
 One complete paged ConfigMap LIST and one complete labelled Secret LIST precede reconciliation on the
 existing binding cadence and at startup. Both use the host client, the release namespace and their
@@ -2800,11 +2800,11 @@ Neither policy edits nor cleanup authenticates to a remote cluster.
 
 ```
 
-### Block 63 — `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md`
+### Block 63 — `charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md`
 
 Document SPEC_S5 at the relevant contract; prior measured tables remain historical.
 
-<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | after: # Cluster credentials: how a connection is made, how it breaks, how to get it back -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_CREDENTIALS.md | after: # Cluster credentials: how a connection is made, how it breaks, how to get it back -->
 
 ```text
 
@@ -2812,7 +2812,7 @@ Document SPEC_S5 at the relevant contract; prior measured tables remain historic
 
 A release-namespace ConfigMap labelled `groupsync-dashboard.io/config-type: onboard` or `sideload`
 contains `data.clusters.yaml`, whose `clusters:` list is values-shaped and uses `saTokenLookup: true`.
-The manifest is in `docs/CLUSTER_STANZA.md`. The #284 lookup reads the remote token and the existing
+The manifest is in `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`. The #284 lookup reads the remote token and the existing
 writer creates `gsd-cluster-<name>` with `groupsync-dashboard.io/secret-type: cluster`. Nobody supplies
 that token in the ConfigMap. Fleet account/password settings and the remote grants are unchanged.
 
@@ -2899,7 +2899,7 @@ Old text:
 New text:
 
 ```text
-| `clusterConfig.secrets.enabled` | `true` | clusters declared as labelled Secrets in the release namespace (#230, `docs/specs/SPEC_S1_cluster_secrets.md`): a Role with `get`, `list`, `watch` on `secrets` and `configmaps` there, and the poller's discovery on the binding cadence — a Secret labelled `groupsync-dashboard.io/secret-type: cluster` carrying `name`, `server`, `config` (JSON: `bearerToken` or `oauth{username,password}`, `tlsClientConfig{caData,insecure}`) and the D2 options is polled like a `clusters[]` entry; the host is always `clusters[0]` and a Secret naming it is refused; a Secret that does not parse is a finding on `GET /api/clusterconfigs`, one that vanishes disables its cluster and keeps its history. ConfigMaps labelled `groupsync-dashboard.io/config-type: onboard` or `sideload` carry credential-free values-shaped stanzas in `data.clusters.yaml` (SPEC_S5, #293); the #284 lookup generates their Secrets. Conflicts load neither; generated credentials are pruned repeatedly after confirmed removal, behind the writes switch. See `docs/CLUSTER_STANZA.md` for the manifest and recovery rules. `false` — no Role, no discovery, the `clusters[]` list alone |
+| `clusterConfig.secrets.enabled` | `true` | clusters declared as labelled Secrets in the release namespace (#230, `docs/specs/SPEC_S1_cluster_secrets.md`): a Role with `get`, `list`, `watch` on `secrets` and `configmaps` there, and the poller's discovery on the binding cadence — a Secret labelled `groupsync-dashboard.io/secret-type: cluster` carrying `name`, `server`, `config` (JSON: `bearerToken` or `oauth{username,password}`, `tlsClientConfig{caData,insecure}`) and the D2 options is polled like a `clusters[]` entry; the host is always `clusters[0]` and a Secret naming it is refused; a Secret that does not parse is a finding on `GET /api/clusterconfigs`, one that vanishes disables its cluster and keeps its history. ConfigMaps labelled `groupsync-dashboard.io/config-type: onboard` or `sideload` carry credential-free values-shaped stanzas in `data.clusters.yaml` (SPEC_S5, #293); the #284 lookup generates their Secrets. Conflicts load neither; generated credentials are pruned repeatedly after confirmed removal, behind the writes switch. See `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md` for the manifest and recovery rules. `false` — no Role, no discovery, the `clusters[]` list alone |
 ```
 
 ### Block 66 — `docs/CHANGELOG.md`
@@ -3061,11 +3061,11 @@ New text:
     def test_the_form_offers_remote_sar_and_starts_on_the_default_pair(self, page, cc_rig):
 ```
 
-### Block 73 — `docs/CLUSTER_STANZA.md`
+### Block 73 — `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md`
 
 Remove the old three-path claim now that ConfigMaps are a fourth authoring path.
 
-<!-- block: docs/CLUSTER_STANZA.md | edit -->
+<!-- block: charts/group-sync-dashboard/docs/CLUSTER_STANZA.md | edit -->
 
 Old text:
 
@@ -3085,11 +3085,11 @@ ConfigMap onboarding (above). The values contract follows; Secret differences ar
 remote-only and no-credential boundary described above.
 ```
 
-### Block 74 — `docs/polling-and-discovery.md`
+### Block 74 — `docs/design/polling-and-discovery.md`
 
 The added ConfigMap section defines the third source.
 
-<!-- block: docs/polling-and-discovery.md | edit -->
+<!-- block: docs/design/polling-and-discovery.md | edit -->
 
 Old text:
 
@@ -3103,11 +3103,11 @@ New text:
 One startup source and two runtime feeds; the difference decides how fast a change takes effect.
 ```
 
-### Block 75 — `docs/DESIGN_cluster_connection_flows.md`
+### Block 75 — `docs/design/DESIGN_cluster_connection_flows.md`
 
 Name the new policy event in the connection-flow log vocabulary.
 
-<!-- block: docs/DESIGN_cluster_connection_flows.md | after: # How a cluster connects — the six flows -->
+<!-- block: docs/design/DESIGN_cluster_connection_flows.md | after: # How a cluster connects — the six flows -->
 
 ```text
 

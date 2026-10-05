@@ -59,8 +59,8 @@ I have read everything the design needs. Here is the complete design document.
 | Metrics are collected from the store at scrape time by one collector; series are per cluster and per CR only, never per group or user, because `/metrics` is unauthenticated | `gsd/metrics.py` module docstring (`CARDINALITY IS DELIBERATELY BOUNDED`), `gsd/metrics.py#DashboardCollector` |
 | The emittable alert-kind vocabulary is `gsd/metrics.py#ALERT_KINDS`; `tests/test_metrics.py#test_every_alert_kind_a_rule_references_is_one_the_collector_can_emit` holds it to every `kind="..."` literal in `state.py`, and every `gsd_alerts_total{kind="..."}` matcher in the rendered PrometheusRule to it | `gsd/metrics.py#ALERT_KINDS` |
 | Every metric a rule references must be DECLARED (HELP line) by a bare `DashboardCollector(store, grace, None)` | `tests/test_metrics.py#test_every_metric_an_alert_references_is_declared_by_the_collector` |
-| `gsd_alerts_total` promises parity with `/api/alerts` at the wide tier: both call `gsd/state.py#compute_alerts` with the same store reads; a degraded cluster reports one critical alert with its poll outcome as the kind and none of the computed kinds | `gsd/metrics.py#Kept in step with the /api/alerts call site`, `gsd/api.py#list_alerts`, `docs/DESIGN_metrics_refresh.md` §5.2 |
-| Alerts are DERIVED at request time, never stored | `docs/reference-architecture.md#Derived, never stored` |
+| `gsd_alerts_total` promises parity with `/api/alerts` at the wide tier: both call `gsd/state.py#compute_alerts` with the same store reads; a degraded cluster reports one critical alert with its poll outcome as the kind and none of the computed kinds | `gsd/metrics.py#Kept in step with the /api/alerts call site`, `gsd/api.py#list_alerts`, `docs/design/DESIGN_metrics_refresh.md` §5.2 |
+| Alerts are DERIVED at request time, never stored | `docs/guides/reference-architecture.md#Derived, never stored` |
 | `Alert` is a frozen dataclass `(cluster, kind, subject, detail, severity="warning")` with `as_dict()` | `gsd/state.py#Alert` |
 | `compute_alerts` docstring still says the group-count cliff is EXCLUDED ("needs a tuned floor as well as a ratio, PLAN §8"); README says the same under `Not built yet` | `gsd/state.py#compute_alerts`, `README.md#Not built yet` |
 | The self tier receives only the kinds in `SELF_ALERT_DETAILS`; a kind that names groups from the self-scoped Groups tab (`empty_group`, `unattributed`, `stale_group`) is withheld; a new kind defaults to withheld | `gsd/api.py#SELF_ALERT_DETAILS`, `gsd/api.py#_alerts_for_self` |
@@ -131,7 +131,7 @@ A silenced cliff is still computed and reported: kind `group_count_cliff_silence
 
 | With | Behaviour |
 |---|---|
-| `monitoring.prometheusRule.enabled` | the `GroupSyncGroupCountCliff` rule renders only when BOTH it and `config.alerts.groupCountCliff.enabled` are true. With the module off the kind is never emitted, and a rule on an unemittable kind is the exact "can never fire" trap of `docs/DESIGN_metrics_refresh.md` §5.2 — so it is derived away, not shipped inert |
+| `monitoring.prometheusRule.enabled` | the `GroupSyncGroupCountCliff` rule renders only when BOTH it and `config.alerts.groupCountCliff.enabled` are true. With the module off the kind is never emitted, and a rule on an unemittable kind is the exact "can never fire" trap of `docs/design/DESIGN_metrics_refresh.md` §5.2 — so it is derived away, not shipped inert |
 | Self tier | both cliff kinds name groups from the self-scoped Groups tab, so they are NOT in `gsd/api.py#SELF_ALERT_DETAILS` — withheld, like `empty_group`. A narrowed reader loses nothing they could act on |
 | Degraded cluster | skipped with every other computed kind (existing behaviour) |
 | `rbac.*` | none needed; Groups are already listed |
@@ -938,7 +938,7 @@ New:
     retentionDays: 400
 
   # Computed alerts with a tunable threshold. Every kind /api/alerts serves is derived at
-  # read time from what the poll stored (docs/reference-architecture.md, "Derived, never
+  # read time from what the poll stored (docs/guides/reference-architecture.md, "Derived, never
   # stored"); this block holds the ones that carry a number.
   alerts:
     # THE GROUP-COUNT CLIFF: a group whose membership fell by dropRatio or more, from a
@@ -1030,7 +1030,7 @@ Insert after the `GroupSyncDashboardConfigReconcileError` rule (before the `# Bo
         # within windowHours. The unsilenced kind ONLY: a cliff an administrator silenced (the
         # Group annotation or the values list) is exported as kind=group_count_cliff_silenced
         # and must not page. Rendered only while the module is on — a rule on a kind the
-        # collector never emits can never fire (docs/DESIGN_metrics_refresh.md §5.2).
+        # collector never emits can never fire (docs/design/DESIGN_metrics_refresh.md §5.2).
         - alert: GroupSyncGroupCountCliff
           expr: gsd_alerts_total{kind="group_count_cliff"} > 0
           for: {{ .Values.monitoring.prometheusRule.for.groupCountCliff }}
@@ -1527,7 +1527,7 @@ reported, never dropped. Both kinds are withheld at the self tier, like `empty_g
 
 Also in `API.md`, the `/api/clusters/{id}/groups` row description gains: "`cliff_silence` — the raw silence annotation, or `null`."
 
-**`docs/reference-architecture.md#Derived, never stored`** — append a third bold paragraph after the grace paragraph:
+**`docs/guides/reference-architecture.md#Derived, never stored`** — append a third bold paragraph after the grace paragraph:
 ```
 **The group-count cliff is reconstructed, not sampled.** `group_state` holds one count per
 group, replaced each poll; the count at the window's start is `after + removed − added` over

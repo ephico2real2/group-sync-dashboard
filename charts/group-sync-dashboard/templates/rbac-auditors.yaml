@@ -1,5 +1,5 @@
 {{- /*
-  Reporting auditors (docs/DESIGN_reporting_auditors_and_ns_selector.md §2). Opt-in read-only
+  Reporting auditors (docs/design/DESIGN_reporting_auditors_and_ns_selector.md §2). Opt-in read-only
   identity+RBAC role, and a ClusterRoleBinding per configured group. The Group is created only when
   createLocal is true (a synced group is owned by the group-sync operator; co-creating it locally
   would fight the sync). YAML comments use '#'.
@@ -72,7 +72,7 @@ rules:
 {{-       $ownedByThisRelease := and (eq $ownerName $.Release.Name) (eq $ownerNamespace $.Release.Namespace) (eq $managedBy "Helm") }}
 {{-       if not $ownedByThisRelease }}
 {{-         $ldapHost := index $labels "openshift.io/ldap.host" | default "" }}
-{{-         fail (printf "rbacAuditors: Group %q already exists on the cluster%s and is not owned by this Helm release. Creating a local Group here would collide with it (and, for an LDAP-synced group, break the whole sync). Set rbacAuditors.groups[] createLocal=false for %q so the chart binds the existing group by name instead of re-creating it. See docs/TROUBLESHOOTING_auditor_groups.md." $g.name (ternary (printf " (LDAP-synced from %s)" $ldapHost) "" (ne $ldapHost "")) $g.name) }}
+{{-         fail (printf "rbacAuditors: Group %q already exists on the cluster%s and is not owned by this Helm release. Creating a local Group here would collide with it (and, for an LDAP-synced group, break the whole sync). Set rbacAuditors.groups[] createLocal=false for %q so the chart binds the existing group by name instead of re-creating it. See charts/group-sync-dashboard/docs/TROUBLESHOOTING_auditor_groups.md." $g.name (ternary (printf " (LDAP-synced from %s)" $ldapHost) "" (ne $ldapHost "")) $g.name) }}
 {{-       end }}
 {{-     end }}
 ---

@@ -49,7 +49,7 @@ _ACTIONS = {
 #: codes are not that: a shadowed values entry LOADS — the Secret wins, and the line exists so an
 #: operator does not edit the values entry for an hour — and an oauth Secret parses cleanly and
 #: stops one phase later, at the credential. Announcing either as a parse refusal would send the
-#: reader to the wrong step of flow 1 (`docs/DESIGN_cluster_connection_flows.md`).
+#: reader to the wrong step of flow 1 (`docs/design/DESIGN_cluster_connection_flows.md`).
 # `discovery-failed` is NOT here on purpose (second pass, OB3 N5): the registry synthesises that
 # code for the tab, and the poller announces a failed LIST from its own site with its own phase and
 # action — `finding_event("discovery-failed")` would answer `secret-refused`/`parse`, which is wrong,

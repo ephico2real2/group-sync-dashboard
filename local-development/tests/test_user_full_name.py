@@ -6,7 +6,7 @@ nothing, because the group-sync operator only writes LDAP uids into a Group's `u
 
 This module began as the display-name feature (chart 0.7.x): one field read off the object, joined
 onto every member surface, absent by default. Since the Users tab was re-sourced
-(docs/DESIGN_users_tab_logins.md) the read returns the whole record and the row IS the fact of a
+(docs/design/DESIGN_users_tab_logins.md) the read returns the whole record and the row IS the fact of a
 login — so what these tests protect has grown, and the original guarantees are all still here:
 the UI renders a bare id exactly as it did before the feature existed, a User with no usable name is
 stored WITHOUT a name rather than dropped or blanked, and a missing RBAC grant is tolerated by the

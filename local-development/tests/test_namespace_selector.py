@@ -1,5 +1,5 @@
 """Extension B2 — the namespace-access report selects namespaces by a captured metadata key
-(docs/DESIGN_reporting_auditors_and_ns_selector.md §3.5–3.6). The capture is B1 (already merged)."""
+(docs/design/DESIGN_reporting_auditors_and_ns_selector.md §3.5–3.6). The capture is B1 (already merged)."""
 from __future__ import annotations
 
 from pathlib import Path

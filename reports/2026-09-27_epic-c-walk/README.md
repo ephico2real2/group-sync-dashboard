@@ -161,7 +161,7 @@ estate that uses two accounts with different passwords, through `ldapConnectionB
 values:
 - The ping sends the one configured password as every account's.
 - The directory sees one failed bind per other account per password change, before the Lease gates it.
-- `docs/CLUSTER_STANZA.md#ldapConnectionBootstrap` describes the key as "the username that performs the login". It
+- `charts/group-sync-dashboard/docs/CLUSTER_STANZA.md#ldapConnectionBootstrap` describes the key as "the username that performs the login". It
   does not say the password is shared.
 
 **Options.** None of these is implemented here; each is the orchestrator's decision:

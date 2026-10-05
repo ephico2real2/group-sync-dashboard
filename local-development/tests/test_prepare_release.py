@@ -455,7 +455,7 @@ def test_t300_3_no_line_when_the_schema_did_not_move(sandbox: pathlib.Path) -> N
 
 
 def test_t300_4_no_line_on_a_chart_only_release(sandbox: pathlib.Path) -> None:
-    """A chart-only release builds no image (docs/RELEASING.md, the chart-only flow), so it migrates nothing."""
+    """A chart-only release builds no image (docs/guides/RELEASING.md, the chart-only flow), so it migrates nothing."""
     add_migrations(sandbox, 1)
     target = _next_chart_patch(sandbox)
     done = run(sandbox, "--chart", target, "A template change", "--no-commit")
@@ -528,7 +528,7 @@ def test_t300_6_a_chart_only_release_reads_no_history(sandbox: pathlib.Path, tmp
 
 
 def test_t300_8_releasing_md_states_the_line_and_when_it_appears() -> None:
-    text = (REPO / "docs" / "RELEASING.md").read_text()
+    text = (REPO / "docs" / "guides" / "RELEASING.md").read_text()
     section = text.split("### An application release", 1)[1].split("### A chart-only release", 1)[0]
     assert prep.SCHEMA_LINE.format(then="N", now="M") in section, "the exact line, as the script writes it"
     assert f"- **Schema N → M.** {SCHEMA_SENTENCE}" in section

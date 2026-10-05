@@ -199,7 +199,7 @@ def _alerts_for_self(alerts: list[dict]) -> list[dict]:
 
 
 #: The GroupSync fields a self-tier reader receives — every field the spec rules full-view.
-#: docs/SPEC_per_user_visibility.md (Q3) rules CR health FULL at both tiers EXCEPT
+#: docs/design/SPEC_per_user_visibility.md (Q3) rules CR health FULL at both tiers EXCEPT
 #: `ldap_filter` and `error_message`, its two named exceptions: both can embed directory DNs
 #: and the gate group (measured on this repo's own fixture, where error_message carries the
 #: service bind DN), and a reader below the wide tier cannot read the CR with `oc` anyway
@@ -331,7 +331,7 @@ def build_app(
     and no resolver, every reader gets the self view — never the wide one (decision D1).
 
     `usage_tier_resolver` is the SECOND, INDEPENDENT decider for the Usage tab alone
-    (docs/SPEC_usage_admin_tier.md): a stricter threshold, its own instance and its own cache,
+    (docs/design/SPEC_usage_admin_tier.md): a stricter threshold, its own instance and its own cache,
     because it asks a different question about the same person and a decided usage tier must
     never answer for the wide tier. Same fail-closed contract.
 
@@ -344,7 +344,7 @@ def build_app(
     # tuning knobs. open_backend() owns that; see gsd/storage.py.
     store: StorageBackend = open_backend(settings)
     elector = LeaderElector(name=settings.leader_lease_name) if settings.leader_election else None
-    # The process-event metrics seam (docs/DESIGN_metrics_refresh.md §2), one per app:
+    # The process-event metrics seam (docs/design/DESIGN_metrics_refresh.md §2), one per app:
     # the resolvers, the poller, the activity recorder and the admin gate all report into
     # this instance, and the collector reads a snapshot of it at scrape time. Created here,
     # before anything that carries it.
@@ -396,7 +396,7 @@ def build_app(
             "and X-Forwarded-User would be caller-supplied"
         )
 
-    # ── Per-user visibility: the tier decision (docs/SPEC_per_user_visibility.md) ──────────
+    # ── Per-user visibility: the tier decision (docs/design/SPEC_per_user_visibility.md) ──────────
     # Decided against THIS POD'S OWN CLUSTER, deliberately: the oauth-proxy authenticates
     # viewers against the cluster this pod runs on, and that is the entry the chart writes
     # (kubernetes.default.svc with the pod's own projected ServiceAccount token). That entry is
@@ -427,7 +427,7 @@ def build_app(
             # that separates a broken SubjectAccessReview from a quiet healthy one.
             observe=functools.partial(signals.note_tier_check, "admin"),
         )
-    # A SEPARATE instance for the Usage tab (docs/SPEC_usage_admin_tier.md), never the same one:
+    # A SEPARATE instance for the Usage tab (docs/design/SPEC_usage_admin_tier.md), never the same one:
     # it asks a stricter question (a write verb the auditor cluster-reader fails) about the same
     # person, so sharing the wide tier's cache would let one verdict answer for the other. Same
     # 60s TTL, its own dict.
@@ -478,7 +478,7 @@ def build_app(
             ttl_seconds=float(settings.visibility_tier_ttl_seconds),
             observe=functools.partial(signals.note_tier_check, "cluster_admin"),
         )
-    # ── Per-cluster authorization (docs/ACCESS_CONTROL.md §11) ──────────────────────────
+    # ── Per-cluster authorization (docs/guides/ACCESS_CONTROL.md §11) ──────────────────────────
     # One resolver PER remote cluster whose policy is remote-sar, constructed on THAT cluster's
     # ClusterConfig — so the review is created on the remote API with the remote token, and
     # fetch_groups_of_user reads the REMOTE's Group objects. That is the group-resolution trap
@@ -553,7 +553,7 @@ def build_app(
     # parameter — the /api/dashboard/activity pattern, generalised. The store never sees
     # request identity; the UI only reflects the `scope` and `viewer` fields each scoped
     # response declares, because a UI-only narrowing is a leak with a cosmetic fix.
-    # Endpoint rulings: docs/SPEC_per_user_visibility.md.
+    # Endpoint rulings: docs/design/SPEC_per_user_visibility.md.
     #
     # Both conditions, not either — the ActivityRecorder composition above, for the same
     # reason: the setting is the operator's choice, the proxy flag is whether any identity
@@ -611,7 +611,7 @@ def build_app(
         wired, a resolver error or timeout, an unrecognised answer — lands on "self", never on
         the wide view (requirements §5.4, decision D1).
 
-        WHICH RESOLVER DECIDES is the cluster's policy (docs/ACCESS_CONTROL.md §11):
+        WHICH RESOLVER DECIDES is the cluster's policy (docs/guides/ACCESS_CONTROL.md §11):
           inherit     the host's resolver — the viewer's identity is the host's
           self-only   nobody decides; "self", and the VIEWER IS None when the cluster does not
                       treat the host's username as its own (identity: none), so a self-scoped
@@ -640,7 +640,7 @@ def build_app(
         policy, identity = settings.cluster_policy(cluster_id)
         # `inherit` follows the host's decided POLICY; the remote's identity is consulted only
         # under its own `self-only` — under inherit a self reader is keyed by the host's
-        # username, as before 0.19.0 (docs/ACCESS_CONTROL.md §11). The first-pass remap applied
+        # username, as before 0.19.0 (docs/guides/ACCESS_CONTROL.md §11). The first-pass remap applied
         # the remote's default `identity: none` after the remap and refused what §11 promised
         # (review of D2, second pass, Cursor).
         own_policy = policy
@@ -676,7 +676,7 @@ def build_app(
         """Resolve this request to (viewer, scope) for the USAGE tab specifically.
 
         A SECOND, STRICTER threshold than viewer_scope, and INDEPENDENT of it
-        (docs/SPEC_usage_admin_tier.md). The Usage tab is the one dataset that lives only in the
+        (docs/design/SPEC_usage_admin_tier.md). The Usage tab is the one dataset that lives only in the
         dashboard's own database and cannot be reproduced with `oc`, so it must not fall to the
         wide tier that cluster-reader — the deliberate auditor persona — also passes. Precedence:
 
@@ -740,7 +740,7 @@ def build_app(
         it would let anyone read anyone by asserting a name.
 
         A SECOND reason for no name, when a cluster is named: that cluster's identity policy is
-        `none`, so viewer_scope withheld the host's username on purpose (docs/ACCESS_CONTROL.md
+        `none`, so viewer_scope withheld the host's username on purpose (docs/guides/ACCESS_CONTROL.md
         §11). Said in its own words, and — like every refusal here — without naming the value
         that would change it: this sentence reaches the person being refused.
         """
@@ -835,7 +835,7 @@ def build_app(
         neither can be used to enumerate.
 
         The distinction is scope, not category: this gate withholds the cluster's binding
-        surface, and never a reader's own. `docs/ACCESS_CONTROL.md` tabulates both. Since
+        surface, and never a reader's own. `docs/guides/ACCESS_CONTROL.md` tabulates both. Since
         0.10.0 the Access granted tab renders exactly that at the narrowed tier — the reader's
         own `/users/{name}` bindings, with the group named — where the refusal card used to be;
         the refusal this raises is unchanged, and still what a plain reader gets from the
@@ -1626,7 +1626,7 @@ def build_app(
             if not is_served(row["id"]):
                 continue
             policy, _ = settings.cluster_policy(row["id"])
-            # Decided PER CLUSTER (docs/ACCESS_CONTROL.md §11): a host administrator is not an
+            # Decided PER CLUSTER (docs/guides/ACCESS_CONTROL.md §11): a host administrator is not an
             # administrator of a self-only remote, and the card must not say otherwise.
             scope = scopes[row["id"]] if row["id"] in scopes else viewer_scope(request, row["id"])[1]
             counts = store.group_counts(row["id"])
@@ -1660,7 +1660,7 @@ def build_app(
                         _config_summary(row["id"]) if scope == "all" else None),
                     # The policy this instance applies to the cluster and what it decided for
                     # THIS reader, so the selector can label a cluster it narrows. The UI
-                    # renders these; it never derives them (docs/ACCESS_CONTROL.md §7).
+                    # renders these; it never derives them (docs/guides/ACCESS_CONTROL.md §7).
                     "visibility": {"policy": policy, "scope": scope},
                     # Surfaced on the landing page so binding problems are discoverable
                     # without knowing to navigate anywhere. `unresolved` does not alert
@@ -1743,7 +1743,7 @@ def build_app(
         """
         require_cluster(cluster_id)
         # limit + 1 to learn whether more exist, then hand back only `limit`. The cheap half
-        # of R3 in docs/api-contract.md: it answers "is this all of them?" without a COUNT
+        # of R3 in docs/guides/api-contract.md: it answers "is this all of them?" without a COUNT
         # over a table that grows with every poll, and it is the idiom list_users already
         # uses — one paging shape in the codebase rather than two.
         rows = store.sync_events(cluster_id, name, since, limit + 1)
@@ -1891,7 +1891,7 @@ def build_app(
 
         One row per OpenShift User object, because the cluster creates one at first login through
         an identity provider and never before — so the row IS the fact of a login, and the
-        headline count is how many people have used the cluster (docs/DESIGN_users_tab_logins.md).
+        headline count is how many people have used the cluster (docs/design/DESIGN_users_tab_logins.md).
         Group membership is an attribute of a row: `group_count` may be 0 for someone who logged
         in and holds no synced access. Members of synced groups who have never logged in are not
         rows; they are reported once, as `never_logged_in_members`, so a reviewer still gets the
@@ -2426,7 +2426,7 @@ def build_app(
 
         SELF-SCOPED under view restrictions: only the namespaces the viewer's own memberships or
         own bindings reach, counted over those paths — "grants affecting them"
-        (docs/ACCESS_CONTROL.md); the cluster-wide counts are the viewer's own, and an own
+        (docs/guides/ACCESS_CONTROL.md); the cluster-wide counts are the viewer's own, and an own
         cluster-wide path lists every namespace, as it reaches every one.
         """
         require_cluster(cluster_id)
@@ -2804,7 +2804,7 @@ def build_app(
         """
         require_cluster(cluster_id)
         viewer, scope = viewer_scope(request, cluster_id)
-        # limit + 1, as in list_events — see docs/api-contract.md R3. This log previously
+        # limit + 1, as in list_events — see docs/guides/api-contract.md R3. This log previously
         # cut off at 100 with nothing saying so, which on an audit trail reads as "no
         # further changes" rather than "not shown".
         rows = store.membership_events(
@@ -3165,7 +3165,7 @@ def build_app(
             # reads the app.state seam per request and never raises — so the pill can
             # never disagree with the pages it sits above. An indeterminate tier is SELF.
             # PER CLUSTER, so the cluster selector can say which clusters this reader sees
-            # narrowed (docs/ACCESS_CONTROL.md §11). Hidden clusters are absent, as they are
+            # narrowed (docs/guides/ACCESS_CONTROL.md §11). Hidden clusters are absent, as they are
             # from /api/clusters — listing them here would undo the 404. The headline IS the
             # host row's decision: deciding it nameless and then again for the host counted
             # the host twice on gsd_visibility_decisions_total (review of D2, second pass).
@@ -3219,7 +3219,7 @@ def build_app(
         other view, Usage lives ONLY in this dashboard's database, reproducible with no `oc`
         command at all.
 
-        THAT IS WHY IT HAS A SECOND, STRICTER TIER (docs/SPEC_usage_admin_tier.md), decided by
+        THAT IS WHY IT HAS A SECOND, STRICTER TIER (docs/design/SPEC_usage_admin_tier.md), decided by
         usage_scope rather than viewer_scope. cluster-reader — the auditor persona that keeps
         every wide audit view — must NOT browse colleagues' presence records, and no read check
         separates it from cluster-admin, so the usage threshold asks a write verb. The wide tier
@@ -3341,7 +3341,7 @@ def build_app(
         Stamped into the image at build time. `dirty: true` means the build included
         uncommitted changes, so no commit reproduces it — which is the honest answer when
         someone asks "is my fix in there?". `features` names the optional modules switched on
-        for this deployment (docs/DESIGN_export.md), so the page renders a control only where
+        for this deployment (docs/design/DESIGN_export.md), so the page renders a control only where
         the operator enabled it.
         """
         commit = os.environ.get("GSD_GIT_COMMIT", "unknown")
@@ -3657,7 +3657,7 @@ def _resolve_log_level(raw: str | None) -> tuple[int, str | None]:
         f"accepts, so it is running at INFO. The value is deliberately not repeated here, in case "
         f"something other than a log level was wired into it. Use one of "
         f"{', '.join(LOG_LEVELS)} (case does not matter). Login capture uses the audit log "
-        f"at default OAuth verbosity; see docs/LOGIN_CAPTURE_QUICKCHECK.md."
+        f"at default OAuth verbosity; see docs/guides/LOGIN_CAPTURE_QUICKCHECK.md."
     )
 
 

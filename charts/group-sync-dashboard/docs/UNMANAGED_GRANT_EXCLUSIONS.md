@@ -100,7 +100,7 @@ user holds. A platform user stays a platform user, whatever its binding carries.
 
 ## Where the rule is written
 
-- The design: `docs/unmanaged-audit-design.md` and `docs/specs/SPEC_U1_unmanaged_subjects.md`, both from the
+- The design: `docs/design/unmanaged-audit-design.md` and `docs/specs/SPEC_U1_unmanaged_subjects.md`, both from the
   repository root.
 - Every line of code that decides or reads "platform" carries the marker `PLATFORM-CLASSIFICATION (#255, #353)`, so
   `git grep "PLATFORM-CLASSIFICATION"` lists the whole rule.

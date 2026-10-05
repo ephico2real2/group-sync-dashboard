@@ -1,6 +1,6 @@
 """The unmanaged-grant discovery invariants, one test per design clause.
 
-docs/unmanaged-audit-design.md is the spec; this file is its enforcement. The decisions live
+docs/design/unmanaged-audit-design.md is the spec; this file is its enforcement. The decisions live
 in a pure module (gsd/audit.py) so every invariant is a plain assertion with no cluster and
 no I/O in the way.
 
