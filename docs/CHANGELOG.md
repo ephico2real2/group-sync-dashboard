@@ -10,6 +10,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The chart README and the backup/restore runbook checked against the code and the lab (chart 0.70.6).** Nineteen
+  stale statements corrected. In the README: the plain-Kubernetes switches, the KPI threshold refusal, the report
+  defaults, Rejoin, the dashboard's writes, the unmanaged-grant summary and its default, `argocd.enabled`, the
+  retention windows to set to 0 before a restore, and the volume claims an uninstall keeps. In the runbook: the
+  recovery pod's name in §4a and §4b, the pod's tools, the sample schema, the same windows, and folding a `-wal`
+  before §5's copy. The claims and their evidence are in `docs/reviews/DOCS_AUDIT_2026-10-05_b2_chart_reference.md`.
+  No template, value, appVersion or RBAC change.
+
 - **The chart's install and operate guides checked against the code and the lab (chart 0.70.5).** Twelve stale
   statements corrected in `HELM_DOWNLOAD_AND_INSTALL.md`, `RUNBOOK.md`, `CLUSTER_STANZA.md`, `CLUSTER_CREDENTIALS.md`
   and `TROUBLESHOOTING_auditor_groups.md`, and the air-gapped install names every image the chart deploys, not only

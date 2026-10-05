@@ -18,7 +18,7 @@ cluster cannot replay them (`gsd/store.py#Store.backup`). Three copies exist:
   writes the database as it was to `pre-upgrade/` beside it, with a `.sha256` sidecar, even when scheduled
   backups are disabled (§6).
 
-Everything below uses only what the pod has: `sh`, `cat`, `ls`, `rm`, `chgrp`, `chmod`,
+Everything below uses only what the pod has: `sh`, `cat`, `ls`, `rm`, `chgrp`, `chmod`, `curl`,
 `python3.14` (`docs/design/DESIGN_hardened_image.md#What it changed for operators`). There is **no
 `tar`**, so `oc cp` and `oc rsync` do not work against this image; bytes move with `cat` over
 `oc exec`. Set `NS` and `REL` (the release's fullname, `oc get deploy -n $NS`) once:
@@ -239,7 +239,7 @@ Expected log:
 
 ```
 copied /data/backup/gsd-….db -> /offsite/gsd-….db (NNN bytes, sha256 …)
-integrity_check ok; user_version 9; membership_event rows N; sync_event rows M
+integrity_check ok; user_version 20; membership_event rows N; sync_event rows M
 pruned 0 older copies (keep=14)
 no pre-upgrade-*.db under /data/pre-upgrade: nothing to ship (one is written only when an image upgrades the schema)
 ```
@@ -342,8 +342,8 @@ app serves, so it plays no part in recovery mode and changes nothing in the step
 The dashboard is the only writer and must be **stopped** first: two processes on one SQLite
 file corrupt rather than error (`gsd/store.py#Store.__init__`).
 
-**Recovery mode is the primary path (chart 0.60.0 and later, #303).** The dashboard pod keeps its spec and
-its data volume but runs the chart's recovery script instead of the app
+**Recovery mode is the primary path (chart 0.60.0 and later, #303).** The recovery pod (`$REL-recovery` from chart
+0.65.0, #532) has the app's pod spec and data volume but runs the chart's recovery script instead of the app
 (`charts/group-sync-dashboard/scripts/recovery_mode.py`), so nothing opens `gsd.db`, and it stays up until
 `recovery.ttl` (2h by default): a dropped `oc` session does not end it. It is a value like any other: set it
 in this release's values file and roll it out through the release's deployment pipeline. Never with
@@ -403,8 +403,9 @@ oc wait -n $NS --for=delete pod -l app=$REL --timeout=120s
 
 ### 4a. From an on-volume copy
 
-In recovery mode the dashboard pod already has the data claim: run the `sh -c '…'` body below with
-`oc exec -n $NS deploy/$REL -c dashboard --` in place of `oc debug -n $NS deploy/$REL --one-container -c dashboard --`.
+In recovery mode the recovery pod already has the data claim: run the `sh -c '…'` body below with
+`oc exec -n $NS deploy/$REL-recovery -c dashboard --` (`deploy/$REL` on a chart before 0.65.0) in place of
+`oc debug -n $NS deploy/$REL --one-container -c dashboard --`.
 Otherwise, a helper pod with the data claim, from the Deployment's own template, with the dashboard container alone:
 without `--one-container` the pod also runs the oauth-proxy sidecar, which never exits, and `oc debug` waits for every
 container of its pod, so it does not return (the #300 walk waited 5 min 13 s; with the flag the lab's run returned in
@@ -444,10 +445,10 @@ OpenShift runs under: the next pod may get a different UID and reads through the
 
 ### 4b. From the off-volume claim
 
-In recovery mode the dashboard pod mounts the offsite claim read-only at `/offsite` (with
+In recovery mode the recovery pod mounts the offsite claim read-only at `/offsite` (with
 `backup.offsite` on its `pvc` destination): skip the helper pod and run the `oc exec` body below against
-`deploy/$REL -c dashboard`. Otherwise, a one-off pod mounting both claims (the `debug` pod has only the
-data claim). There is no `sleep`; Python idles instead:
+`deploy/$REL-recovery -c dashboard` (`deploy/$REL` on a chart before 0.65.0). Otherwise, a one-off pod mounting
+both claims (the `debug` pod has only the data claim). There is no `sleep`; Python idles instead:
 
 ```yaml
 apiVersion: v1
@@ -580,7 +581,8 @@ rebuilds every cache table.
 
 **Retention after a restore.** If `config.retention` windows are on, the leader starts pruning
 rows past the window 5,000 at a time on the first cycle after a successful backup. Restoring an
-old copy to *read* its history is a reason to set both windows to `0` first.
+old copy to *read* its history is a reason to set both windows to `0` first, with `kyverno.eventsRetentionDays`,
+which the same backup releases, and `loginCapture.retentionDays`, which prunes `login_event` without waiting for one.
 
 ### 4d. Break glass under Argo CD: pause, recovery mode by hand, give back
 
@@ -697,7 +699,8 @@ mode and `restore-db.sh` need exactly one pod).
 
 `accessModes` are immutable. Create the new claim (`persistence.existingClaim` pointing at it,
 or a new release name), scale to zero, and copy `gsd.db` **only** — never `-wal`/`-shm` — with
-the pattern in §4b (a helper pod with both claims), then §4c.
+the pattern in §4b (a helper pod with both claims), then §4c. A `-wal` with bytes beside it holds committed rows:
+fold it into `gsd.db` first, with the one-liner in **Undo a restore** (§4).
 
 ## 6. Pre-upgrade copies
 
