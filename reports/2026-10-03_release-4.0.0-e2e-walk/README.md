@@ -65,3 +65,12 @@ sensitive, per the operator's ruling of 2026-09-30. macOS Vision OCR of all 80 P
 | `doc/e2e_walk.html` | the walk document |
 | `evidence/` | `run.log` (the facts, the grant, the 4.0.0 objects), both tools' output, the OCR text, run 1's log |
 | `scripts/` | `run.sh`, `surfaces_400.py`, `grant.yaml` |
+
+## Walk documents and PDFs, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git, and PDFs older than a day
+were removed to keep the repository small. The text above is left as recorded. These files are no longer in the
+tree. They remain in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-10-03_release-4.0.0-e2e-walk):
+
+- the walk document: `doc/e2e_walk.html`;
+- 11 PDFs: `reports/gsd_dashboard_access-certification_20261003T201122Z.pdf`, `reports/gsd_dashboard_access-matrix_20261003T201021Z.pdf`, `reports/gsd_dashboard_binding-findings_20261003T201037Z.pdf`, `reports/gsd_dashboard_compliance-snapshot_20261003T201112Z.pdf`, `reports/gsd_dashboard_dormant-access_20261003T201102Z.pdf`, `reports/gsd_dashboard_groups_20261003T201047Z.pdf`, `reports/gsd_dashboard_groupsync-health_20261003T201107Z.pdf`, `reports/gsd_dashboard_login-activity_20261003T201058Z.pdf`, `reports/gsd_dashboard_namespace-access_20261003T201014Z.pdf`, `reports/gsd_dashboard_privileged-access_20261003T201028Z.pdf`, `reports/gsd_dashboard_users_20261003T201052Z.pdf`.

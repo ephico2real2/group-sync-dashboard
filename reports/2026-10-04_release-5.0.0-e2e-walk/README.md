@@ -75,3 +75,11 @@ named and its mounts are listed.
 | `scripts/` | `run.sh`, `grant.yaml` |
 
 To repeat: `KUBECONFIG=<the lab kubeconfig> scripts/run.sh`.
+
+## Walk documents and PDFs, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git, and PDFs older than a day
+were removed to keep the repository small. The text above is left as recorded. These files are no longer in the
+tree. They remain in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-10-04_release-5.0.0-e2e-walk):
+
+- the walk document: `doc/e2e_walk.html`;

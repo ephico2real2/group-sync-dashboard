@@ -53,3 +53,11 @@ GSD_UI_PASSWORD='Ldap123!' KUBECONFIG=<cluster kubeconfig> \
 
 jane.smith's password is the repository's documented LDAP test credential
 (`docs/guides/LOGIN_CAPTURE_QUICKCHECK.md`). She is self-tier; kubeadmin and john.doe are wide-tier.
+
+## Walk documents and PDFs, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git, and PDFs older than a day
+were removed to keep the repository small. The text above is left as recorded. These files are no longer in the
+tree. They remain in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-14_e2e-walk-nonadmin):
+
+- the walk document: `e2e-walk-nonadmin.pdf`;

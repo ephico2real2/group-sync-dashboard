@@ -290,3 +290,12 @@ OCR=<a macOS Vision OCR binary> GSD_WALK_TMP=<the same directory> KUBECONFIG=<th
 ```
 
 The e2e run's raw output lands in `$GSD_WALK_TMP/e2e`, and the committed files are copied from there.
+
+## Walk documents and PDFs, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git, and PDFs older than a day
+were removed to keep the repository small. The text above is left as recorded. These files are no longer in the
+tree. They remain in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-30_release-2.0.0-walk):
+
+- the walk document: `e2e-walk.html`;
+- 5 PDFs: `artefacts/gsd_dashboard_compliance-snapshot_20260930T095035Z.pdf`, `artefacts/gsd_dashboard_groupsync-health_20260930T095029Z.pdf`, `artefacts/gsd_dashboard_login-activity_20260930T095020Z.pdf`, `artefacts/gsd_dashboard_namespace-access_20260930T094939Z.pdf`, `artefacts/gsd_dashboard_privileged-access_20260930T094951Z.pdf`.

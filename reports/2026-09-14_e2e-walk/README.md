@@ -49,3 +49,12 @@ GSD_UI_PASSWORD=… .venv/bin/python ../reports/2026-09-14_e2e-walk/e2e_extra.py
 ```
 
 `e2e_extra.py` renders PDF first pages with macOS `sips`; on Linux substitute `pdftoppm`.
+
+## Walk documents and PDFs, removed from git (2026-10-05)
+
+The operator, 2026-10-05: walk documents are kept locally for review and not in git, and PDFs older than a day
+were removed to keep the repository small. The text above is left as recorded. These files are no longer in the
+tree. They remain in history, at [this folder at `6862ba8161`](https://github.com/ephico2real2/group-sync-dashboard/tree/6862ba8161253261d59f0b1afda209ad47117b8a/reports/2026-09-14_e2e-walk):
+
+- the walk document: `e2e-walk.pdf`;
+- 11 PDFs: `artefacts/gsd_crc-local_access-certification_20260914T111301Z.pdf`, `artefacts/gsd_crc-local_access-matrix_20260914T111221Z.pdf`, `artefacts/gsd_crc-local_binding-findings_20260914T111229Z.pdf`, `artefacts/gsd_crc-local_compliance-snapshot_20260914T111251Z.pdf`, `artefacts/gsd_crc-local_dormant-access_20260914T111244Z.pdf`, `artefacts/gsd_crc-local_groups_20260914T111233Z.pdf`, `artefacts/gsd_crc-local_groupsync-health_20260914T111248Z.pdf`, `artefacts/gsd_crc-local_login-activity_20260914T111240Z.pdf`, `artefacts/gsd_crc-local_namespace-access_20260914T111213Z.pdf`, `artefacts/gsd_crc-local_privileged-access_20260914T111226Z.pdf`, `artefacts/gsd_crc-local_users_20260914T111237Z.pdf`.
