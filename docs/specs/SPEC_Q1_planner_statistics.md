@@ -80,9 +80,14 @@ was not measured. Group detail is about 1 ms on the lab, which has about 95 even
 **2.5 SQLite's guidance.** "Applications that use long-lived database connections should run `PRAGMA
 optimize=0x10002;` when the connection is first opened, and then also run `PRAGMA optimize;` periodically, perhaps
 once per day" ([lang_analyze](https://www.sqlite.org/lang_analyze.html) §2.1; [pragma_optimize](https://www.sqlite.org/pragma.html#pragma_optimize), the recommended form since 3.46.0). "set
-`PRAGMA analysis_limit=N` for N between 100 and 1000" (§5). The mask `0x10002` does not include `0x10`, the bit that
-applies a temporary analysis limit, which is why it measured as a full `ANALYZE` (85 ms) and the explicit
-`analysis_limit` brought it to 7 ms with the same plans.
+`PRAGMA analysis_limit=N` for N between 100 and 1000" (§5). Two bits of the mask matter here. `0x10000` makes the
+pragma consider every table, not only the ones this connection has queried since it opened: measured on 3.53.4 (OB2),
+a table analysed at 2,000 rows and grown to 202,000 is skipped by `optimize(0x03)` from a connection that never queried
+it and listed by `optimize(0x10003)`. The writer is exactly such a connection at open and after a poll, since it writes
+those tables and never reads them through the planner, so without that bit the refresh would gather nothing. The mask
+does not include `0x10`, the bit that applies a temporary analysis limit, which is why it measured as a full `ANALYZE`
+(85 ms) and the explicit `analysis_limit` brought it to 7 ms with the same plans. The `0x10000` bit is SQLite 3.46.0's;
+the image ships 3.53.4 (§2.1).
 
 **2.6 Measured behaviour of `PRAGMA optimize`.**
 
@@ -197,11 +202,17 @@ The lab's tables are small, so the times there are small; the plans are what the
 
 After the deploy, on the lab, read-only:
 
-1. `sqlite_stat1` exists in `gsd.db`.
-2. The dashboard's log shows `query planner statistics refreshed`.
+1. `sqlite_stat1` exists in `gsd.db`, and its row for `rbac_group_binding` / `rbac_binding_by_group` is recorded
+   (the estimate the Groups list's plan rests on).
+2. The dashboard's log shows `query planner statistics refreshed`, and after three or more poll cycles it shows it
+   at most twice (at open, and after the first poll if a table crossed the threshold) and never `query planner
+   statistics refresh failed`: one refresh per cycle would mean the threshold is re-armed every cycle, which §2.6
+   measured not to happen and this step confirms on real polls.
 3. The Groups list's query on the `dashboard` cluster uses `rbac_binding_by_group`, and its time drops from about
    100 ms.
-4. The pods are ready and the PVC UIDs are unchanged.
+4. The pod's SQLite is 3.46.0 or later (`python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'` in the pod;
+   3.53.4 expected), recorded in the walk.
+5. The pods are ready and the PVC UIDs are unchanged.
 
 ## 7. The change
 
@@ -926,3 +937,19 @@ def test_a_reader_on_another_thread_reconnects_too(db):
 1. The research, this spec and its code were written by the orchestrator, at the operator's instruction (§1). The
    reviews follow the adversarial-review skill: Codex Astra and Cursor Grok first, then OB2 for a review and
    enhancements; each reviewer writes a findings file, and the orchestrator decides and applies from those files.
+2. **Round 1.** Cursor was out of usage, so OB3 took Cursor Grok's seat (the operator's rule of 2026-09-30) beside Codex
+   Astra. Both found that an error inside the refresh stopped `Store()` opening and, from `maintain()`, recorded a
+   successful poll `unreachable` and skipped its backup: accepted, the refresh never raises. Codex Astra also found
+   that a failed reconnect left a closed connection cached on the thread (accepted) and that §2.7 overstated
+   `schema_version` (accepted on the wording; its test pinning the spec's prose was declined: a test on wording guards
+   no behaviour). OB3 also found two test gaps, measured by mutation (a re-analysis reaching an open reader; the
+   refresh never committing an enclosing transaction), a test that a refused `ANALYZE` leaves a real poll `ok` with
+   its backup written, and that the debug form is itself a write (§2.6): all accepted. Its duplicate failure test and
+   its equivalent `_refresh_statistics` body were declined. Codex Astra implemented every accepted item as a patch.
+3. **Round 2, OB2 (review and enhancements).** It confirmed the code, both rounds' fixes, and a six-thread stress run
+   (no error across repeated refreshes), and found that §7 had not yet been regenerated after the review commits
+   (it was regenerated last, as planned). Accepted: printing the runner's SQLite version in CI's Install step (E1),
+   §2.5's account of the `0x10000` bit (E3) and a fuller §6 lab check (E4). Decided by CI's measured SQLite version: a
+   module gate on these tests below 3.46.0 (E2). Later: refresh counters in the storage seam's `health()` (E5), since
+   no alert would consume them yet. Declined, with OB2's reasons: a log line per reconnect, removing the no-op commit,
+   widening the time budgets, rate-limiting the failure warning.
