@@ -59,6 +59,7 @@ data:
     groupCountCliffWindowHours: {{ .Values.config.alerts.groupCountCliff.windowHours }}
     groupCountCliffSilence: {{ .Values.config.alerts.groupCountCliff.silence | join "," | quote }}
     # The KPI page's thresholds and doors (values.yaml `kpi`, `grafana`, `console`).
+    {{- include "gsd.kpiThresholds" . }}
     kpiMemoryWarnPercent: {{ .Values.kpi.thresholds.memoryPercent }}
     kpiCpuWarnPercent: {{ .Values.kpi.thresholds.cpuPercent }}
     kpiThrottledWarnPercent: {{ .Values.kpi.thresholds.throttledPercent }}
