@@ -45,13 +45,17 @@ while [ $# -gt 0 ]; do
 done
 
 # ---------------------------------------------------------------------------
-# Two values the chart normally reads from the live cluster
+# The one value the chart normally reads from the live cluster
 # ---------------------------------------------------------------------------
 # `helm template` runs with no cluster connection, so every `lookup` in the chart returns
-# empty. Two of them matter, and both fail QUIETLY rather than loudly, which is why they are
-# resolved here instead of being left to the chart.
+# empty. One of them matters here, which is why it is resolved here instead of being left to
+# the chart. The oauth-proxy's session key is not one of them: since chart 0.37.0 the
+# secrets-mint hook mints `<fullname>-oauth-session` on the cluster only when it is absent, so a
+# render carries no session Secret and applying one signs nobody out. This script used to read
+# the pre-0.37.0 `<release>-oauth-cookie` into `oauthProxy.cookieSecret`, which rendered a plain
+# Secret under the minted name and would have replaced the live key on apply (#625).
 
-# 1. The Ingress host — ONLY when the Ingress is turned on. The default Route needs no host:
+# The Ingress host — ONLY when the Ingress is turned on. The default Route needs no host:
 #    the router names it from spec.subdomain, so the chart does no lookup and the render needs
 #    no cluster at all — that default exists precisely for renderers like this one. With
 #    `--set ingress.enabled=true` the chart's own guard aborts a hostless render (deliberately:
@@ -97,25 +101,6 @@ if [ -n "$INGRESS_ON" ] && [ -z "$HOST" ]; then
   EXTRA+=(--set "ingress.host=${RELEASE}.${DOMAIN}")
 fi
 
-# 2. The oauth-proxy cookie secret. THIS IS THE ONE THAT BITES.
-#
-#    The chart generates `randAlpha 32` when it cannot find an existing Secret, and reuses the
-#    existing one when it can — via `lookup`, which works during `helm upgrade` and returns
-#    empty here. So every render mints a NEW key, and applying two renders in a row signs
-#    every logged-in user out. Measured: two consecutive `helm template` runs produce two
-#    different session_secret values.
-#
-#    Reading the live one back keeps sessions alive across applies. If there is no live
-#    Secret, the chart's fresh value is correct — say so, rather than letting it be a surprise.
-COOKIE=$(oc get secret "${RELEASE}-oauth-cookie" -n "$NAMESPACE" \
-           -o jsonpath='{.data.session_secret}' 2>/dev/null | base64 -d 2>/dev/null || true)
-if [ -n "$COOKIE" ]; then
-  EXTRA+=(--set "oauthProxy.cookieSecret=${COOKIE}")
-  COOKIE_NOTE="reused from the live Secret — existing sessions survive this apply"
-else
-  COOKIE_NOTE="NEWLY GENERATED (no live Secret found) — applying this will sign out any existing sessions"
-fi
-
 # ---------------------------------------------------------------------------
 # Render
 # ---------------------------------------------------------------------------
@@ -138,7 +123,9 @@ if [ "$OTHER" != "0" ]; then
 fi
 [ "$GENERATED" != "0" ] && find "$OUTDIR" -maxdepth 1 -type f -name '[0-9][0-9]-*.yaml' -delete
 
-RAW=$(mktemp -t gsd-render).yaml
+# A trailing-X template is the one form GNU and BSD mktemp both accept; `-t gsd-render` failed on Linux,
+# and the `.yaml` suffix it carried named a second path, so the file mktemp made was never removed (#625).
+RAW=$(mktemp "${TMPDIR:-/tmp}/gsd-render.XXXXXX")
 trap 'rm -f "$RAW"' EXIT
 helm template "$RELEASE" "$CHART" --namespace "$NAMESPACE" \
   "${EXTRA[@]+"${EXTRA[@]}"}" > "$RAW"
@@ -182,7 +169,6 @@ PY
 
 echo
 echo "namespace : ${NAMESPACE}"
-echo "cookie    : ${COOKIE_NOTE}"
 echo
 echo "NEXT — review, then apply yourself:"
 echo "  oc diff  -f ${OUTDIR}/     # what would change"

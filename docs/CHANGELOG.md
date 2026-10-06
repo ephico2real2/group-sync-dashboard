@@ -10,6 +10,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Four code defects the docs audit found (#625; application 5.6.0, chart 0.70.9).** A chart `appVersion` change
+  with no `version` bump now fails the pull request (`ci.yml`), and `helm.yaml` labels the image only for a new
+  app chart version, so a published chart's `:<chartVersion>` is never relabelled. Group attribution gives a
+  label to the longest matching GroupSync name when two CRs' names are prefix-related and neither declares
+  provider names (`corp` and `corp_extra` both claimed `corp_extra_ldap`). `prepare-release.py --pr` pushes the
+  branch before opening the pull request. `render-manifests.sh` no longer reads the pre-0.37.0
+  `-oauth-cookie` Secret, which rendered a plain Secret under the minted session key's name.
+
 - **The release, build and repository guides, the root README and `local-development/README.md` checked against the
   code and the lab (application 5.5.0, chart 0.70.8).** `local-development/README.md` is an image input, so the
   application takes a MINOR; the image's contents are unchanged apart from that file and its version. Corrected: the

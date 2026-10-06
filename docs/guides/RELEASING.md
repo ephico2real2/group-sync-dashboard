@@ -307,7 +307,7 @@ no GPG key, in `DESIGN_supply_chain.md`. Two repository variables turn the modul
 ```sh
 cd local-development
 ./prepare-release.py --app 2.0.0 "Close the epic"          # next MAJOR: branch + commit
-./prepare-release.py --app 2.0.0 "Close the epic" --pr     # ...and the pull request
+./prepare-release.py --app 2.0.0 "Close the epic" --pr     # ...pushes it and opens the pull request
 ```
 
 What that does, and what you would do by hand without it:
@@ -317,8 +317,9 @@ What that does, and what you would do by hand without it:
    `gsd_build_info` report, and a test holds the two together.
 3. Bump `appVersion` in `charts/group-sync-dashboard/Chart.yaml` to match.
 4. Bump `Chart.yaml` `version` too, because you just changed the chart. The script derives a PATCH
-   bump; pass `--chart A.B.C` when the release is more than that. CI does not catch a missed bump
-   here: `ci.yml`'s chart check leaves `Chart.yaml` itself out, so an `appVersion`-only change passes it.
+   bump; pass `--chart A.B.C` when the release is more than that. `ci.yml`'s chart check counts any
+   `Chart.yaml` line other than `version:` and comments as chart content, so an `appVersion` change
+   with no `version` bump fails the pull request (#625).
 5. Write the `# CHART A.B.C (date), KIND: …` line above `version:` and the application paragraph
    above `appVersion:` — the file's history, newest nearest the field.
 6. Turn `## Unreleased` in `docs/CHANGELOG.md` into `## Application X — chart Y — date`, with the
@@ -446,7 +447,7 @@ uses it.
 | promote run is red with `origin has no release branch` or `RELEASE_DEPLOY_KEY is not set` | the operator's one-time steps are not done | "Promotion to the lab", steps 1 to 5 |
 | promote run is red with `is not a later commit` | a Run workflow named a commit older than the one `release` holds | check `rollback` to deploy it on purpose |
 | `release-crc.sh --argocd release` says `origin/release has no promotion.yaml` | no promotion has run yet | run promote (step 5 above) |
-| `helm search repo` shows the old chart after a merge | `Chart.yaml` `version` was not bumped, so chart-releaser skipped it | bump it. `ci.yml`'s version-bump check stops this when another chart file changed; an `appVersion`-only `Chart.yaml` edit passes it (step 4) |
+| `helm search repo` shows the old chart after a merge | `Chart.yaml` `version` was not bumped, so chart-releaser skipped it | bump it. `ci.yml`'s version-bump check stops this in the pull request, an `appVersion`-only edit included (step 4); `helm.yaml` labels the image only for a new app chart version |
 | a new pod runs different bits than its neighbour | somebody republished a tag between the two container creations: an alias, or a sha tag on a rebuild | pin `image.digest` |
 | `ImagePullBackOff` on a fresh install | the `:<appVersion>` alias does not exist for the chart's declared appVersion — for the dashboard image, or (report pod only) for the report image | the app release was never published, or half of it was. Check `publish.yml`, then use `--release-tags` on both scripts |
 | the first publish of a NEW image name (the report image was the first, 0.18.0) is red at its push, or green and then every fresh install pulls `unauthorized` for that image | quay.io creates a repository on push only if the pushing account may create one in the namespace, and creates it **private**; the chart pulls anonymously | create the repository in the quay.io UI **public**, grant the robot account write on it, then publish. Measured 2026-09-11: `group-sync-dashboard-report` did not exist before 0.18.0's first publish |

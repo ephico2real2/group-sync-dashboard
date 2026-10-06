@@ -181,17 +181,17 @@ oc apply -f deploy/            # if you want to apply it yourself
 folder exists so a human, a review, or a diff in a ticket sees the exact objects before the
 cluster does.
 
-Two values are resolved by the script, because `helm template` runs with no cluster connection
+One value is resolved by the script, because `helm template` runs with no cluster connection
 and every `lookup` in the chart returns empty:
 
 * **the Ingress host**, only when `--set ingress.enabled=true` is passed — derived from the
   cluster's apps domain, because without it the chart's own guard aborts, since a hostless
-  Ingress produces no Route at all on OpenShift. The default Route needs no host and no lookup;
-* **the oauth cookie secret**. Since chart 0.37.0 a render carries none: the secrets-mint hook
-  mints `<release>-oauth-session` on the cluster and keeps it, so the live key is not in what you
-  apply. The script still looks for a live `<release>-oauth-cookie`, the name before 0.37.0, and
-  passes its value as `oauthProxy.cookieSecret` when it finds one, which renders the
-  `-oauth-session` Secret with that value.
+  Ingress produces no Route at all on OpenShift. The default Route needs no host and no lookup.
+
+The oauth-proxy's session key needs nothing: since chart 0.37.0 the secrets-mint hook mints
+`<fullname>-oauth-session` on the cluster only when it is absent, so a render carries no session
+Secret and applying one signs nobody out. The script no longer reads the pre-0.37.0
+`<release>-oauth-cookie` (#625).
 
 **`helm upgrade --install` remains the supported deploy.** Applying rendered YAML leaves no
 Helm release, so `helm list`, `helm rollback` and `helm diff` know nothing about it. Do not

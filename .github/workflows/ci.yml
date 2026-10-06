@@ -91,6 +91,14 @@ jobs:
             # counting it would make every version bump look like content needing another bump.
             local changed
             changed=$(git diff --name-only "$BASE" HEAD -- "$CHART" | grep -v '/Chart.yaml$' || true)
+            # ...but only its version line and comments are the bump. Any other Chart.yaml line, appVersion
+            # above all, is chart content: excluding the whole file let an appVersion move with no version
+            # bump pass, and helm.yaml then relabelled the already-published chart's image (#625).
+            # Captured, not `grep -q`: under pipefail an early-exiting grep can SIGPIPE the ones before it.
+            local meta
+            meta=$(git diff -U0 "$BASE" HEAD -- "$CHART/Chart.yaml" | grep -E '^[-+]' | grep -vE '^(---|\+\+\+) ' \
+                     | grep -vE '^[-+](version:|[[:blank:]]*#|[[:blank:]]*$)' || true)
+            [ -n "$meta" ] && changed="${changed:+${changed} }$CHART/Chart.yaml"
             if [ -z "$changed" ]; then
               echo "no chart content changed — nothing to publish, no bump needed"
               return 0
