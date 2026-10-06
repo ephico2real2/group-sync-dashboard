@@ -13,8 +13,8 @@ which `local-development/prepare-release.py` does when the release is cut.
 - **KPI thresholds are checked at render, and their unit is stated (#627; chart 0.70.10).** `kpi.thresholds.*` are
   percentages: `80` means 80 %, not `0.8`. The render now refuses a non-number (such as `"80%"`), a value outside
   `(0, 100]`, and a memory, CPU or disk value at or below `1`, which can only be a ratio written by mistake, naming the
-  key. Before, an out-of-range value rendered and the pod refused it at startup, a non-number rendered and the app
-  silently used its default, and `0.8` meant as 80 % alerted at 0.8 %. A decimal set with `--set` still renders. The
+  key. Before, an out-of-range value rendered and the pod refused it at startup, a value such as `"80%"` rendered
+  and the app used its default after a log line, and `0.8` meant as 80 % alerted at 0.8 %. A decimal set with `--set` still renders. The
   default render is unchanged apart from the chart version.
 
 - **Four code defects the docs audit found (#625; application 5.6.0, chart 0.70.9).** A chart `appVersion` change

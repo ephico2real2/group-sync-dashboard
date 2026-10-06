@@ -39,7 +39,8 @@ def test_out_of_range_is_refused_naming_the_key(key: str, value: str) -> None:
     ("--set-string", "80%", '"80%"'), ("--set-string", " 80", '" 80"'), ("--set-string", "", '""'),
     ("--set", "true", '"true"'), ("--set-string", "nan", '"nan"')])
 def test_a_non_number_is_refused_naming_the_key_and_the_value(key: str, flag: str, value: str, shown: str) -> None:
-    """The app would log these and run on its default; the render refuses them, quoting what it got."""
+    """Only a plain number renders. The app alone reads these variously (`" 80"` as 80, `true` as 1, `"80%"` and an
+    empty value as its default, `"nan"` as a startup error); the render refuses them all, quoting what it got."""
     done = render(flag, f"kpi.thresholds.{key}={value}")
     assert done.returncode != 0
     assert f"kpi.thresholds.{key} must be a number of percent (80 means 80 %); got {shown}" in done.stderr, done.stderr
@@ -61,7 +62,9 @@ def test_a_ratio_is_refused_for_memory_cpu_and_disk(key: str, value: str) -> Non
                                    ("--set-string", "kpi.thresholds.cpuPercent=080"),
                                    ("--set-string", "kpi.thresholds.cpuPercent=1e2"),
                                    ("--set-string", "kpi.thresholds.throttledPercent=.5"),
-                                   ("--set-string", "kpi.thresholds.throttledPercent=1e-1")])
+                                   ("--set-string", "kpi.thresholds.throttledPercent=1e-1"),
+                                   ("--set-string", "kpi.thresholds.diskPercent=5."),
+                                   ("--set-json", "kpi.thresholds.cpuPercent=80.0")])
 def test_valid_values_render(flags: tuple[str, ...]) -> None:
     done = render(*flags)
     assert done.returncode == 0, done.stderr

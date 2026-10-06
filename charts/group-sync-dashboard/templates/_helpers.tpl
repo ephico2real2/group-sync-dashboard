@@ -634,9 +634,9 @@ fire is refused here rather than discovered as silence. Emits nothing; include i
 {{- end -}}
 {{/*
 kpi.thresholds, validated at render (#627), naming the key. All four are PERCENTAGES: 80 means 80 %,
-not 0.8. Stricter than the app on purpose: the app refuses an out-of-range number at startup, but a value
-that is not a number at all ("80%", empty, null) it logs and replaces with the default, so a typo ran
-silently on 80; here it fails the deploy. Memory, CPU and disk at or below 1
+not 0.8. Stricter than the app on purpose: the app refuses an out-of-range number at startup, but it reads
+whatever Python's float() accepts (" 80" as 80, true as 1) and replaces what float() refuses ("80%",
+empty) with the default after a log line, so a typo could run silently on 80. Only a plain number renders. Memory, CPU and disk at or below 1
 are refused as a ratio written by mistake: a warning at 1 % or less of a limit is never meant.
 throttledPercent keeps (0, 100], since its default is 1. Emits nothing; include it for effect.
 */}}
