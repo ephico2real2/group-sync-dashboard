@@ -162,9 +162,14 @@ statistics appear only once a table has rows. Its comment now says so.
 `local-development/tests/test_store_statistics.py`, against a database at the operator's bound written straight to
 the tables (999 groups, 50,000 bindings, a 25-member group, 100,000 membership events), with no statistics in it.
 Each plan is read from the SQL the store itself runs: the reader's trace callback gives it with its values bound.
+The whole module, including the image-proof test, skips below SQLite 3.46.0 locally and in CI;
+`local-development/image-proof.py` proves the refresh and Groups plan on the image's own SQLite as the runtime
+user at every build, refusing versions below 3.46.0. Its small seed is three groups with one binding each:
+on 3.53.4, one and two retain the cluster-only index, while three use the group-binding index.
 
 | done-means | test | fails before the change |
 |---|---|---|
+| 1, 2 | `test_image_proof_planner_statistics` | yes: the image proof requires statistics for the group-binding index and the traced Groups query to use it |
 | 1 | `test_open_gathers_statistics_and_both_reads_use_their_index` | yes |
 | 1 | `test_both_reads_stay_inside_a_budget_at_the_operator_s_bound` (0.5 s and 0.2 s; measured about 2.2 s and 0.6 s without statistics, about 15 ms and 0.5 ms with them on this data) | yes |
 | 1, 4 | `test_the_rows_are_the_same_with_and_without_statistics` | no: it holds on both sides, by design |
@@ -178,7 +183,8 @@ Each plan is read from the SQL the store itself runs: the reader's trace callbac
 | 2 | `test_the_refresh_never_commits_an_enclosing_transaction` | no: main has no refresh; it guards the refresh's transaction check |
 | 2 | `test_a_failed_refresh_leaves_a_successful_poll_ok_and_its_backup_written` | no: main has no refresh; on b65ce09d the poll was recorded `unreachable` |
 
-Measured on the branch: 12 passed. Against the unchanged `store.py` and `storage.py` of main 730158d4: 9 failed,
+Measured on the branch: 13 passed, including the image proof. Before adding that proof, against the unchanged
+`local-development/gsd/store.py` and `local-development/gsd/storage.py` of main 730158d4: 9 failed,
 3 passed (the rows test, the enclosing-transaction test, and the successful-poll/backup test; main has no refresh
 to fail). The full hermetic suite and CI run on the PR.
 
@@ -1130,3 +1136,13 @@ def test_a_failed_refresh_leaves_a_successful_poll_ok_and_its_backup_written(tmp
    module gate on these tests below 3.46.0 (E2). Later: refresh counters in the storage seam's `health()` (E5), since
    no alert would consume them yet. Declined, with OB2's reasons: a log line per reconnect, removing the no-op commit,
    widening the time budgets, rate-limiting the failure warning.
+4. **CI SQLite and the image proof.** PR #630's Install step measured SQLite 3.45.1 on GitHub's ubuntu-24.04
+   runner, image 20260927.320.1. Five statistics tests failed there: the plans stayed unchanged and the budget
+   test took 3.2–3.7 s. The all-tables optimize bit requires SQLite 3.46.0; the image ships 3.53.4. Decision:
+   adapt OB2's E2 to skip the entire statistics test module below 3.46.0, locally and in CI, with the version and
+   requirement in the reason. Do not raise in CI. The behaviour matters on the SQLite that ships, so
+   `local-development/image-proof.py` now proves the store's refresh and traced Groups plan on the finished
+   image's own interpreter as its runtime user, before cleaning every file from /data. It refuses SQLite below
+   3.46.0 and fails the build if statistics or the required plan are missing. CI's image job and every publish
+   build run that proof; `local-development/tests/test_store_statistics.py` also executes the proof directly.
+   This keeps runner-version differences from failing CI while still checking the real library in every image.

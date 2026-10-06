@@ -228,8 +228,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e '.[dev]' || pip install -e .
           # The store relies on PRAGMA optimize=0x10002 (SQLite 3.46.0; #626). The interpreter links the runner's
-          # system SQLite, so the version is a fact of the runner, printed here where a failing plan test can be
-          # read against it.
+          # system SQLite, printed here; statistics tests skip below 3.46.0. local-development/image-proof.py
+          # covers the image's own SQLite at every build.
           python -c 'import sqlite3; print("SQLite", sqlite3.sqlite_version)'
       - name: Install promtool, the PromQL parser the dashboard test needs
         # tests/test_chart_grafana_dashboard.py parses every panel expression of the shipped

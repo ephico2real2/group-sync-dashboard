@@ -13,6 +13,7 @@ so a test cannot pass on a copy of a query that has drifted from the real one.
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 import random
 import shutil
@@ -25,8 +26,23 @@ import pytest
 
 from gsd.store import Store
 
+if sqlite3.sqlite_version_info < (3, 46, 0):
+    pytest.skip(
+        f"SQLite {'.'.join(map(str, sqlite3.sqlite_version_info))}: planner statistics require SQLite >= 3.46.0; "
+        "image-proof.py proves the behaviour on the image's own SQLite at every build",
+        allow_module_level=True,
+    )
+
 GROUPS, BINDINGS, EVENTS, MEMBERS = 999, 50_000, 100_000, 25
 BIG = "g0000"
+
+
+def test_image_proof_planner_statistics(tmp_path):
+    spec = importlib.util.spec_from_file_location(
+        "image_proof", pathlib.Path(__file__).resolve().parents[1] / "image-proof.py")
+    proof = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(proof)
+    proof.prove_planner_statistics(str(tmp_path))
 
 
 @pytest.fixture(scope="module")
