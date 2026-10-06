@@ -245,7 +245,7 @@ there is refused with `oauth-exchange-not-built` (`local-development/gsd/cluster
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/remote-cluster-access/joining-a-cluster.dark.png">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/remote-cluster-access/joining-a-cluster.light.png">
-  <img alt="How a cluster is joined: saTokenLookup starts automatically, after the write switch and the credential gate, with the fleet account's password; Rejoin, proposed, starts with a person who passes clusterAdminSar on the host and types their own password; on the remote the dashboard logs in, a proposed SelfSubjectAccessReview checks a Rejoin credential, it reads the poller's token Secret by name and tries once to revoke the login; on the host it writes gsd-cluster-name, and the joined cluster is polled with the poller's token" src="../diagrams/remote-cluster-access/joining-a-cluster.light.png">
+  <img alt="How a cluster is joined: saTokenLookup starts automatically, after the write switch and the credential gate, with the fleet account's password; Rejoin starts with a person who passes clusterAdminSar on the host and types their own password; on the remote the dashboard logs in, a SelfSubjectAccessReview checks a Rejoin credential and the answer is logged, it reads the poller's token Secret by name and tries once to revoke the login; on the host it writes gsd-cluster-name, and the joined cluster is polled with the poller's token" src="../diagrams/remote-cluster-access/joining-a-cluster.light.png">
 </picture>
 <!-- markdownlint-enable MD033 -->
 
