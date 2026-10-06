@@ -33,8 +33,8 @@ reader may see a cluster's data wide. The question is the one `visibility.adminS
 
 <!-- markdownlint-disable MD033 -->
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="diagrams/remote-cluster-access/policies-who-decides.dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="diagrams/remote-cluster-access/policies-who-decides.light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/remote-cluster-access/policies-who-decides.dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/remote-cluster-access/policies-who-decides.light.png">
   <img alt="Three policies compared: inherit asks the host API, remote-sar asks the remote API with the joining ServiceAccount's token, self-only asks nobody" src="../diagrams/remote-cluster-access/policies-who-decides.light.png">
 </picture>
 <!-- markdownlint-enable MD033 -->
@@ -71,8 +71,8 @@ path can take all three columns, and an unstated remote defaults to `remote-sar`
 
 <!-- markdownlint-disable MD033 -->
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="diagrams/remote-cluster-access/inherit-vs-remote-sar-outcomes.dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="diagrams/remote-cluster-access/inherit-vs-remote-sar-outcomes.light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/remote-cluster-access/inherit-vs-remote-sar-outcomes.dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/remote-cluster-access/inherit-vs-remote-sar-outcomes.light.png">
   <img alt="What each policy shows four people on a remote cluster: inherit is right only where the person is admin on both clusters or on neither; for a host-only admin it shows everything and for a remote-only admin it shows own rows, both wrong; remote-sar is right in every row because the remote answers" src="../diagrams/remote-cluster-access/inherit-vs-remote-sar-outcomes.light.png">
 </picture>
 <!-- markdownlint-enable MD033 -->
@@ -95,8 +95,8 @@ remote's own review. The wrong rows are why `remote-sar` is the standard (D1, D2
 
 <!-- markdownlint-disable MD033 -->
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="diagrams/remote-cluster-access/remote-sar-decision-flow.dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="diagrams/remote-cluster-access/remote-sar-decision-flow.light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/remote-cluster-access/remote-sar-decision-flow.dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/remote-cluster-access/remote-sar-decision-flow.light.png">
   <img alt="remote-sar today: a cached verdict, or list the reader's groups on the remote and create a SubjectAccessReview there with the joining token; allowed gives the wide view and denied gives self, both cached; a 401, 403 or unreachable answer at either remote call gives self, not cached, with a pod-log warning and the tier-check metric; any other exception gives self, not cached, with an ERROR and the metric outcome error" src="../diagrams/remote-cluster-access/remote-sar-decision-flow.light.png">
 </picture>
 <!-- markdownlint-enable MD033 -->
@@ -243,8 +243,8 @@ there is refused with `oauth-exchange-not-built` (`local-development/gsd/cluster
 
 <!-- markdownlint-disable MD033 -->
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="diagrams/remote-cluster-access/joining-a-cluster.dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="diagrams/remote-cluster-access/joining-a-cluster.light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/remote-cluster-access/joining-a-cluster.dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/remote-cluster-access/joining-a-cluster.light.png">
   <img alt="How a cluster is joined: saTokenLookup starts automatically, after the write switch and the credential gate, with the fleet account's password; Rejoin, proposed, starts with a person who passes clusterAdminSar on the host and types their own password; on the remote the dashboard logs in, a proposed SelfSubjectAccessReview checks a Rejoin credential, it reads the poller's token Secret by name and tries once to revoke the login; on the host it writes gsd-cluster-name, and the joined cluster is polled with the poller's token" src="../diagrams/remote-cluster-access/joining-a-cluster.light.png">
 </picture>
 <!-- markdownlint-enable MD033 -->
