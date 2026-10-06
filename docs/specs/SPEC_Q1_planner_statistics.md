@@ -193,6 +193,719 @@ After the deploy, on the lab, read-only:
 The implementation blocks follow, in order. Applied to a clean `main` with `local-development/apply-spec-blocks.py`,
 they reproduce the branch exactly, apart from this file.
 
+### Block 1 — `README.md`
+
+<!-- block: README.md | edit -->
+
+```markdown
+| [`docs/guides/TUTORIAL_mermaid_diagrams.md`](docs/guides/TUTORIAL_mermaid_diagrams.md) | tutorial: how the diagrams are derived from code, written in Mermaid, checked in half a second and rendered in CI — with two built from scratch |
+| [`docs/design/DESIGN_reporting_service.md`](docs/design/DESIGN_reporting_service.md) | the report service: eleven access-review reports as HTML and PDF/A from a separate pod, its data path, its tickets |
+| [`docs/design/namespace-report-design.md`](docs/design/namespace-report-design.md) | superseded — per-namespace and access-review reports as HTML/PDF from a separate report service; the definitive answer on `--openshift-sar` |
+| [`docs/specs/README.md`](docs/specs/README.md) | **the feature programme** — sixty specifications, starting from the original thirteen modules, each specified with its complete code before any is implemented, one GitHub issue and milestone each, released strictly one at a time; the index, the version ladder and the definition of done |
+
+## Install
+
+```
+
+```markdown
+| [`docs/guides/TUTORIAL_mermaid_diagrams.md`](docs/guides/TUTORIAL_mermaid_diagrams.md) | tutorial: how the diagrams are derived from code, written in Mermaid, checked in half a second and rendered in CI — with two built from scratch |
+| [`docs/design/DESIGN_reporting_service.md`](docs/design/DESIGN_reporting_service.md) | the report service: eleven access-review reports as HTML and PDF/A from a separate pod, its data path, its tickets |
+| [`docs/design/namespace-report-design.md`](docs/design/namespace-report-design.md) | superseded — per-namespace and access-review reports as HTML/PDF from a separate report service; the definitive answer on `--openshift-sar` |
+| [`docs/specs/README.md`](docs/specs/README.md) | **the feature programme** — sixty-one specifications, starting from the original thirteen modules, each specified with its complete code before any is implemented, one GitHub issue and milestone each, released strictly one at a time; the index, the version ladder and the definition of done |
+
+## Install
+
+```
+
+### Block 2 — `charts/group-sync-dashboard/Chart.yaml`
+
+<!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
+
+```yaml
+# app used its default for "80%"), outside (0, 100], or, for memory, CPU and disk, at or below 1, a ratio
+# (#627); the unit is stated in values.yaml. The default render is unchanged apart from this version;
+# no RBAC change; appVersion unchanged.
+version: 0.70.10
+# 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
+# id or display name — and a Find member box on the group page. /users rows gain `full_name`,
+# nullable, the same field the members list already carried. Additive on the wire and in the UI,
+```
+
+```yaml
+# app used its default for "80%"), outside (0, 100], or, for memory, CPU and disk, at or below 1, a ratio
+# (#627); the unit is stated in values.yaml. The default render is unchanged apart from this version;
+# no RBAC change; appVersion unchanged.
+# CHART 0.70.11 (2026-10-05), PATCH: appVersion moves to application 5.7.0 (below); #626: the store
+# keeps the query planner's statistics current.
+version: 0.70.11
+# 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
+# id or display name — and a Find member box on the group page. /users rows gain `full_name`,
+# nullable, the same field the members list already carried. Additive on the wire and in the UI,
+```
+
+### Block 3 — `charts/group-sync-dashboard/Chart.yaml`
+
+<!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
+
+```yaml
+# the lab (docs audit, batch 4). MINOR.
+# 5.6.0 (2026-10-05). #625: four code defects the docs audit found (chart-bump gap, prefix
+# attribution, prepare-release --pr, render-manifests cookie step). MINOR.
+appVersion: "5.6.0"
+
+keywords: [openshift, ldap, rbac, groupsync, observability]
+home: https://github.com/ephico2real2/group-sync-dashboard
+```
+
+```yaml
+# the lab (docs audit, batch 4). MINOR.
+# 5.6.0 (2026-10-05). #625: four code defects the docs audit found (chart-bump gap, prefix
+# attribution, prepare-release --pr, render-manifests cookie step). MINOR.
+# 5.7.0 (2026-10-05). #626: the store keeps the query planner's statistics current. MINOR.
+appVersion: "5.7.0"
+
+keywords: [openshift, ldap, rbac, groupsync, observability]
+home: https://github.com/ephico2real2/group-sync-dashboard
+```
+
+### Block 4 — `docs/CHANGELOG.md`
+
+<!-- block: docs/CHANGELOG.md | edit -->
+
+```markdown
+
+## Unreleased
+
+- **KPI thresholds are checked at render, and their unit is stated (#627; chart 0.70.10).** `kpi.thresholds.*` are
+  percentages: `80` means 80 %, not `0.8`. The render now refuses a non-number (such as `"80%"`), a value outside
+  `(0, 100]`, and a memory, CPU or disk value at or below `1`, which can only be a ratio written by mistake, naming the
+```
+
+```markdown
+
+## Unreleased
+
+- **The store keeps the query planner's statistics current (#626, `docs/specs/SPEC_Q1_planner_statistics.md`;
+  application 5.7.0, chart 0.70.11).** `gsd.db` had never been analysed, so SQLite planned from index shape alone, and
+  two reads read a cluster's whole table once per row: the Groups list's binding count (2.5 s at 999 groups and 50,000
+  bindings) and group detail's first-seen (5.5 s at 300,000 membership events). The store now runs SQLite's
+  recommended `PRAGMA optimize` (with `analysis_limit`) at open and after every write cycle, and each per-thread
+  reader reconnects after a refresh, because an open connection never loads new statistics: 20 ms and 1 ms, the same
+  rows. On the lab's own database, all 75 read methods return the same rows; 14 statements change plan, each faster,
+  none slower. No schema change.
+
+- **KPI thresholds are checked at render, and their unit is stated (#627; chart 0.70.10).** `kpi.thresholds.*` are
+  percentages: `80` means 80 %, not `0.8`. The render now refuses a non-number (such as `"80%"`), a value outside
+  `(0, 100]`, and a memory, CPU or disk value at or below `1`, which can only be a ratio written by mistake, naming the
+```
+
+### Block 5 — `docs/specs/README.md`
+
+<!-- block: docs/specs/README.md | edit -->
+
+```markdown
+# Feature programme 2026-09 — the specifications
+
+Sixty specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
+validated and audited **strictly one at a time**. This directory is the only source the
+implementation is applied from: nothing is implemented from memory, and a specification is
+```
+
+```markdown
+# Feature programme 2026-09 — the specifications
+
+Sixty-one specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
+validated and audited **strictly one at a time**. This directory is the only source the
+implementation is applied from: nothing is implemented from memory, and a specification is
+```
+
+### Block 6 — `docs/specs/README.md`
+
+<!-- block: docs/specs/README.md | edit -->
+
+```markdown
+  one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
+  (below).
+
+## The sixty specifications
+
+| Id | Specification | Batch | Milestone | Version on release | Issue | Status |
+|---|---|---|---|---|---|---|
+```
+
+```markdown
+  one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
+  (below).
+
+## The sixty-one specifications
+
+| Id | Specification | Batch | Milestone | Version on release | Issue | Status |
+|---|---|---|---|---|---|---|
+```
+
+### Block 7 — `docs/specs/README.md`
+
+<!-- block: docs/specs/README.md | edit -->
+
+```markdown
+| F6 | [`SPEC_F6_ticket_signing_key.md`](SPEC_F6_ticket_signing_key.md) — the ticket signing key: a viewer's ticket is signed with HMAC-SHA256 under `<reportName>-ticket-key`, a Secret the secrets-mint hook creates once (48 random characters, never carried over, never overwritten) and only the dashboard and the report pod mount, never a schedule CronJob, so the service token no longer signs a ticket naming anybody; tickets become `v2.<payload>.<sig>`, a version-1 ticket is answered 401 so an open page mints again, one signed with the token 403; a rotation moves the key to `previous`, which the report pod verifies with until one ticket lifetime after the dashboard's restart (the chart README's two commands, tested); the service token, the probes and every other door unchanged; RBAC REMOVED 0, ADDED 1 | F — reports (Epic F #386, step 6 of 6) | — | app 4.6.0, chart 0.69.0 | [#392](https://github.com/ephico2real2/group-sync-dashboard/issues/392) | released |
+| F7 | [`SPEC_F7_snapshot_clock.md`](SPEC_F7_snapshot_clock.md) — the reports' clock is the snapshot's: a report's windows, cutoffs and overdue states end at the snapshot's stamp, not the generation time (`RunContext.snapshot_at`), so two runs over one snapshot hash the same at any clock while page one's "Generated at" stays the generation time (#592); compliance-snapshot's sealed Sync pipeline keeps the poll's status and its WHEN answer the capture's start, and login-activity's Window drops "Last log read", both instants staying on page one, so a diff across snapshots shows only data (#607); the Reports form starts with only HTML ticked, reading "Generate HTML · JSON" (#593); the test seed's snapshot is stamped at its `NOW`; compliance-snapshot's, login-activity's and groupsync-health's sha256 change once, groups' and dormant-access's only where the window's edge moves a row, the other six never | F — reports (after Epic F #386: #592, #607, #593) | — | app 5.1.0, chart 0.70.2 | [#592](https://github.com/ephico2real2/group-sync-dashboard/issues/592) | merged |
+| P1 | [`SPEC_P1_promote_release_branch.md`](SPEC_P1_promote_release_branch.md) — build once and promote: `promote.yml` runs after a green `publish.yml` on `main`, after a chart or `environments/` merge, or by hand; it builds nothing, reads each image at the immutable `<appVersion>-<sha10>` of `main`'s last image-input commit and requires `:<appVersion>` at the same digest (a notice while it is still publishing), checks the version label on every Linux image and the signature from `publish.yml` on `main`, pins both by digest in `promotion.yaml` and fast-forwards the `release` branch (the chart, `environments/`, `promotion.yaml`) with a deploy key only `main` can use; during development the lab tracks `main` (the operator: "main by default; release optional") and `release-crc.sh --argocd release` is the opt-in, used for each epic release's walk, with `--argocd main` to switch back; the end state is `group-sync-dashboard-dev` on `main` and `group-sync-dashboard` on `release` | P — promotion (release safety, part B of #410) | — | app 5.2.0, chart 0.70.3 | [#598](https://github.com/ephico2real2/group-sync-dashboard/issues/598) | merged |
+
+The rows are in **implementation order**, which is also the version ladder. Status moves
+`specified → in progress → merged → released`: `in progress` while some of the spec is on
+```
+
+```markdown
+| F6 | [`SPEC_F6_ticket_signing_key.md`](SPEC_F6_ticket_signing_key.md) — the ticket signing key: a viewer's ticket is signed with HMAC-SHA256 under `<reportName>-ticket-key`, a Secret the secrets-mint hook creates once (48 random characters, never carried over, never overwritten) and only the dashboard and the report pod mount, never a schedule CronJob, so the service token no longer signs a ticket naming anybody; tickets become `v2.<payload>.<sig>`, a version-1 ticket is answered 401 so an open page mints again, one signed with the token 403; a rotation moves the key to `previous`, which the report pod verifies with until one ticket lifetime after the dashboard's restart (the chart README's two commands, tested); the service token, the probes and every other door unchanged; RBAC REMOVED 0, ADDED 1 | F — reports (Epic F #386, step 6 of 6) | — | app 4.6.0, chart 0.69.0 | [#392](https://github.com/ephico2real2/group-sync-dashboard/issues/392) | released |
+| F7 | [`SPEC_F7_snapshot_clock.md`](SPEC_F7_snapshot_clock.md) — the reports' clock is the snapshot's: a report's windows, cutoffs and overdue states end at the snapshot's stamp, not the generation time (`RunContext.snapshot_at`), so two runs over one snapshot hash the same at any clock while page one's "Generated at" stays the generation time (#592); compliance-snapshot's sealed Sync pipeline keeps the poll's status and its WHEN answer the capture's start, and login-activity's Window drops "Last log read", both instants staying on page one, so a diff across snapshots shows only data (#607); the Reports form starts with only HTML ticked, reading "Generate HTML · JSON" (#593); the test seed's snapshot is stamped at its `NOW`; compliance-snapshot's, login-activity's and groupsync-health's sha256 change once, groups' and dormant-access's only where the window's edge moves a row, the other six never | F — reports (after Epic F #386: #592, #607, #593) | — | app 5.1.0, chart 0.70.2 | [#592](https://github.com/ephico2real2/group-sync-dashboard/issues/592) | merged |
+| P1 | [`SPEC_P1_promote_release_branch.md`](SPEC_P1_promote_release_branch.md) — build once and promote: `promote.yml` runs after a green `publish.yml` on `main`, after a chart or `environments/` merge, or by hand; it builds nothing, reads each image at the immutable `<appVersion>-<sha10>` of `main`'s last image-input commit and requires `:<appVersion>` at the same digest (a notice while it is still publishing), checks the version label on every Linux image and the signature from `publish.yml` on `main`, pins both by digest in `promotion.yaml` and fast-forwards the `release` branch (the chart, `environments/`, `promotion.yaml`) with a deploy key only `main` can use; during development the lab tracks `main` (the operator: "main by default; release optional") and `release-crc.sh --argocd release` is the opt-in, used for each epic release's walk, with `--argocd main` to switch back; the end state is `group-sync-dashboard-dev` on `main` and `group-sync-dashboard` on `release` | P — promotion (release safety, part B of #410) | — | app 5.2.0, chart 0.70.3 | [#598](https://github.com/ephico2real2/group-sync-dashboard/issues/598) | merged |
+| Q1 | [`SPEC_Q1_planner_statistics.md`](SPEC_Q1_planner_statistics.md) — the query planner's statistics: the store runs SQLite's recommended `PRAGMA optimize` (with `analysis_limit`) at open and after every write cycle, and each per-thread reader reconnects after a refresh, because an open connection never loads new statistics; the Groups list's binding count and a group's first-seen dates stop reading a cluster's whole table once per row (2.5 s and 5.5 s to 20 ms and 1 ms at the operator's bound), with the same rows from every read | Q — query performance | — | app 5.7.0, chart 0.70.11 | [#626](https://github.com/ephico2real2/group-sync-dashboard/issues/626) | merged |
+
+The rows are in **implementation order**, which is also the version ladder. Status moves
+`specified → in progress → merged → released`: `in progress` while some of the spec is on
+```
+
+### Block 8 — `local-development/gsd/__init__.py`
+
+<!-- block: local-development/gsd/__init__.py | edit -->
+
+```python
+# pod is running a version it is not — the same failure appVersion had, and quieter, because the
+# endpoint answers confidently either way. tests/test_chart_versions.py holds the two together;
+# before that test existed nothing did.
+__version__ = "5.6.0"
+
+# THE ONE PLACE THE DASHBOARD IS NAMED. The page title, the header, the signed-out page and
+# the API docs all read this; the README heading is held to it by tests/test_title.py. It used
+```
+
+```python
+# pod is running a version it is not — the same failure appVersion had, and quieter, because the
+# endpoint answers confidently either way. tests/test_chart_versions.py holds the two together;
+# before that test existed nothing did.
+__version__ = "5.7.0"
+
+# THE ONE PLACE THE DASHBOARD IS NAMED. The page title, the header, the signed-out page and
+# the API docs all read this; the README heading is held to it by tests/test_title.py. It used
+```
+
+### Block 9 — `local-development/gsd/storage.py`
+
+<!-- block: local-development/gsd/storage.py | edit -->
+
+```python
+are replaced by two engine-neutral operations:
+
+* ``maintain()`` — "do whatever periodic upkeep your engine needs". SQLite truncates the
+  WAL; Postgres would do nothing and return an empty dict.
+* ``health()`` — a free-form dict of engine-reported facts, which the collector turns into
+  metrics without knowing what produced them.
+
+```
+
+```python
+are replaced by two engine-neutral operations:
+
+* ``maintain()`` — "do whatever periodic upkeep your engine needs". SQLite truncates the
+  WAL and refreshes the query planner's statistics (#626); Postgres would do nothing and return an
+  empty dict.
+* ``health()`` — a free-form dict of engine-reported facts, which the collector turns into
+  metrics without knowing what produced them.
+
+```
+
+### Block 10 — `local-development/gsd/store.py`
+
+<!-- block: local-development/gsd/store.py | edit -->
+
+```python
+        self.reader_busy_timeout_ms = reader_busy_timeout_ms
+        self.wal_checkpoint_bytes = int(wal_checkpoint_mb * 1024 * 1024)
+        self._checkpoint_busy_total = 0
+        self._lock = threading.RLock()
+        self._local = threading.local()
+        # Transaction depth is PER THREAD, not per Store. A plain attribute here was a
+```
+
+```python
+        self.reader_busy_timeout_ms = reader_busy_timeout_ms
+        self.wal_checkpoint_bytes = int(wal_checkpoint_mb * 1024 * 1024)
+        self._checkpoint_busy_total = 0
+        # Bumped each time the writer refreshes the planner's statistics; a reader opened before it
+        # reconnects on its next read, because only a new connection loads them (#626, _reader).
+        self._stats_epoch = 0
+        self._lock = threading.RLock()
+        self._local = threading.local()
+        # Transaction depth is PER THREAD, not per Store. A plain attribute here was a
+```
+
+### Block 11 — `local-development/gsd/store.py`
+
+<!-- block: local-development/gsd/store.py | edit -->
+
+```python
+        # 50k-row refresh. Set GSD_SQLITE_SYNCHRONOUS=FULL if that trade is wrong for you.
+        self._conn.execute(f"PRAGMA synchronous={_safe_pragma_word(synchronous, 'NORMAL')}")
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.executescript(SCHEMA)
+        _migrate(self._conn)
+        _seed_observation_markers(self._conn)
+        self._conn.commit()
+
+    def close(self) -> None:
+        # Under the lock: closing while another thread is mid-transaction would
+```
+
+```python
+        # 50k-row refresh. Set GSD_SQLITE_SYNCHRONOUS=FULL if that trade is wrong for you.
+        self._conn.execute(f"PRAGMA synchronous={_safe_pragma_word(synchronous, 'NORMAL')}")
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        # An approximate ANALYZE, as lang_analyze.html §5 advises: a scan of at most ~1000 rows per index, 7 ms
+        # where the full one took 85 ms at 50,000 bindings, and the same plans (#626). Connection state: it governs
+        # every PRAGMA optimize this writer runs.
+        self._conn.execute("PRAGMA analysis_limit=1000")
+        self._conn.executescript(SCHEMA)
+        _migrate(self._conn)
+        _seed_observation_markers(self._conn)
+        self._conn.commit()
+        self._refresh_statistics()
+
+    def close(self) -> None:
+        # Under the lock: closing while another thread is mid-transaction would
+```
+
+### Block 12 — `local-development/gsd/store.py`
+
+<!-- block: local-development/gsd/store.py | edit -->
+
+```python
+        if self.path == ":memory:":
+            return self._conn
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.path, check_same_thread=False)
+            _harden(conn)
+```
+
+```python
+        if self.path == ":memory:":
+            return self._conn
+        conn = getattr(self._local, "conn", None)
+        if (conn is not None and getattr(self._local, "stats_epoch", 0) != self._stats_epoch
+                and not getattr(self._local, "read_depth", 0) and not conn.in_transaction):
+            # The writer refreshed the planner's statistics, and an open connection never loads them: it keeps
+            # the plans it made (#626). A new connection does. Never inside a read_snapshot, whose transaction
+            # is the consistency the caller asked for; the next read after it reconnects.
+            conn.close()
+            conn = None
+        if conn is None:
+            conn = sqlite3.connect(self.path, check_same_thread=False)
+            _harden(conn)
+```
+
+### Block 13 — `local-development/gsd/store.py`
+
+<!-- block: local-development/gsd/store.py | edit -->
+
+```python
+            # property of the database, so the writer's setting does not reach these.
+            conn.execute(f"PRAGMA busy_timeout={int(self.reader_busy_timeout_ms)}")
+            self._local.conn = conn
+        return conn
+
+    def _wal_bytes(self) -> int:
+        """Size of the -wal sidecar, or 0 when there is none (`:memory:`, or rollback mode)."""
+        if self.path == ":memory:":
+```
+
+```python
+            # property of the database, so the writer's setting does not reach these.
+            conn.execute(f"PRAGMA busy_timeout={int(self.reader_busy_timeout_ms)}")
+            self._local.conn = conn
+            self._local.stats_epoch = self._stats_epoch
+        return conn
+
+    def _refresh_statistics(self) -> None:
+        """Keep the query planner's statistics current, as SQLite recommends (#626).
+
+        Without statistics SQLite plans from the shape of the indexes alone, and two reads chose one that narrows
+        only to cluster_id: the Groups list's binding count read every binding on the cluster once per group
+        (2.5 s at 999 groups and 50,000 bindings), and group detail's first-seen read the cluster's whole
+        membership history once per member (5.5 s at 300,000 events). With statistics they use
+        rbac_binding_by_group and membership_event_by_user: 20 ms and 1 ms, the same rows. The call is
+        lang_analyze.html §2.1's for a long-lived connection, `PRAGMA optimize=0x10002`: it analyses only the
+        tables with no statistics or whose size has changed by about an order of magnitude, so it is nothing
+        when nothing changed (measured 0.0 ms) and runs at open and after every write cycle (maintain).
+
+        Its debug form lists what it would analyse; an empty list is the common case and changes nothing, so the
+        readers are only told to reconnect when the statistics actually moved. Under the write lock and never
+        inside a transaction: ANALYZE writes sqlite_stat1 and commits.
+        """
+        with self._lock:
+            if self._conn.in_transaction:
+                return
+            pending = [row[0] for row in self._conn.execute("PRAGMA optimize(0x10003)").fetchall()]
+            if not pending:
+                return
+            self._conn.execute("PRAGMA optimize=0x10002")
+            self._conn.commit()
+            self._stats_epoch += 1
+        log.info("query planner statistics refreshed: %s", "; ".join(pending))
+
+    def _wal_bytes(self) -> int:
+        """Size of the -wal sidecar, or 0 when there is none (`:memory:`, or rollback mode)."""
+        if self.path == ":memory:":
+```
+
+### Block 14 — `local-development/gsd/store.py`
+
+<!-- block: local-development/gsd/store.py | edit -->
+
+```python
+        return int(self._rows(sql, params)[0]["n"])
+
+    def maintain(self) -> None:
+        """Periodic upkeep after a write cycle. For SQLite, a WAL checkpoint.
+
+        Returns nothing. It briefly returned a dict describing the checkpoint, which the
+        only caller discarded — a contract that implied a signal it did not deliver. The
+```
+
+```python
+        return int(self._rows(sql, params)[0]["n"])
+
+    def maintain(self) -> None:
+        """Periodic upkeep after a write cycle. For SQLite, a WAL checkpoint, then the planner's statistics
+        (#626, _refresh_statistics), which cost nothing unless a table's size changed by an order of magnitude.
+
+        Returns nothing. It briefly returned a dict describing the checkpoint, which the
+        only caller discarded — a contract that implied a signal it did not deliver. The
+```
+
+### Block 15 — `local-development/gsd/store.py`
+
+<!-- block: local-development/gsd/store.py | edit -->
+
+```python
+        through health() where a scrape can read it.
+        """
+        self._checkpoint()
+
+    def health(self) -> StorageHealth:
+        """Engine-reported operational facts, namespaced under the engine that produced them.
+```
+
+```python
+        through health() where a scrape can read it.
+        """
+        self._checkpoint()
+        self._refresh_statistics()
+
+    def health(self) -> StorageHealth:
+        """Engine-reported operational facts, namespaced under the engine that produced them.
+```
+
+### Block 16 — `local-development/gsd/store.py`
+
+<!-- block: local-development/gsd/store.py | edit -->
+
+```python
+                f"SELECT {columns} FROM binding_event WHERE {where} ORDER BY id DESC LIMIT ?",
+                [*scope, limit],
+            )
+        # Two index-served halves under UNION ALL, not one OR: this store never runs ANALYZE, and
+        # without statistics SQLite plans the OR as a walk of the cluster's rows plus a sort —
+        # measured 306 ms at 300k rows against 1.8 ms for the union, the same rows back (OB1,
+        # review 2 of #177). The groups ride as ONE bound JSON parameter: a viewer in more groups
+```
+
+```python
+                f"SELECT {columns} FROM binding_event WHERE {where} ORDER BY id DESC LIMIT ?",
+                [*scope, limit],
+            )
+        # Two index-served halves under UNION ALL, not one OR: written when this store never ran ANALYZE (it
+        # keeps statistics since #626, but they appear only once a table has rows), and
+        # without statistics SQLite plans the OR as a walk of the cluster's rows plus a sort —
+        # measured 306 ms at 300k rows against 1.8 ms for the union, the same rows back (OB1,
+        # review 2 of #177). The groups ride as ONE bound JSON parameter: a viewer in more groups
+```
+
+### Block 17 — `local-development/pyproject.toml`
+
+<!-- block: local-development/pyproject.toml | edit -->
+
+```toml
+# reconcile_error alert's `detail` is replaced there. A self-tier consumer parsing either field
+# gets a KeyError after this upgrade, which is a contract change and not a patch — administrators
+# are unaffected, byte-for-byte.
+version = "5.6.0"
+description = "Read-only multi-cluster dashboard for the redhat-cop group-sync-operator"
+requires-python = ">=3.11"
+# FLOORS ARE A SECURITY CONTROL, not just a compatibility statement. These were set once
+```
+
+```toml
+# reconcile_error alert's `detail` is replaced there. A self-tier consumer parsing either field
+# gets a KeyError after this upgrade, which is a contract change and not a patch — administrators
+# are unaffected, byte-for-byte.
+version = "5.7.0"
+description = "Read-only multi-cluster dashboard for the redhat-cop group-sync-operator"
+requires-python = ">=3.11"
+# FLOORS ARE A SECURITY CONTROL, not just a compatibility statement. These were set once
+```
+
+### Block 18 — `local-development/tests/test_specs_index.py`
+
+<!-- block: local-development/tests/test_specs_index.py | edit -->
+
+```python
+    assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E5 #304, E3 #302, E6 #306, E7 #300, E8 #410, E9 #425, G4 #420, W1 #426, E10 #533, H1 #542, E11 #532, F1 #270, F2 #106, F3 #108, F4 #109, F5 #140, F6 #392, F7 #592, P1 #598)
+    # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
+    assert len(rows) == 60, f"expected sixty index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503), E5 (#304), E3 (#302), E6 (#306), E7 (#300), E8 (#410), E9 (#425), G4 (#420), W1 (#426), E10 (#533), H1 (#542), E11 (#532), A4 (#534), F1 (#270), F2 (#106), F3 (#108), F4 (#109), F5 (#140), F6 (#392), F7 (#592) and P1 (#598); matched {sorted(rows)}"
+    return rows
+
+
+```
+
+```python
+    assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E5 #304, E3 #302, E6 #306, E7 #300, E8 #410, E9 #425, G4 #420, W1 #426, E10 #533, H1 #542, E11 #532, F1 #270, F2 #106, F3 #108, F4 #109, F5 #140, F6 #392, F7 #592, P1 #598)
+    # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
+    assert len(rows) == 61, f"expected sixty-one index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503), E5 (#304), E3 (#302), E6 (#306), E7 (#300), E8 (#410), E9 (#425), G4 (#420), W1 (#426), E10 (#533), H1 (#542), E11 (#532), A4 (#534), F1 (#270), F2 (#106), F3 (#108), F4 (#109), F5 (#140), F6 (#392), F7 (#592) P1 (#598) and Q1 (#626); matched {sorted(rows)}"
+    return rows
+
+
+```
+
+### Block 19 — `local-development/tests/test_specs_index.py`
+
+<!-- block: local-development/tests/test_specs_index.py | edit -->
+
+```python
+    assert ROWS["F6"]["issue"] == "392", ("F6 is #392", ROWS["F6"]["issue"])
+    # F7 (#592, with #607 and #593) is above every issue in the rows it follows, so it rises with them: no exclusion.
+    # P1 (#598) is above F7's #592, so it rises with the rows before it: no exclusion either.
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E5", "E3", "E6", "E7", "E8", "E9", "G4", "W1", "E10", "F1", "F2", "F3", "F4", "F5", "F6")]
+    assert issues == sorted(issues), issues
+    programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
+```
+
+```python
+    assert ROWS["F6"]["issue"] == "392", ("F6 is #392", ROWS["F6"]["issue"])
+    # F7 (#592, with #607 and #593) is above every issue in the rows it follows, so it rises with them: no exclusion.
+    # P1 (#598) is above F7's #592, so it rises with the rows before it: no exclusion either.
+    # Q1 (#626) is above P1's #598, so it rises too: no exclusion.
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E5", "E3", "E6", "E7", "E8", "E9", "G4", "W1", "E10", "F1", "F2", "F3", "F4", "F5", "F6")]
+    assert issues == sorted(issues), issues
+    programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
+```
+
+### Block 20 — `local-development/tests/test_store_statistics.py` (new)
+
+<!-- block: local-development/tests/test_store_statistics.py | create -->
+
+```python
+"""The store keeps the query planner's statistics current, and its readers use them (#626).
+
+Without statistics SQLite plans from the shape of the indexes alone. Two reads chose an index that narrows only to
+cluster_id and so read a cluster's whole table once per row: the Groups list's binding count (2.5 s at 999 groups
+and 50,000 bindings) and group detail's first-seen (5.5 s at 300,000 membership events). The store now runs
+SQLite's recommended `PRAGMA optimize` at open and after every write cycle (`maintain`), and a reader opened before
+a refresh reconnects, because an open connection never loads new statistics. The bound is the operator's: a
+cluster never has 1,000 groups.
+
+The plans are read from the SQL the store itself runs (the reader's trace callback gives it with its values bound),
+so a test cannot pass on a copy of a query that has drifted from the real one.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import random
+import shutil
+import sqlite3
+import threading
+import time
+
+import pytest
+
+from gsd.store import Store
+
+GROUPS, BINDINGS, EVENTS, MEMBERS = 999, 50_000, 100_000, 25
+BIG = "g0000"
+
+
+@pytest.fixture(scope="module")
+def seeded(tmp_path_factory) -> pathlib.Path:
+    """A database at the operator's bound, written straight to the tables, with no statistics in it."""
+    path = tmp_path_factory.mktemp("stats") / "seed.db"
+    store = Store(str(path))
+    store.upsert_cluster("c", "https://x", True)
+    conn = store._conn
+    names = [f"g{i:04d}" for i in range(GROUPS)]
+    rnd = random.Random(626)
+    conn.executemany("INSERT INTO group_state(cluster_id, name, member_count, sync_provider, observed_at) "
+                     "VALUES ('c', ?, 25, 'gs_ldap', '2026-10-05T00:00:00Z')", [(n,) for n in names])
+    conn.executemany("INSERT INTO rbac_group_binding(cluster_id, binding_kind, binding_namespace, binding_name, role_kind, "
+                     "role_name, subject_kind, group_name, observed_at) VALUES ('c', 'RoleBinding', ?, ?, 'ClusterRole', "
+                     "'view', 'Group', ?, '2026-10-05T00:00:00Z')",
+                     [(f"ns{j % 500}", f"b{j}", rnd.choice(names)) for j in range(BINDINGS)])
+    conn.executemany("INSERT INTO group_member(cluster_id, group_name, user_name, first_seen_at, last_seen_at) "
+                     "VALUES ('c', ?, ?, 't', 't')", [(BIG, f"u{i}") for i in range(MEMBERS)])
+    conn.executemany("INSERT INTO membership_event(cluster_id, group_name, user_name, change, observed_at) VALUES ('c', ?, ?, ?, ?)",
+                     [(rnd.choice(names), f"u{rnd.randrange(5000)}", rnd.choice(("added", "removed")),
+                       f"2026-{1 + j % 9:02d}-{1 + j % 28:02d}T00:00:00Z") for j in range(EVENTS)])
+    conn.commit()
+    conn.execute("DROP TABLE IF EXISTS sqlite_stat1")
+    conn.commit()
+    store.close()
+    return path
+
+
+@pytest.fixture()
+def db(seeded, tmp_path) -> pathlib.Path:
+    path = tmp_path / "gsd.db"
+    shutil.copy(seeded, path)
+    return path
+
+
+def _traced(store: Store, read) -> list[str]:
+    """The SQL a store read runs on this thread's reader, values bound."""
+    seen: list[str] = []
+    conn = store._reader()
+    conn.set_trace_callback(seen.append)
+    try:
+        read()
+    finally:
+        conn.set_trace_callback(None)
+    return seen
+
+
+def _plan(store: Store, sql: str) -> str:
+    return " | ".join(row[3] for row in store._reader().execute("EXPLAIN QUERY PLAN " + sql))
+
+
+def _timed(read) -> float:
+    start = time.perf_counter()
+    read()
+    return time.perf_counter() - start
+
+
+def test_open_gathers_statistics_and_both_reads_use_their_index(db):
+    store = Store(str(db))
+    try:
+        (groups_sql,) = _traced(store, lambda: store.groups("c", "all"))
+        (members_sql,) = _traced(store, lambda: store.group_members("c", BIG))
+        assert "SEARCH b USING INDEX rbac_binding_by_group (cluster_id=? AND group_name=?)" in _plan(store, groups_sql)
+        assert "SEARCH e USING INDEX membership_event_by_user (cluster_id=? AND user_name=?)" in _plan(store, members_sql)
+    finally:
+        store.close()
+
+
+def test_both_reads_stay_inside_a_budget_at_the_operator_s_bound(db):
+    """Measured without statistics on this data: about 2.5 s and 1.8 s. With them: about 20 ms and 1 ms."""
+    store = Store(str(db))
+    try:
+        assert len(store.groups("c", "all")) == GROUPS
+        assert len(store.group_members("c", BIG)) == MEMBERS
+        assert _timed(lambda: store.groups("c", "all")) < 0.5
+        assert _timed(lambda: store.group_members("c", BIG)) < 0.2
+    finally:
+        store.close()
+
+
+def test_the_rows_are_the_same_with_and_without_statistics(db, tmp_path):
+    bare = tmp_path / "bare.db"
+    shutil.copy(db, bare)
+    raw = sqlite3.connect(bare)
+    raw.row_factory = sqlite3.Row
+    store = Store(str(db))
+    try:
+        (groups_sql,) = _traced(store, lambda: store.groups("c", "all"))
+        (members_sql,) = _traced(store, lambda: store.group_members("c", BIG))
+        assert not raw.execute("SELECT count(*) FROM sqlite_master WHERE name = 'sqlite_stat1'").fetchone()[0]
+        for sql in (groups_sql, members_sql):
+            assert sorted(map(tuple, raw.execute(sql))) == sorted(map(tuple, store._reader().execute(sql)))
+    finally:
+        raw.close()
+        store.close()
+
+
+def test_a_reader_opened_before_a_refresh_reconnects_and_uses_the_new_statistics(tmp_path, seeded):
+    """An open connection keeps the plans it made: the planner loads statistics when a connection reads the
+    schema, and ANALYZE does not change it (lang_analyze.html §3; measured). The reader reconnects instead."""
+    path = tmp_path / "gsd.db"
+    store = Store(str(path))   # a fresh install: empty tables, so open gathers nothing
+    try:
+        store.upsert_cluster("c", "https://x", True)
+        before = store._reader()
+        (groups_sql,) = _traced(store, lambda: store.groups("c", "all"))
+        epoch = store._stats_epoch
+        src = sqlite3.connect(seeded)
+        for table in ("group_state", "rbac_group_binding"):
+            store._conn.execute(f"DELETE FROM {table}")
+            rows = src.execute(f"SELECT * FROM {table}").fetchall()
+            store._conn.executemany(f"INSERT INTO {table} VALUES ({','.join('?' * len(rows[0]))})", rows)
+        store._conn.commit()
+        src.close()
+        assert "rbac_binding_by_group" not in _plan(store, groups_sql)
+        store.maintain()
+        assert store._stats_epoch == epoch + 1
+        after = store._reader()
+        assert after is not before
+        assert "rbac_binding_by_group (cluster_id=? AND group_name=?)" in _plan(store, groups_sql)
+    finally:
+        store.close()
+
+
+def test_nothing_changed_means_no_refresh_and_no_reconnect(db):
+    store = Store(str(db))
+    try:
+        reader, epoch = store._reader(), store._stats_epoch
+        store.maintain()
+        store.maintain()
+        assert store._stats_epoch == epoch
+        assert store._reader() is reader
+    finally:
+        store.close()
+
+
+def test_a_reader_inside_a_read_snapshot_is_not_replaced_until_the_snapshot_ends(db):
+    store = Store(str(db))
+    try:
+        reader = store._reader()
+        with store.read_snapshot():
+            store._stats_epoch += 1          # a refresh lands while this thread holds a snapshot
+            assert store._reader() is reader
+            store.groups("c", "all")
+        assert store._reader() is not reader
+    finally:
+        store.close()
+
+
+def test_a_reader_on_another_thread_reconnects_too(db):
+    """Readers are per thread; the epoch is read by each, so an API worker's reader reconnects as the poller's does."""
+    store = Store(str(db))
+    try:
+        replaced: list[bool] = []
+
+        def worker():
+            first = store._reader()
+            store._stats_epoch += 1
+            replaced.append(store._reader() is not first)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join()
+        assert replaced == [True]
+    finally:
+        store.close()
+```
+
 ## Orchestrator's notes
 
 1. The research, this spec and its code were written by the orchestrator, at the operator's instruction (§1). The
