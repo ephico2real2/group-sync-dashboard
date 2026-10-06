@@ -23,13 +23,16 @@ config:
   unmanagedAudit:
     mode: "log"
 
-# The dashboard container's CPU LIMIT, raised for this lab only; the request stays the chart's 50m, so the CRC's
-# scheduling budget (requests) is unchanged. Measured 2026-10-06 at the chart's 0.5-core limit, over a steady
+# The dashboard container's CPU, for this lab only. The LIMIT: measured 2026-10-06 at the chart's 0.5-core limit, over a steady
 # 121-second window: 0.036 cores used on average, yet 66 of 868 scheduler periods throttled (7.6 %, against the KPI
 # page's 1 % amber line) and 10.0 s spent throttled. The work comes in bursts (the poll cycles across this lab's 26
 # clusters) that exceed the limit inside single 100 ms periods, and every thread waits while throttled, API requests
-# included. The chart default stays until more than this lab has been measured.
+# included. At 1 core the same window measured 20 of 876 periods throttled (2.3 %) and 2.3 s (#631). The REQUEST: 100m
+# (the operator, 2026-10-06), up from the chart's 50m; requests count against the CRC's CPU budget (8,762m of 11,800m
+# requested before this, 74 %). The chart defaults stay until more than this lab has been measured.
 resources:
+  requests:
+    cpu: 100m
   limits:
     cpu: "1"
 
