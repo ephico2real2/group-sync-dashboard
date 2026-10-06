@@ -150,7 +150,7 @@ Design notes, for the decisions that are not obvious from the code:
 | [`docs/guides/TUTORIAL_mermaid_diagrams.md`](docs/guides/TUTORIAL_mermaid_diagrams.md) | tutorial: how the diagrams are derived from code, written in Mermaid, checked in half a second and rendered in CI — with two built from scratch |
 | [`docs/design/DESIGN_reporting_service.md`](docs/design/DESIGN_reporting_service.md) | the report service: eleven access-review reports as HTML and PDF/A from a separate pod, its data path, its tickets |
 | [`docs/design/namespace-report-design.md`](docs/design/namespace-report-design.md) | superseded — per-namespace and access-review reports as HTML/PDF from a separate report service; the definitive answer on `--openshift-sar` |
-| [`docs/specs/README.md`](docs/specs/README.md) | **the feature programme** — sixty specifications, starting from the original thirteen modules, each specified with its complete code before any is implemented, one GitHub issue and milestone each, released strictly one at a time; the index, the version ladder and the definition of done |
+| [`docs/specs/README.md`](docs/specs/README.md) | **the feature programme** — sixty-one specifications, starting from the original thirteen modules, each specified with its complete code before any is implemented, one GitHub issue and milestone each, released strictly one at a time; the index, the version ladder and the definition of done |
 
 ## Install
 
