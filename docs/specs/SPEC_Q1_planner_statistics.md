@@ -219,7 +219,33 @@ After the deploy, on the lab, read-only:
 The implementation blocks follow, in order. Applied to a clean `main` with `local-development/apply-spec-blocks.py`,
 they reproduce the branch exactly, apart from this file.
 
-### Block 1 — `README.md`
+### Block 1 — `.github/workflows/ci.yml`
+
+<!-- block: .github/workflows/ci.yml | edit -->
+
+```text
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]' || pip install -e .
+      - name: Install promtool, the PromQL parser the dashboard test needs
+        # tests/test_chart_grafana_dashboard.py parses every panel expression of the shipped
+        # Grafana board with promtool. Locally the test skips when promtool is absent; in CI it
+```
+
+```text
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]' || pip install -e .
+          # The store relies on PRAGMA optimize=0x10002 (SQLite 3.46.0; #626). The interpreter links the runner's
+          # system SQLite, so the version is a fact of the runner, printed here where a failing plan test can be
+          # read against it.
+          python -c 'import sqlite3; print("SQLite", sqlite3.sqlite_version)'
+      - name: Install promtool, the PromQL parser the dashboard test needs
+        # tests/test_chart_grafana_dashboard.py parses every panel expression of the shipped
+        # Grafana board with promtool. Locally the test skips when promtool is absent; in CI it
+```
+
+### Block 2 — `README.md`
 
 <!-- block: README.md | edit -->
 
@@ -243,7 +269,7 @@ they reproduce the branch exactly, apart from this file.
 
 ```
 
-### Block 2 — `charts/group-sync-dashboard/Chart.yaml`
+### Block 3 — `charts/group-sync-dashboard/Chart.yaml`
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
@@ -269,7 +295,7 @@ version: 0.70.11
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
 ```
 
-### Block 3 — `charts/group-sync-dashboard/Chart.yaml`
+### Block 4 — `charts/group-sync-dashboard/Chart.yaml`
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
@@ -294,7 +320,7 @@ keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
 ```
 
-### Block 4 — `docs/CHANGELOG.md`
+### Block 5 — `docs/CHANGELOG.md`
 
 <!-- block: docs/CHANGELOG.md | edit -->
 
@@ -325,7 +351,7 @@ home: https://github.com/ephico2real2/group-sync-dashboard
   `(0, 100]`, and a memory, CPU or disk value at or below `1`, which can only be a ratio written by mistake, naming the
 ```
 
-### Block 5 — `docs/specs/README.md`
+### Block 6 — `docs/specs/README.md`
 
 <!-- block: docs/specs/README.md | edit -->
 
@@ -347,7 +373,7 @@ validated and audited **strictly one at a time**. This directory is the only sou
 implementation is applied from: nothing is implemented from memory, and a specification is
 ```
 
-### Block 6 — `docs/specs/README.md`
+### Block 7 — `docs/specs/README.md`
 
 <!-- block: docs/specs/README.md | edit -->
 
@@ -371,7 +397,7 @@ implementation is applied from: nothing is implemented from memory, and a specif
 |---|---|---|---|---|---|---|
 ```
 
-### Block 7 — `docs/specs/README.md`
+### Block 8 — `docs/specs/README.md`
 
 <!-- block: docs/specs/README.md | edit -->
 
@@ -394,7 +420,7 @@ The rows are in **implementation order**, which is also the version ladder. Stat
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
 ```
 
-### Block 8 — `local-development/gsd/__init__.py`
+### Block 9 — `local-development/gsd/__init__.py`
 
 <!-- block: local-development/gsd/__init__.py | edit -->
 
@@ -418,7 +444,7 @@ __version__ = "5.7.0"
 # the API docs all read this; the README heading is held to it by tests/test_title.py. It used
 ```
 
-### Block 9 — `local-development/gsd/storage.py`
+### Block 10 — `local-development/gsd/storage.py`
 
 <!-- block: local-development/gsd/storage.py | edit -->
 
@@ -443,7 +469,7 @@ are replaced by two engine-neutral operations:
 
 ```
 
-### Block 10 — `local-development/gsd/store.py`
+### Block 11 — `local-development/gsd/store.py`
 
 <!-- block: local-development/gsd/store.py | edit -->
 
@@ -468,7 +494,7 @@ are replaced by two engine-neutral operations:
         # Transaction depth is PER THREAD, not per Store. A plain attribute here was a
 ```
 
-### Block 11 — `local-development/gsd/store.py`
+### Block 12 — `local-development/gsd/store.py`
 
 <!-- block: local-development/gsd/store.py | edit -->
 
@@ -503,7 +529,7 @@ are replaced by two engine-neutral operations:
         # Under the lock: closing while another thread is mid-transaction would
 ```
 
-### Block 12 — `local-development/gsd/store.py`
+### Block 13 — `local-development/gsd/store.py`
 
 <!-- block: local-development/gsd/store.py | edit -->
 
@@ -526,13 +552,14 @@ are replaced by two engine-neutral operations:
             # the plans it made (#626). A new connection does. Never inside a read_snapshot, whose transaction
             # is the consistency the caller asked for; the next read after it reconnects.
             conn.close()
+            self._local.conn = None
             conn = None
         if conn is None:
             conn = sqlite3.connect(self.path, check_same_thread=False)
             _harden(conn)
 ```
 
-### Block 13 — `local-development/gsd/store.py`
+### Block 14 — `local-development/gsd/store.py`
 
 <!-- block: local-development/gsd/store.py | edit -->
 
@@ -569,15 +596,22 @@ are replaced by two engine-neutral operations:
         Its debug form lists what it would analyse; an empty list is the common case and changes nothing, so the
         readers are only told to reconnect when the statistics actually moved. Under the write lock and never
         inside a transaction: ANALYZE writes sqlite_stat1 and commits.
+        Optional refresh failures are logged and retried after the next poll, keeping the old statistics.
         """
         with self._lock:
             if self._conn.in_transaction:
                 return
-            pending = [row[0] for row in self._conn.execute("PRAGMA optimize(0x10003)").fetchall()]
-            if not pending:
+            try:
+                pending = [row[0] for row in self._conn.execute("PRAGMA optimize(0x10003)").fetchall()]
+                if not pending:
+                    return
+                self._conn.execute("PRAGMA optimize=0x10002")
+                self._conn.commit()
+            except sqlite3.Error:
+                if self._conn.in_transaction:
+                    self._conn.rollback()
+                log.warning("query planner statistics refresh failed; will retry after a poll", exc_info=True)
                 return
-            self._conn.execute("PRAGMA optimize=0x10002")
-            self._conn.commit()
             self._stats_epoch += 1
         log.info("query planner statistics refreshed: %s", "; ".join(pending))
 
@@ -586,7 +620,7 @@ are replaced by two engine-neutral operations:
         if self.path == ":memory:":
 ```
 
-### Block 14 — `local-development/gsd/store.py`
+### Block 15 — `local-development/gsd/store.py`
 
 <!-- block: local-development/gsd/store.py | edit -->
 
@@ -611,7 +645,7 @@ are replaced by two engine-neutral operations:
         only caller discarded — a contract that implied a signal it did not deliver. The
 ```
 
-### Block 15 — `local-development/gsd/store.py`
+### Block 16 — `local-development/gsd/store.py`
 
 <!-- block: local-development/gsd/store.py | edit -->
 
@@ -634,7 +668,7 @@ are replaced by two engine-neutral operations:
         """Engine-reported operational facts, namespaced under the engine that produced them.
 ```
 
-### Block 16 — `local-development/gsd/store.py`
+### Block 17 — `local-development/gsd/store.py`
 
 <!-- block: local-development/gsd/store.py | edit -->
 
@@ -659,7 +693,7 @@ are replaced by two engine-neutral operations:
         # review 2 of #177). The groups ride as ONE bound JSON parameter: a viewer in more groups
 ```
 
-### Block 17 — `local-development/pyproject.toml`
+### Block 18 — `local-development/pyproject.toml`
 
 <!-- block: local-development/pyproject.toml | edit -->
 
@@ -683,7 +717,7 @@ requires-python = ">=3.11"
 # FLOORS ARE A SECURITY CONTROL, not just a compatibility statement. These were set once
 ```
 
-### Block 18 — `local-development/tests/test_specs_index.py`
+### Block 19 — `local-development/tests/test_specs_index.py`
 
 <!-- block: local-development/tests/test_specs_index.py | edit -->
 
@@ -707,7 +741,7 @@ requires-python = ">=3.11"
 
 ```
 
-### Block 19 — `local-development/tests/test_specs_index.py`
+### Block 20 — `local-development/tests/test_specs_index.py`
 
 <!-- block: local-development/tests/test_specs_index.py | edit -->
 
@@ -730,7 +764,7 @@ requires-python = ">=3.11"
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
 ```
 
-### Block 20 — `local-development/tests/test_store_statistics.py` (new)
+### Block 21 — `local-development/tests/test_store_statistics.py` (new)
 
 <!-- block: local-development/tests/test_store_statistics.py | create -->
 
@@ -756,6 +790,7 @@ import shutil
 import sqlite3
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -833,7 +868,7 @@ def test_open_gathers_statistics_and_both_reads_use_their_index(db):
 
 
 def test_both_reads_stay_inside_a_budget_at_the_operator_s_bound(db):
-    """Measured without statistics on this data: about 2.5 s and 1.8 s. With them: about 20 ms and 1 ms."""
+    """Measured without statistics on this data: about 2.2 s and 0.6 s. With them: about 15 ms and 0.5 ms."""
     store = Store(str(db))
     try:
         assert len(store.groups("c", "all")) == GROUPS
@@ -928,6 +963,148 @@ def test_a_reader_on_another_thread_reconnects_too(db):
         thread.start()
         thread.join()
         assert replaced == [True]
+    finally:
+        store.close()
+
+
+def test_reader_recovers_after_reconnect_failure(tmp_path):
+    store = Store(str(tmp_path / "reader.db"))
+    try:
+        store.upsert_cluster("c", "https://x", True)
+        store.clusters()
+        store._stats_epoch += 1
+        with patch("gsd.store.sqlite3.connect", side_effect=sqlite3.OperationalError(
+                "unable to open database file")):
+            try:
+                store.clusters()
+            except sqlite3.OperationalError:
+                pass
+            else:
+                raise AssertionError("injected connect failure did not happen")
+        assert [row["id"] for row in store.clusters()] == ["c"]
+    finally:
+        store.close()
+
+
+def test_refresh_failure_is_optional_at_open_and_maintain(tmp_path):
+    import gsd.store as module
+
+    path = str(tmp_path / "optional.db")
+    store = Store(path)
+    store.upsert_cluster("c", "https://x", True)
+    store.close()
+    harden = module._harden
+
+    def deny_analysis(action, arg1, arg2, database, source):
+        return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_ANALYZE else sqlite3.SQLITE_OK
+
+    def harden_and_deny(conn):
+        harden(conn)
+        conn.set_authorizer(deny_analysis)
+
+    with patch.object(module, "_harden", harden_and_deny):
+        store = Store(path)
+    try:
+        epoch = store._stats_epoch
+        store.maintain()
+        assert store._stats_epoch == epoch
+        assert not store._conn.in_transaction
+        assert [row["id"] for row in store.clusters()] == ["c"]
+        store._conn.set_authorizer(None)
+        store.maintain()
+        assert store._stats_epoch == epoch + 1
+        assert not store._conn.in_transaction
+    finally:
+        store.close()
+
+
+def test_a_refresh_of_existing_statistics_reaches_a_reader_opened_before_it(tmp_path):
+    """The case the reconnect is for. The first refresh creates sqlite_stat1, a schema change, so an open connection
+    reloads on its next query without help; a later refresh only rewrites rows of sqlite_stat1, the schema stays the
+    same, and an open connection keeps the statistics it loaded (lang_analyze.html §3). Statistics gathered on one
+    group make the binding count read the cluster's covering index; growth of 250 times re-arms optimize, and only a
+    reader that reconnects plans with the new ones."""
+    store = Store(str(tmp_path / "gsd.db"))
+    try:
+        store.upsert_cluster("c", "https://x", True)
+
+        def add(groups: list[str], first: int, count: int) -> None:
+            store._conn.executemany("INSERT INTO group_state(cluster_id, name, member_count, sync_provider, observed_at) "
+                                    "VALUES ('c', ?, 1, 'gs_ldap', 't')", [(g,) for g in groups])
+            store._conn.executemany("INSERT INTO rbac_group_binding(cluster_id, binding_kind, binding_namespace, "
+                                    "binding_name, role_kind, role_name, subject_kind, group_name, observed_at) VALUES "
+                                    "('c', 'RoleBinding', ?, ?, 'ClusterRole', 'view', 'Group', ?, 't')",
+                                    [(f"ns{j % 50}", f"b{j}", groups[j % len(groups)]) for j in range(first, first + count)])
+            store._conn.commit()
+
+        add([BIG], 0, 200)
+        store.maintain()                                   # the first statistics: sqlite_stat1 is created
+        (groups_sql,) = _traced(store, lambda: store.groups("c", "all"))
+        version = store._reader().execute("PRAGMA schema_version").fetchone()[0]
+        assert "rbac_binding_by_group" not in _plan(store, groups_sql)      # one group: the covering index wins
+        epoch = store._stats_epoch
+        add([f"g{i:04d}" for i in range(1, GROUPS)], 200, BINDINGS)
+        store.maintain()                                   # a re-analysis: rows of sqlite_stat1 only
+        assert store._stats_epoch == epoch + 1
+        assert store._reader().execute("PRAGMA schema_version").fetchone()[0] == version
+        # A new statement text, so neither connection can answer from Python's statement cache.
+        assert "rbac_binding_by_group (cluster_id=? AND group_name=?)" in _plan(store, groups_sql + " ")
+    finally:
+        store.close()
+
+
+def test_the_refresh_never_commits_an_enclosing_transaction(db):
+    """The writer is shared, so a refresh inside a transaction leaves the boundary to its owner: run inside a poll
+    snapshot that then fails, it must not have committed the snapshot's rows."""
+    store = Store(str(db))
+    try:
+        with pytest.raises(RuntimeError, match="the cycle failed"):
+            with store.poll_snapshot():
+                store.replace_namespaces("c", [{"name": f"ns{i}"} for i in range(500)], "t")   # a table to analyse
+                store.maintain()
+                raise RuntimeError("the cycle failed")
+        assert not store._rows("SELECT name FROM cluster_namespace WHERE cluster_id = 'c'")
+    finally:
+        store.close()
+
+
+def _refuse_analyze(action, *rest):
+    """An authorizer that refuses ANALYZE: a deterministic stand-in for any error inside the refresh."""
+    return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_ANALYZE else sqlite3.SQLITE_OK
+
+
+def test_a_failed_refresh_leaves_a_successful_poll_ok_and_its_backup_written(tmp_path, monkeypatch):
+    """maintain() is the first call of the poll's upkeep tail (Poller._after_poll): raised from it, a refresh error
+    recorded a successful poll `unreachable` / `internal poller error` and skipped the cycle's backup on b65ce09d."""
+    from gsd import poller as poller_module
+    from gsd.config import ClusterConfig, Settings
+
+    store = Store(str(tmp_path / "gsd.db"))
+    cluster = ClusterConfig("c1", "https://api.c1.example:6443", token_env="GSD_TEST_TOKEN")
+    store.upsert_cluster("c1", cluster.api_url, True)
+    store._conn.set_authorizer(_refuse_analyze)
+    poller = poller_module.Poller(
+        store=store,
+        settings=Settings(clusters=[cluster], db_path=store.path,
+                          backup_dir=str(tmp_path / "backup"), backup_keep=3),
+        elector=None,
+    )
+
+    def a_successful_poll(st, cl, *args, **kwargs):    # it leaves a table for the refresh to analyse
+        st.replace_namespaces(cl.name, [{"name": f"ns{i}"} for i in range(500)], "2026-10-05T00:00:00Z")
+        st.record_poll(cl.name, "ok", None)
+        return "ok"
+
+    monkeypatch.setenv("GSD_TEST_TOKEN", "token")
+    monkeypatch.setattr(poller_module, "poll_once", a_successful_poll)
+    monkeypatch.setattr(poller_module, "capture_once", lambda *args, **kwargs: None)
+    monkeypatch.setattr(poller_module, "refresh_bindings", lambda *args, **kwargs: None)
+    monkeypatch.setattr(poller, "_discover_doors", lambda *args, **kwargs: None)
+    monkeypatch.setattr(poller, "_wait_cycle", lambda *args, **kwargs: poller._stop.set())
+    try:
+        poller._run_cluster(cluster)
+        assert next(r for r in store.clusters() if r["id"] == "c1")["status"] == "ok"
+        assert list((tmp_path / "backup").glob("gsd-*.db"))
     finally:
         store.close()
 ```
