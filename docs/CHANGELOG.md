@@ -10,6 +10,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A report run's manifest keeps the keys this build does not know (#600; application 5.8.0, chart 0.70.12).** The
+  report service read each `run.json` keeping only the fields it knew, so a field a newer build wrote vanished on a
+  rollback and, at the first rewrite of that manifest (a restart failing an in-flight run, a status update), from the
+  file too. The unknown keys now ride with the run and are written back; the report API's view of a run is unchanged.
+
 - **The store keeps the query planner's statistics current (#626, `docs/specs/SPEC_Q1_planner_statistics.md`;
   application 5.7.0, chart 0.70.11).** `gsd.db` had never been analysed, so SQLite planned from index shape alone, and
   two reads read a cluster's whole table once per row: the Groups list's binding count (2.5 s at 999 groups and 50,000
