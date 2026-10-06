@@ -1421,6 +1421,9 @@ class Store:
         self.reader_busy_timeout_ms = reader_busy_timeout_ms
         self.wal_checkpoint_bytes = int(wal_checkpoint_mb * 1024 * 1024)
         self._checkpoint_busy_total = 0
+        # Bumped each time the writer refreshes the planner's statistics; a reader opened before it
+        # reconnects on its next read, because only a new connection loads them (#626, _reader).
+        self._stats_epoch = 0
         self._lock = threading.RLock()
         self._local = threading.local()
         # Transaction depth is PER THREAD, not per Store. A plain attribute here was a
@@ -1475,10 +1478,15 @@ class Store:
         # 50k-row refresh. Set GSD_SQLITE_SYNCHRONOUS=FULL if that trade is wrong for you.
         self._conn.execute(f"PRAGMA synchronous={_safe_pragma_word(synchronous, 'NORMAL')}")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        # An approximate ANALYZE, as lang_analyze.html §5 advises: a scan of at most ~1000 rows per index, 7 ms
+        # where the full one took 85 ms at 50,000 bindings, and the same plans (#626). Connection state: it governs
+        # every PRAGMA optimize this writer runs.
+        self._conn.execute("PRAGMA analysis_limit=1000")
         self._conn.executescript(SCHEMA)
         _migrate(self._conn)
         _seed_observation_markers(self._conn)
         self._conn.commit()
+        self._refresh_statistics()
 
     def close(self) -> None:
         # Under the lock: closing while another thread is mid-transaction would
@@ -1663,6 +1671,13 @@ class Store:
         if self.path == ":memory:":
             return self._conn
         conn = getattr(self._local, "conn", None)
+        if (conn is not None and getattr(self._local, "stats_epoch", 0) != self._stats_epoch
+                and not getattr(self._local, "read_depth", 0) and not conn.in_transaction):
+            # The writer refreshed the planner's statistics, and an open connection never loads them: it keeps
+            # the plans it made (#626). A new connection does. Never inside a read_snapshot, whose transaction
+            # is the consistency the caller asked for; the next read after it reconnects.
+            conn.close()
+            conn = None
         if conn is None:
             conn = sqlite3.connect(self.path, check_same_thread=False)
             _harden(conn)
@@ -1671,7 +1686,35 @@ class Store:
             # property of the database, so the writer's setting does not reach these.
             conn.execute(f"PRAGMA busy_timeout={int(self.reader_busy_timeout_ms)}")
             self._local.conn = conn
+            self._local.stats_epoch = self._stats_epoch
         return conn
+
+    def _refresh_statistics(self) -> None:
+        """Keep the query planner's statistics current, as SQLite recommends (#626).
+
+        Without statistics SQLite plans from the shape of the indexes alone, and two reads chose one that narrows
+        only to cluster_id: the Groups list's binding count read every binding on the cluster once per group
+        (2.5 s at 999 groups and 50,000 bindings), and group detail's first-seen read the cluster's whole
+        membership history once per member (5.5 s at 300,000 events). With statistics they use
+        rbac_binding_by_group and membership_event_by_user: 20 ms and 1 ms, the same rows. The call is
+        lang_analyze.html §2.1's for a long-lived connection, `PRAGMA optimize=0x10002`: it analyses only the
+        tables with no statistics or whose size has changed by about an order of magnitude, so it is nothing
+        when nothing changed (measured 0.0 ms) and runs at open and after every write cycle (maintain).
+
+        Its debug form lists what it would analyse; an empty list is the common case and changes nothing, so the
+        readers are only told to reconnect when the statistics actually moved. Under the write lock and never
+        inside a transaction: ANALYZE writes sqlite_stat1 and commits.
+        """
+        with self._lock:
+            if self._conn.in_transaction:
+                return
+            pending = [row[0] for row in self._conn.execute("PRAGMA optimize(0x10003)").fetchall()]
+            if not pending:
+                return
+            self._conn.execute("PRAGMA optimize=0x10002")
+            self._conn.commit()
+            self._stats_epoch += 1
+        log.info("query planner statistics refreshed: %s", "; ".join(pending))
 
     def _wal_bytes(self) -> int:
         """Size of the -wal sidecar, or 0 when there is none (`:memory:`, or rollback mode)."""
@@ -2056,7 +2099,8 @@ class Store:
         return int(self._rows(sql, params)[0]["n"])
 
     def maintain(self) -> None:
-        """Periodic upkeep after a write cycle. For SQLite, a WAL checkpoint.
+        """Periodic upkeep after a write cycle. For SQLite, a WAL checkpoint, then the planner's statistics
+        (#626, _refresh_statistics), which cost nothing unless a table's size changed by an order of magnitude.
 
         Returns nothing. It briefly returned a dict describing the checkpoint, which the
         only caller discarded — a contract that implied a signal it did not deliver. The
@@ -2064,6 +2108,7 @@ class Store:
         through health() where a scrape can read it.
         """
         self._checkpoint()
+        self._refresh_statistics()
 
     def health(self) -> StorageHealth:
         """Engine-reported operational facts, namespaced under the engine that produced them.
@@ -2725,7 +2770,8 @@ class Store:
                 f"SELECT {columns} FROM binding_event WHERE {where} ORDER BY id DESC LIMIT ?",
                 [*scope, limit],
             )
-        # Two index-served halves under UNION ALL, not one OR: this store never runs ANALYZE, and
+        # Two index-served halves under UNION ALL, not one OR: written when this store never ran ANALYZE (it
+        # keeps statistics since #626, but they appear only once a table has rows), and
         # without statistics SQLite plans the OR as a walk of the cluster's rows plus a sort —
         # measured 306 ms at 300k rows against 1.8 ms for the union, the same rows back (OB1,
         # review 2 of #177). The groups ride as ONE bound JSON parameter: a viewer in more groups

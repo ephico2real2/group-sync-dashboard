@@ -24,7 +24,8 @@ metrics collector reached into directly, so both of them knew what the database 
 are replaced by two engine-neutral operations:
 
 * ``maintain()`` — "do whatever periodic upkeep your engine needs". SQLite truncates the
-  WAL; Postgres would do nothing and return an empty dict.
+  WAL and refreshes the query planner's statistics (#626); Postgres would do nothing and return an
+  empty dict.
 * ``health()`` — a free-form dict of engine-reported facts, which the collector turns into
   metrics without knowing what produced them.
 
