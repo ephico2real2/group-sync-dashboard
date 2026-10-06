@@ -97,7 +97,7 @@ def test_open_gathers_statistics_and_both_reads_use_their_index(db):
 
 
 def test_both_reads_stay_inside_a_budget_at_the_operator_s_bound(db):
-    """Measured without statistics on this data: about 2.5 s and 1.8 s. With them: about 20 ms and 1 ms."""
+    """Measured without statistics on this data: about 2.2 s and 0.6 s. With them: about 15 ms and 0.5 ms."""
     store = Store(str(db))
     try:
         assert len(store.groups("c", "all")) == GROUPS
@@ -243,5 +243,96 @@ def test_refresh_failure_is_optional_at_open_and_maintain(tmp_path):
         store.maintain()
         assert store._stats_epoch == epoch + 1
         assert not store._conn.in_transaction
+    finally:
+        store.close()
+
+
+def test_a_refresh_of_existing_statistics_reaches_a_reader_opened_before_it(tmp_path):
+    """The case the reconnect is for. The first refresh creates sqlite_stat1, a schema change, so an open connection
+    reloads on its next query without help; a later refresh only rewrites rows of sqlite_stat1, the schema stays the
+    same, and an open connection keeps the statistics it loaded (lang_analyze.html §3). Statistics gathered on one
+    group make the binding count read the cluster's covering index; growth of 250 times re-arms optimize, and only a
+    reader that reconnects plans with the new ones."""
+    store = Store(str(tmp_path / "gsd.db"))
+    try:
+        store.upsert_cluster("c", "https://x", True)
+
+        def add(groups: list[str], first: int, count: int) -> None:
+            store._conn.executemany("INSERT INTO group_state(cluster_id, name, member_count, sync_provider, observed_at) "
+                                    "VALUES ('c', ?, 1, 'gs_ldap', 't')", [(g,) for g in groups])
+            store._conn.executemany("INSERT INTO rbac_group_binding(cluster_id, binding_kind, binding_namespace, "
+                                    "binding_name, role_kind, role_name, subject_kind, group_name, observed_at) VALUES "
+                                    "('c', 'RoleBinding', ?, ?, 'ClusterRole', 'view', 'Group', ?, 't')",
+                                    [(f"ns{j % 50}", f"b{j}", groups[j % len(groups)]) for j in range(first, first + count)])
+            store._conn.commit()
+
+        add([BIG], 0, 200)
+        store.maintain()                                   # the first statistics: sqlite_stat1 is created
+        (groups_sql,) = _traced(store, lambda: store.groups("c", "all"))
+        version = store._reader().execute("PRAGMA schema_version").fetchone()[0]
+        assert "rbac_binding_by_group" not in _plan(store, groups_sql)      # one group: the covering index wins
+        epoch = store._stats_epoch
+        add([f"g{i:04d}" for i in range(1, GROUPS)], 200, BINDINGS)
+        store.maintain()                                   # a re-analysis: rows of sqlite_stat1 only
+        assert store._stats_epoch == epoch + 1
+        assert store._reader().execute("PRAGMA schema_version").fetchone()[0] == version
+        # A new statement text, so neither connection can answer from Python's statement cache.
+        assert "rbac_binding_by_group (cluster_id=? AND group_name=?)" in _plan(store, groups_sql + " ")
+    finally:
+        store.close()
+
+
+def test_the_refresh_never_commits_an_enclosing_transaction(db):
+    """The writer is shared, so a refresh inside a transaction leaves the boundary to its owner: run inside a poll
+    snapshot that then fails, it must not have committed the snapshot's rows."""
+    store = Store(str(db))
+    try:
+        with pytest.raises(RuntimeError, match="the cycle failed"):
+            with store.poll_snapshot():
+                store.replace_namespaces("c", [{"name": f"ns{i}"} for i in range(500)], "t")   # a table to analyse
+                store.maintain()
+                raise RuntimeError("the cycle failed")
+        assert not store._rows("SELECT name FROM cluster_namespace WHERE cluster_id = 'c'")
+    finally:
+        store.close()
+
+
+def _refuse_analyze(action, *rest):
+    """An authorizer that refuses ANALYZE: a deterministic stand-in for any error inside the refresh."""
+    return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_ANALYZE else sqlite3.SQLITE_OK
+
+
+def test_a_failed_refresh_leaves_a_successful_poll_ok_and_its_backup_written(tmp_path, monkeypatch):
+    """maintain() is the first call of the poll's upkeep tail (Poller._after_poll): raised from it, a refresh error
+    recorded a successful poll `unreachable` / `internal poller error` and skipped the cycle's backup on b65ce09d."""
+    from gsd import poller as poller_module
+    from gsd.config import ClusterConfig, Settings
+
+    store = Store(str(tmp_path / "gsd.db"))
+    cluster = ClusterConfig("c1", "https://api.c1.example:6443", token_env="GSD_TEST_TOKEN")
+    store.upsert_cluster("c1", cluster.api_url, True)
+    store._conn.set_authorizer(_refuse_analyze)
+    poller = poller_module.Poller(
+        store=store,
+        settings=Settings(clusters=[cluster], db_path=store.path,
+                          backup_dir=str(tmp_path / "backup"), backup_keep=3),
+        elector=None,
+    )
+
+    def a_successful_poll(st, cl, *args, **kwargs):    # it leaves a table for the refresh to analyse
+        st.replace_namespaces(cl.name, [{"name": f"ns{i}"} for i in range(500)], "2026-10-05T00:00:00Z")
+        st.record_poll(cl.name, "ok", None)
+        return "ok"
+
+    monkeypatch.setenv("GSD_TEST_TOKEN", "token")
+    monkeypatch.setattr(poller_module, "poll_once", a_successful_poll)
+    monkeypatch.setattr(poller_module, "capture_once", lambda *args, **kwargs: None)
+    monkeypatch.setattr(poller_module, "refresh_bindings", lambda *args, **kwargs: None)
+    monkeypatch.setattr(poller, "_discover_doors", lambda *args, **kwargs: None)
+    monkeypatch.setattr(poller, "_wait_cycle", lambda *args, **kwargs: poller._stop.set())
+    try:
+        poller._run_cluster(cluster)
+        assert next(r for r in store.clusters() if r["id"] == "c1")["status"] == "ok"
+        assert list((tmp_path / "backup").glob("gsd-*.db"))
     finally:
         store.close()

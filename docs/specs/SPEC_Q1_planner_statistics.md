@@ -91,7 +91,12 @@ applies a temporary analysis limit, which is why it measured as a full `ANALYZE`
 - Afterwards it re-analyses a table only when its size changes by about an order of magnitude: +10 % did nothing,
   ×10 did.
 - When nothing changed it costs 0.0 ms.
-- Its debug form, `PRAGMA optimize(0x10003)`, lists the `ANALYZE` statements it would run and runs none.
+
+The debug form, `PRAGMA optimize(0x10003)`, lists the ANALYZE statements it would run and runs none. It is still a
+write: with two or more tables to check it takes the database's write lock. SQLite's source file pragma.c starts
+a write operation regardless of the debug bit; with another connection holding the lock, the measured result was
+"database is locked" after busy_timeout. It also expires the connection's prepared statements, which cost about
+2 µs per statement to prepare again.
 
 **2.7 An open connection can retain old statistics.** SQLite loads statistics when it reads the schema
 ([lang_analyze](https://www.sqlite.org/lang_analyze.html) §3). The first ANALYZE can create statistics tables and change `PRAGMA schema_version`,
@@ -128,8 +133,10 @@ tables are empty and the refresh does nothing.
 **3.2 The refresh** (`Store._refresh_statistics`). Under the write lock and never inside a transaction, the writer
 asks `PRAGMA optimize(0x10003)` what it would analyse. An empty list ends it there, which is the common case and
 measured at 0.0 ms. Otherwise it runs `PRAGMA optimize=0x10002`, commits, increments a statistics epoch, and logs
-the tables it analysed at INFO. A failed refresh is logged at WARNING with the traceback, keeps the old
-statistics, and is retried after the next poll.
+the tables it analysed at INFO. A failed refresh never raises: it is logged at WARNING with the traceback, the
+epoch stays unchanged, and it is retried after the next poll. Statistics are an optimisation; allowing the error
+to escape would stop Store() opening and, from maintain(), record a successful poll as `unreachable` and skip its
+backup, as measured on b65ce09d.
 
 **3.3 After every write cycle.** `Store.maintain()`, which the leader's poll thread calls after each cycle and never
 from a request, runs the WAL checkpoint and then the refresh. The storage seam's description of `maintain()` says
@@ -154,7 +161,7 @@ Each plan is read from the SQL the store itself runs: the reader's trace callbac
 | done-means | test | fails before the change |
 |---|---|---|
 | 1 | `test_open_gathers_statistics_and_both_reads_use_their_index` | yes |
-| 1 | `test_both_reads_stay_inside_a_budget_at_the_operator_s_bound` (0.5 s and 0.2 s; measured about 2.5 s and 1.8 s without statistics on this data) | yes |
+| 1 | `test_both_reads_stay_inside_a_budget_at_the_operator_s_bound` (0.5 s and 0.2 s; measured about 2.2 s and 0.6 s without statistics, about 15 ms and 0.5 ms with them on this data) | yes |
 | 1, 4 | `test_the_rows_are_the_same_with_and_without_statistics` | no: it holds on both sides, by design |
 | 2, 3 | `test_a_reader_opened_before_a_refresh_reconnects_and_uses_the_new_statistics` | yes |
 | 2 | `test_nothing_changed_means_no_refresh_and_no_reconnect` | yes |
@@ -162,9 +169,13 @@ Each plan is read from the SQL the store itself runs: the reader's trace callbac
 | 3 | `test_a_reader_on_another_thread_reconnects_too` | yes |
 | 3 | `test_reader_recovers_after_reconnect_failure` | yes: a failed reconnect leaves a closed reader cached |
 | 2 | `test_refresh_failure_is_optional_at_open_and_maintain` | yes: a refresh failure aborts open or upkeep |
+| 2, 3 | `test_a_refresh_of_existing_statistics_reaches_a_reader_opened_before_it` | yes; without the reconnect, it fails at the plan |
+| 2 | `test_the_refresh_never_commits_an_enclosing_transaction` | no: main has no refresh; it guards the refresh's transaction check |
+| 2 | `test_a_failed_refresh_leaves_a_successful_poll_ok_and_its_backup_written` | no: main has no refresh; on b65ce09d the poll was recorded `unreachable` |
 
-Measured on the branch: 7 passed. Against the unchanged `store.py` and `storage.py`: 6 failed, 1 passed (the rows
-test). The full hermetic suite and CI run on the PR.
+Measured on the branch: 12 passed. Against the unchanged `store.py` and `storage.py` of main 730158d4: 9 failed,
+3 passed (the rows test, the enclosing-transaction test, and the successful-poll/backup test; main has no refresh
+to fail). The full hermetic suite and CI run on the PR.
 
 ## 5. The audit of every other read
 
