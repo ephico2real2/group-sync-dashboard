@@ -2432,7 +2432,9 @@ rbacAuditors:
 # drawn on the meter's track so position reads without colour.
 kpi:
   thresholds:
-    # Percentages of the cgroup limit (memory, CPU) and of the volume's filesystem (disk).
+    # PERCENTAGES: 80 means 80 %, not 0.8. Of the cgroup limit (memory, CPU) and of the volume's
+    # filesystem (disk). Refused at render outside (0, 100], and at or below 1 for memory, CPU and
+    # disk, where it can only be a ratio written by mistake (#627).
     memoryPercent: 80
     cpuPercent: 80
     # Share of scheduler periods in which the pod was throttled. Throttling is the saturation

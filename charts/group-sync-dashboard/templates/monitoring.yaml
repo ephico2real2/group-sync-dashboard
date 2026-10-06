@@ -378,6 +378,7 @@ spec:
               (its spec.timeZone against reporting.window.timezone, its last Job's log), and the report pod's log.
         {{- end }}
         # The KPI module's self-report (#156), on the thresholds the KPI page draws (kpi.thresholds.*).
+        {{- include "gsd.kpiThresholds" . }}
         # Throttling is the saturation signal, not CPU%: a pod at 30 % CPU that is being throttled is
         # mis-sized (#97, the report pod preempted 29× on a saturated node with no metric saying so).
         - alert: GroupSyncDashboardPodThrottled

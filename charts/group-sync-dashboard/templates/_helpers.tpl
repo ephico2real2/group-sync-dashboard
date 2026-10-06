@@ -633,6 +633,30 @@ fire is refused here rather than discovered as silence. Emits nothing; include i
 {{- end -}}
 {{- end -}}
 {{/*
+kpi.thresholds, validated at render (#627), so a value the app would refuse at startup fails here,
+naming its key. All four are PERCENTAGES: 80 means 80 %, not 0.8. Memory, CPU and disk at or below 1
+are refused as a ratio written by mistake: a warning at 1 % or less of a limit is never meant.
+throttledPercent keeps (0, 100], since its default is 1. Emits nothing; include it for effect.
+*/}}
+{{- define "gsd.kpiThresholds" -}}
+{{- $t := ((.Values.kpi | default dict).thresholds | default dict) -}}
+{{- range $key := list "memoryPercent" "cpuPercent" "throttledPercent" "diskPercent" -}}
+{{- $v := get $t $key -}}
+{{- /* A number, whatever its type: `--set` delivers 0.5 as the string "0.5", which divf and the app
+       both read; "80%" or a missing key is refused. */ -}}
+{{- if not (regexMatch "^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$" (toString $v)) -}}
+{{- fail (printf "kpi.thresholds.%s must be a number of percent (80 means 80 %%); got %v" $key $v) -}}
+{{- end -}}
+{{- $f := $v | float64 -}}
+{{- if or (le $f 0.0) (gt $f 100.0) -}}
+{{- fail (printf "kpi.thresholds.%s must be in (0, 100], a percentage; got %v" $key $v) -}}
+{{- end -}}
+{{- if and (ne $key "throttledPercent") (le $f 1.0) -}}
+{{- fail (printf "kpi.thresholds.%s is %v, which looks like a ratio; give a percentage (80 means 80 %%)" $key $v) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{/*
 monitoring.grafanaDashboard.enabled is a tri-state: "" follows monitoring.serviceMonitor.enabled,
 true/false are explicit. Anything else refuses the render — a misspelt "ture" must not
 silently become "off". Returns the string "true" or "false".
