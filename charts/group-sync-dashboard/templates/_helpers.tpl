@@ -633,19 +633,24 @@ fire is refused here rather than discovered as silence. Emits nothing; include i
 {{- end -}}
 {{- end -}}
 {{/*
-kpi.thresholds, validated at render (#627), so a value the app would refuse at startup fails here,
-naming its key. All four are PERCENTAGES: 80 means 80 %, not 0.8. Memory, CPU and disk at or below 1
+kpi.thresholds, validated at render (#627), naming the key. All four are PERCENTAGES: 80 means 80 %,
+not 0.8. Stricter than the app on purpose: the app refuses an out-of-range number at startup, but a value
+that is not a number at all ("80%", empty, null) it logs and replaces with the default, so a typo ran
+silently on 80; here it fails the deploy. Memory, CPU and disk at or below 1
 are refused as a ratio written by mistake: a warning at 1 % or less of a limit is never meant.
 throttledPercent keeps (0, 100], since its default is 1. Emits nothing; include it for effect.
 */}}
 {{- define "gsd.kpiThresholds" -}}
 {{- $t := ((.Values.kpi | default dict).thresholds | default dict) -}}
 {{- range $key := list "memoryPercent" "cpuPercent" "throttledPercent" "diskPercent" -}}
+{{- if not (hasKey $t $key) -}}
+{{- fail (printf "kpi.thresholds.%s is not set; give a percentage (80 means 80 %%)" $key) -}}
+{{- end -}}
 {{- $v := get $t $key -}}
-{{- /* A number, whatever its type: `--set` delivers 0.5 as the string "0.5", which divf and the app
-       both read; "80%" or a missing key is refused. */ -}}
-{{- if not (regexMatch "^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$" (toString $v)) -}}
-{{- fail (printf "kpi.thresholds.%s must be a number of percent (80 means 80 %%); got %v" $key $v) -}}
+{{- /* A plain number, whatever its type: `--set` delivers 0.5 as the string "0.5", which divf and the
+       app both read. Anything else ("80%", " 80", empty, null, true) is refused. */ -}}
+{{- if not (regexMatch "^[-+]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][-+]?[0-9]+)?$" (toString $v)) -}}
+{{- fail (printf "kpi.thresholds.%s must be a number of percent (80 means 80 %%); got %s" $key (toString $v | quote)) -}}
 {{- end -}}
 {{- $f := $v | float64 -}}
 {{- if or (le $f 0.0) (gt $f 100.0) -}}

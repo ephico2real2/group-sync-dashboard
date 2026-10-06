@@ -35,10 +35,14 @@ def test_out_of_range_is_refused_naming_the_key(key: str, value: str) -> None:
 
 
 @pytest.mark.parametrize("key", KEYS)
-def test_a_string_is_refused_naming_the_key(key: str) -> None:
-    done = render("--set-string", f"kpi.thresholds.{key}=80%")
+@pytest.mark.parametrize(("flag", "value", "shown"), [
+    ("--set-string", "80%", '"80%"'), ("--set-string", " 80", '" 80"'), ("--set-string", "", '""'),
+    ("--set", "true", '"true"'), ("--set-string", "nan", '"nan"')])
+def test_a_non_number_is_refused_naming_the_key_and_the_value(key: str, flag: str, value: str, shown: str) -> None:
+    """The app would log these and run on its default; the render refuses them, quoting what it got."""
+    done = render(flag, f"kpi.thresholds.{key}={value}")
     assert done.returncode != 0
-    assert f"kpi.thresholds.{key} must be a number of percent" in done.stderr, done.stderr
+    assert f"kpi.thresholds.{key} must be a number of percent (80 means 80 %); got {shown}" in done.stderr, done.stderr
 
 
 @pytest.mark.parametrize("key", ("memoryPercent", "cpuPercent", "diskPercent"))
@@ -51,10 +55,32 @@ def test_a_ratio_is_refused_for_memory_cpu_and_disk(key: str, value: str) -> Non
 
 @pytest.mark.parametrize("flags", [(), ("--set", "kpi.thresholds.throttledPercent=0.5"),
                                    ("--set", "kpi.thresholds.cpuPercent=100"),
-                                   ("--set", "kpi.thresholds.diskPercent=1.5")])
+                                   ("--set", "kpi.thresholds.diskPercent=1.5"),
+                                   ("--set-string", "kpi.thresholds.cpuPercent=80"),
+                                   ("--set-string", "kpi.thresholds.cpuPercent=+80"),
+                                   ("--set-string", "kpi.thresholds.cpuPercent=080"),
+                                   ("--set-string", "kpi.thresholds.cpuPercent=1e2"),
+                                   ("--set-string", "kpi.thresholds.throttledPercent=.5"),
+                                   ("--set-string", "kpi.thresholds.throttledPercent=1e-1")])
 def test_valid_values_render(flags: tuple[str, ...]) -> None:
     done = render(*flags)
     assert done.returncode == 0, done.stderr
+
+
+@pytest.mark.parametrize("key", KEYS)
+def test_a_removed_key_is_refused_as_not_set(key: str) -> None:
+    """`--set key=null` deletes the key in Helm; it gets its own message, not an empty `got`."""
+    done = render("--set", f"kpi.thresholds.{key}=null")
+    assert done.returncode != 0
+    assert f"kpi.thresholds.{key} is not set; give a percentage" in done.stderr, done.stderr
+
+
+def test_the_configmap_refuses_with_monitoring_off() -> None:
+    """The ConfigMap renders on every release, so its include is the backstop when no PrometheusRule renders."""
+    done = render("--set", "monitoring.serviceMonitor.enabled=false", "--set", "monitoring.prometheusRule.enabled=false",
+                  "--set", "kpi.thresholds.cpuPercent=101")
+    assert done.returncode != 0
+    assert "kpi.thresholds.cpuPercent must be in (0, 100]" in done.stderr, done.stderr
 
 
 def test_valid_values_reach_the_configmap_and_the_rules_unchanged() -> None:

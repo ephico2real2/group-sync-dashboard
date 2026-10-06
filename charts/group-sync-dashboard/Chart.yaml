@@ -388,9 +388,10 @@ type: application
 # CHART 0.70.9 (2026-10-05), PATCH: appVersion moves to application 5.6.0 (below); #625: four code
 # defects the docs audit found (chart-bump gap, prefix attribution, prepare-release --pr,
 # render-manifests cookie step).
-# CHART 0.70.10 (2026-10-05), PATCH: kpi.thresholds are refused at render when the app would refuse
-# them, or when a memory, CPU or disk value can only be a ratio (#627); the unit is stated in values.yaml.
-# The default render is unchanged apart from this version; no RBAC change; appVersion unchanged.
+# CHART 0.70.10 (2026-10-05), PATCH: kpi.thresholds are refused at render when not a number (the app
+# silently used its default), outside (0, 100], or, for memory, CPU and disk, at or below 1, a ratio
+# (#627); the unit is stated in values.yaml. The default render is unchanged apart from this version;
+# no RBAC change; appVersion unchanged.
 version: 0.70.10
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
