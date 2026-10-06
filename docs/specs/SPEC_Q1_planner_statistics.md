@@ -243,8 +243,8 @@ they reproduce the branch exactly, apart from this file.
           python -m pip install --upgrade pip
           pip install -e '.[dev]' || pip install -e .
           # The store relies on PRAGMA optimize=0x10002 (SQLite 3.46.0; #626). The interpreter links the runner's
-          # system SQLite, so the version is a fact of the runner, printed here where a failing plan test can be
-          # read against it.
+          # system SQLite, printed here; statistics tests skip below 3.46.0. local-development/image-proof.py
+          # covers the image's own SQLite at every build.
           python -c 'import sqlite3; print("SQLite", sqlite3.sqlite_version)'
       - name: Install promtool, the PromQL parser the dashboard test needs
         # tests/test_chart_grafana_dashboard.py parses every panel expression of the shipped
@@ -699,7 +699,148 @@ are replaced by two engine-neutral operations:
         # review 2 of #177). The groups ride as ONE bound JSON parameter: a viewer in more groups
 ```
 
-### Block 18 — `local-development/pyproject.toml`
+### Block 18 — `local-development/image-proof.py`
+
+<!-- block: local-development/image-proof.py | edit -->
+
+```python
+* every module the build stage proved imports again under THIS interpreter — the runtime's, not
+  the builder's — with the SQLite the store will use, WAL mode working on /data, and the zoneinfo
+  the chart's `timezone` relies on;
+* `uuid` works while `_uuid` must fail to import: that is the libuuid removal, observed;
+* `pip` must fail to import, and the paths the uninstall is known to have missed once (the wheel
+  directory, pip's site-packages, the libuuid library, a completion shim) must be gone — a spot
+```
+
+```python
+* every module the build stage proved imports again under THIS interpreter — the runtime's, not
+  the builder's — with the SQLite the store will use, WAL mode working on /data, and the zoneinfo
+  the chart's `timezone` relies on;
+* the store gathers planner statistics and its Groups query uses the group-binding index on
+  the image's own SQLite (3.46.0 or later);
+* `uuid` works while `_uuid` must fail to import: that is the libuuid removal, observed;
+* `pip` must fail to import, and the paths the uninstall is known to have missed once (the wheel
+  directory, pip's site-packages, the libuuid library, a completion shim) must be gone — a spot
+```
+
+### Block 19 — `local-development/image-proof.py`
+
+<!-- block: local-development/image-proof.py | edit -->
+
+```python
+# The build stage proves these under the builder's interpreter; the same list, here, under the
+# runtime's. tests/test_containerfile.py holds the two lists equal.
+import croniter, fastapi, gsd, httpx, prometheus_client, uvicorn, yaml  # noqa: E401,F401
+
+REMOVED = (
+    "/usr/lib64/libuuid.so.1",
+```
+
+```python
+# The build stage proves these under the builder's interpreter; the same list, here, under the
+# runtime's. tests/test_containerfile.py holds the two lists equal.
+import croniter, fastapi, gsd, httpx, prometheus_client, uvicorn, yaml  # noqa: E401,F401
+from gsd.store import Store
+
+REMOVED = (
+    "/usr/lib64/libuuid.so.1",
+```
+
+### Block 20 — `local-development/image-proof.py`
+
+<!-- block: local-development/image-proof.py | edit -->
+
+```python
+    sys.exit(f"{name} is still importable: {reason}")
+
+
+def main() -> None:
+    zoneinfo.ZoneInfo("America/New_York")
+    uuid.uuid4()
+```
+
+```python
+    sys.exit(f"{name} is still importable: {reason}")
+
+
+def prove_planner_statistics(directory: str) -> None:
+    """Prove the store's refresh and real Groups plan on the SQLite that will ship."""
+    if sqlite3.sqlite_version_info < (3, 46, 0):
+        sys.exit(f"planner statistics proof requires SQLite >= 3.46.0; found {sqlite3.sqlite_version}")
+
+    store = Store(os.path.join(directory, ".planner-statistics-proof.db"))
+    reader = None
+    try:
+        store.upsert_cluster("c", "https://x", True)
+        # 100 groups with 10 bindings each: well past the threshold. Measured on SQLite 3.53.4, three groups with
+        # one binding each is already enough for the group index; a seed at the threshold could flip with a future
+        # SQLite and fail an image build for no defect, so this one has a margin of about thirty times.
+        store._conn.executemany(
+            "INSERT INTO group_state(cluster_id, name, member_count, sync_provider, observed_at) "
+            "VALUES ('c', ?, 1, 'gs_ldap', 't')", [(f"g{i}",) for i in range(100)])
+        store._conn.executemany(
+            "INSERT INTO rbac_group_binding(cluster_id, binding_kind, binding_namespace, binding_name, "
+            "role_kind, role_name, subject_kind, group_name, observed_at) "
+            "VALUES ('c', 'RoleBinding', 'ns', ?, 'ClusterRole', 'view', 'Group', ?, 't')",
+            [(f"b{i}", f"g{i % 100}") for i in range(1000)])
+        store._conn.commit()
+        store.maintain()
+
+        reader = store._reader()
+        if (not reader.execute("SELECT 1 FROM sqlite_schema WHERE name = 'sqlite_stat1'").fetchone()
+                or not reader.execute(
+                    "SELECT 1 FROM sqlite_stat1 WHERE idx = 'rbac_binding_by_group'").fetchone()):
+            sys.exit("planner statistics proof failed: maintain() did not gather sqlite_stat1 "
+                     "for rbac_binding_by_group")
+
+        seen: list[str] = []
+        reader.set_trace_callback(seen.append)
+        try:
+            store.groups("c", "all")
+        finally:
+            reader.set_trace_callback(None)
+        if len(seen) != 1:
+            sys.exit(f"planner statistics proof expected one Groups query; captured {seen!r}")
+        plan = " | ".join(row[3] for row in reader.execute("EXPLAIN QUERY PLAN " + seen[0]))
+        expected = "SEARCH b USING INDEX rbac_binding_by_group (cluster_id=? AND group_name=?)"
+        if expected not in plan:
+            sys.exit(f"planner statistics proof failed: expected {expected}; got {plan}")
+    finally:
+        if reader is not None:
+            reader.close()
+        store.close()
+    print("planner statistics proof OK; sqlite", sqlite3.sqlite_version)
+
+
+def main() -> None:
+    zoneinfo.ZoneInfo("America/New_York")
+    uuid.uuid4()
+```
+
+### Block 21 — `local-development/image-proof.py`
+
+<!-- block: local-development/image-proof.py | edit -->
+
+```python
+    conn.execute("create table t(x)")
+    conn.commit()
+    conn.close()
+    for name in os.listdir("/data"):
+        os.remove(os.path.join("/data", name))
+    if os.listdir("/data"):
+```
+
+```python
+    conn.execute("create table t(x)")
+    conn.commit()
+    conn.close()
+    prove_planner_statistics("/data")
+    for name in os.listdir("/data"):
+        os.remove(os.path.join("/data", name))
+    if os.listdir("/data"):
+```
+
+### Block 22 — `local-development/pyproject.toml`
 
 <!-- block: local-development/pyproject.toml | edit -->
 
@@ -723,7 +864,7 @@ requires-python = ">=3.11"
 # FLOORS ARE A SECURITY CONTROL, not just a compatibility statement. These were set once
 ```
 
-### Block 19 — `local-development/tests/test_specs_index.py`
+### Block 23 — `local-development/tests/test_specs_index.py`
 
 <!-- block: local-development/tests/test_specs_index.py | edit -->
 
@@ -747,7 +888,7 @@ requires-python = ">=3.11"
 
 ```
 
-### Block 20 — `local-development/tests/test_specs_index.py`
+### Block 24 — `local-development/tests/test_specs_index.py`
 
 <!-- block: local-development/tests/test_specs_index.py | edit -->
 
@@ -770,7 +911,7 @@ requires-python = ">=3.11"
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
 ```
 
-### Block 21 — `local-development/tests/test_store_statistics.py` (new)
+### Block 25 — `local-development/tests/test_store_statistics.py` (new)
 
 <!-- block: local-development/tests/test_store_statistics.py | create -->
 
@@ -790,6 +931,7 @@ so a test cannot pass on a copy of a query that has drifted from the real one.
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 import random
 import shutil
@@ -802,8 +944,23 @@ import pytest
 
 from gsd.store import Store
 
+if sqlite3.sqlite_version_info < (3, 46, 0):
+    pytest.skip(
+        f"SQLite {'.'.join(map(str, sqlite3.sqlite_version_info))}: planner statistics require SQLite >= 3.46.0; "
+        "image-proof.py proves the behaviour on the image's own SQLite at every build",
+        allow_module_level=True,
+    )
+
 GROUPS, BINDINGS, EVENTS, MEMBERS = 999, 50_000, 100_000, 25
 BIG = "g0000"
+
+
+def test_image_proof_planner_statistics(tmp_path):
+    spec = importlib.util.spec_from_file_location(
+        "image_proof", pathlib.Path(__file__).resolve().parents[1] / "image-proof.py")
+    proof = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(proof)
+    proof.prove_planner_statistics(str(tmp_path))
 
 
 @pytest.fixture(scope="module")
