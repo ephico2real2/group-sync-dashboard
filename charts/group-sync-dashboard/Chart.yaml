@@ -392,7 +392,9 @@ type: application
 # app used its default for "80%"), outside (0, 100], or, for memory, CPU and disk, at or below 1, a ratio
 # (#627); the unit is stated in values.yaml. The default render is unchanged apart from this version;
 # no RBAC change; appVersion unchanged.
-version: 0.70.10
+# CHART 0.70.11 (2026-10-05), PATCH: appVersion moves to application 5.7.0 (below); #626: the store
+# keeps the query planner's statistics current.
+version: 0.70.11
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -547,7 +549,8 @@ version: 0.70.10
 # the lab (docs audit, batch 4). MINOR.
 # 5.6.0 (2026-10-05). #625: four code defects the docs audit found (chart-bump gap, prefix
 # attribution, prepare-release --pr, render-manifests cookie step). MINOR.
-appVersion: "5.6.0"
+# 5.7.0 (2026-10-05). #626: the store keeps the query planner's statistics current. MINOR.
+appVersion: "5.7.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
