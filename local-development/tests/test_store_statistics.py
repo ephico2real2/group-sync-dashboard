@@ -19,6 +19,7 @@ import shutil
 import sqlite3
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -191,5 +192,56 @@ def test_a_reader_on_another_thread_reconnects_too(db):
         thread.start()
         thread.join()
         assert replaced == [True]
+    finally:
+        store.close()
+
+
+def test_reader_recovers_after_reconnect_failure(tmp_path):
+    store = Store(str(tmp_path / "reader.db"))
+    try:
+        store.upsert_cluster("c", "https://x", True)
+        store.clusters()
+        store._stats_epoch += 1
+        with patch("gsd.store.sqlite3.connect", side_effect=sqlite3.OperationalError(
+                "unable to open database file")):
+            try:
+                store.clusters()
+            except sqlite3.OperationalError:
+                pass
+            else:
+                raise AssertionError("injected connect failure did not happen")
+        assert [row["id"] for row in store.clusters()] == ["c"]
+    finally:
+        store.close()
+
+
+def test_refresh_failure_is_optional_at_open_and_maintain(tmp_path):
+    import gsd.store as module
+
+    path = str(tmp_path / "optional.db")
+    store = Store(path)
+    store.upsert_cluster("c", "https://x", True)
+    store.close()
+    harden = module._harden
+
+    def deny_analysis(action, arg1, arg2, database, source):
+        return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_ANALYZE else sqlite3.SQLITE_OK
+
+    def harden_and_deny(conn):
+        harden(conn)
+        conn.set_authorizer(deny_analysis)
+
+    with patch.object(module, "_harden", harden_and_deny):
+        store = Store(path)
+    try:
+        epoch = store._stats_epoch
+        store.maintain()
+        assert store._stats_epoch == epoch
+        assert not store._conn.in_transaction
+        assert [row["id"] for row in store.clusters()] == ["c"]
+        store._conn.set_authorizer(None)
+        store.maintain()
+        assert store._stats_epoch == epoch + 1
+        assert not store._conn.in_transaction
     finally:
         store.close()

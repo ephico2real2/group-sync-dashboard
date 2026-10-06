@@ -9,7 +9,7 @@
 | Version note | Image content (`local-development/gsd/store.py` and `local-development/gsd/storage.py`, under `publish.yml`'s `local-development/gsd/**`), so the next application MINOR; the chart's PATCH moves with `appVersion` |
 | Issue | [#626](https://github.com/ephico2real2/group-sync-dashboard/issues/626) |
 | Status | merged |
-| Source | The orchestrator's research of 2026-10-05, posted on #626: SQLite's documentation (`lang_analyze.html`, `pragma.html#pragma_optimize`, `queryplanner-ng.html`), the code, measurements on SQLite 3.53.4 (the image's version, read in the pod) and a read-only copy of the lab's database. The orchestrator wrote this spec and its code; the reviews are recorded under the orchestrator's notes |
+| Source | The orchestrator's research of 2026-10-05, posted on #626: SQLite's documentation ([lang_analyze](https://www.sqlite.org/lang_analyze.html), [pragma_optimize](https://www.sqlite.org/pragma.html#pragma_optimize), [queryplanner-ng](https://www.sqlite.org/queryplanner-ng.html)), the code, measurements on SQLite 3.53.4 (the image's version, read in the pod) and a read-only copy of the lab's database. The orchestrator wrote this spec and its code; the reviews are recorded under the orchestrator's notes |
 
 ## How to read this spec
 
@@ -51,7 +51,7 @@ Posted in full on #626 (2026-10-05). The facts this design rests on:
 
 **2.1 The database has no statistics.** The lab's `gsd.db` has no `sqlite_stat1` (read in the pod, `mode=ro`), and
 `local-development/gsd/store.py` says so where #177 worked around the same cause: "this store never runs ANALYZE".
-Without statistics the planner judges indexes by shape alone (`queryplanner-ng.html`).
+Without statistics the planner judges indexes by shape alone ([queryplanner-ng](https://www.sqlite.org/queryplanner-ng.html)).
 
 **2.2 The two plans.**
 
@@ -79,7 +79,7 @@ was not measured. Group detail is about 1 ms on the lab, which has about 95 even
 
 **2.5 SQLite's guidance.** "Applications that use long-lived database connections should run `PRAGMA
 optimize=0x10002;` when the connection is first opened, and then also run `PRAGMA optimize;` periodically, perhaps
-once per day" (`lang_analyze.html` §2.1; `pragma.html#pragma_optimize`, the recommended form since 3.46.0). "set
+once per day" ([lang_analyze](https://www.sqlite.org/lang_analyze.html) §2.1; [pragma_optimize](https://www.sqlite.org/pragma.html#pragma_optimize), the recommended form since 3.46.0). "set
 `PRAGMA analysis_limit=N` for N between 100 and 1000" (§5). The mask `0x10002` does not include `0x10`, the bit that
 applies a temporary analysis limit, which is why it measured as a full `ANALYZE` (85 ms) and the explicit
 `analysis_limit` brought it to 7 ms with the same plans.
@@ -93,12 +93,13 @@ applies a temporary analysis limit, which is why it measured as a full `ANALYZE`
 - When nothing changed it costs 0.0 ms.
 - Its debug form, `PRAGMA optimize(0x10003)`, lists the `ANALYZE` statements it would run and runs none.
 
-**2.7 An open connection never loads new statistics.** "The query planner loads the content of the statistics tables
-into memory when the schema is read" (`lang_analyze.html` §3). `ANALYZE` does not change `PRAGMA schema_version`, so
-a connection that was already open kept its old plan after another connection analysed the database. That held with
-`cached_statements=0` too, so it is not Python's statement cache. A new connection got the new plan. The
-documented reload, `ANALYZE sqlite_schema`, is a write: on a read-only connection it fails with "attempt to write a
-readonly database", and while the writer holds a write lock it fails with "database is locked" (both measured).
+**2.7 An open connection can retain old statistics.** SQLite loads statistics when it reads the schema
+([lang_analyze](https://www.sqlite.org/lang_analyze.html) §3). The first ANALYZE can create statistics tables and change `PRAGMA schema_version`,
+causing existing readers to reload the schema. Once those tables exist, a later ANALYZE need not change
+`schema_version`: an already-open connection can keep its old plan, even with `cached_statements=0`.
+A new connection reads the updated statistics, so reconnecting after each successful refresh covers both cases.
+The documented reload, `ANALYZE sqlite_schema`, requires a writable connection and can contend with the writer;
+the store therefore reconnects readers outside their snapshots instead.
 
 **2.8 The store's connections** (`Store.__init__`, `Store._reader`): one writer connection for the life of the
 process, and one reader connection per thread, also for the life of the process. Inside `Store.read_snapshot` a
@@ -113,7 +114,7 @@ copy of the file, which carries the copy's statistics with it.
 2. **Covering indexes.** The fastest (1.3 ms and 0.0 ms), but a schema migration, and with it a pre-upgrade copy
    and the migration test for every install, to fix a planner that already has the right indexes and lacks only
    the statistics to choose them.
-3. **`INDEXED BY` hints.** The checklist's last resort (`queryplanner-ng.html`). They pin a plan the data may later
+3. **`INDEXED BY` hints.** The checklist's last resort ([queryplanner-ng](https://www.sqlite.org/queryplanner-ng.html)). They pin a plan the data may later
    prove wrong, and fail the query outright if an index is renamed.
 4. **`ANALYZE sqlite_schema` on each reader after a refresh.** It is a write (§2.7), so an API read would queue
    behind the poll's writer, which is what the per-thread readers exist to prevent.
@@ -127,7 +128,8 @@ tables are empty and the refresh does nothing.
 **3.2 The refresh** (`Store._refresh_statistics`). Under the write lock and never inside a transaction, the writer
 asks `PRAGMA optimize(0x10003)` what it would analyse. An empty list ends it there, which is the common case and
 measured at 0.0 ms. Otherwise it runs `PRAGMA optimize=0x10002`, commits, increments a statistics epoch, and logs
-the tables it analysed at INFO.
+the tables it analysed at INFO. A failed refresh is logged at WARNING with the traceback, keeps the old
+statistics, and is retried after the next poll.
 
 **3.3 After every write cycle.** `Store.maintain()`, which the leader's poll thread calls after each cycle and never
 from a request, runs the WAL checkpoint and then the refresh. The storage seam's description of `maintain()` says
@@ -158,6 +160,8 @@ Each plan is read from the SQL the store itself runs: the reader's trace callbac
 | 2 | `test_nothing_changed_means_no_refresh_and_no_reconnect` | yes |
 | 3 | `test_a_reader_inside_a_read_snapshot_is_not_replaced_until_the_snapshot_ends` | yes |
 | 3 | `test_a_reader_on_another_thread_reconnects_too` | yes |
+| 3 | `test_reader_recovers_after_reconnect_failure` | yes: a failed reconnect leaves a closed reader cached |
+| 2 | `test_refresh_failure_is_optional_at_open_and_maintain` | yes: a refresh failure aborts open or upkeep |
 
 Measured on the branch: 7 passed. Against the unchanged `store.py` and `storage.py`: 6 failed, 1 passed (the rows
 test). The full hermetic suite and CI run on the PR.

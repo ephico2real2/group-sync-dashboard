@@ -1677,6 +1677,7 @@ class Store:
             # the plans it made (#626). A new connection does. Never inside a read_snapshot, whose transaction
             # is the consistency the caller asked for; the next read after it reconnects.
             conn.close()
+            self._local.conn = None
             conn = None
         if conn is None:
             conn = sqlite3.connect(self.path, check_same_thread=False)
@@ -1704,15 +1705,22 @@ class Store:
         Its debug form lists what it would analyse; an empty list is the common case and changes nothing, so the
         readers are only told to reconnect when the statistics actually moved. Under the write lock and never
         inside a transaction: ANALYZE writes sqlite_stat1 and commits.
+        Optional refresh failures are logged and retried after the next poll, keeping the old statistics.
         """
         with self._lock:
             if self._conn.in_transaction:
                 return
-            pending = [row[0] for row in self._conn.execute("PRAGMA optimize(0x10003)").fetchall()]
-            if not pending:
+            try:
+                pending = [row[0] for row in self._conn.execute("PRAGMA optimize(0x10003)").fetchall()]
+                if not pending:
+                    return
+                self._conn.execute("PRAGMA optimize=0x10002")
+                self._conn.commit()
+            except sqlite3.Error:
+                if self._conn.in_transaction:
+                    self._conn.rollback()
+                log.warning("query planner statistics refresh failed; will retry after a poll", exc_info=True)
                 return
-            self._conn.execute("PRAGMA optimize=0x10002")
-            self._conn.commit()
             self._stats_epoch += 1
         log.info("query planner statistics refreshed: %s", "; ".join(pending))
 
