@@ -61,14 +61,20 @@ class Run:
     # (design §5) sees the same origin the endpoint gated on. Defaults to 'viewer' so a manifest written
     # before P4 (no origin key) still loads and is never mistaken for automated.
     origin: str = "viewer"
+    # The manifest's keys this build does not know (a newer build's fields, read on a rollback), kept so a rewrite
+    # writes them back rather than erasing them (#600). Never part of the API: public() leaves it out.
+    unknown_keys: dict = field(default_factory=dict, repr=False, compare=False)
 
     def public(self) -> dict:
-        return asdict(self)
+        out = asdict(self)
+        del out["unknown_keys"]
+        return out
 
 
-# The manifest is a forward/backward-tolerant envelope: unknown keys are dropped on load and missing
-# known keys fall back to defaults, so a rollback that reads a newer manifest does not drop the run.
-_RUN_FIELDS = frozenset(f.name for f in fields(Run))
+# The manifest is a forward/backward-tolerant envelope: unknown keys are kept aside on load and written back with
+# the run (#600), and missing known keys fall back to defaults, so a rollback that reads a newer manifest neither
+# drops the run nor the newer build's fields.
+_RUN_FIELDS = frozenset(f.name for f in fields(Run)) - {"unknown_keys"}
 
 
 def retention_stamp(run: Run) -> datetime:
@@ -135,9 +141,11 @@ class ArtifactStore:
                 continue
             try:
                 data = json.loads(manifest.read_text(encoding="utf-8"))
-                # Drop keys this build does not know (a newer manifest on rollback) rather than let
-                # Run(**data) TypeError and silently lose the run from the index (design §5).
-                run = Run(**{k: v for k, v in data.items() if k in _RUN_FIELDS})
+                # Keys this build does not know (a newer manifest on rollback) are set aside rather than let
+                # Run(**data) TypeError and silently lose the run from the index (design §5); they ride with the
+                # run and are written back by _write_manifest (#600).
+                run = Run(**{k: v for k, v in data.items() if k in _RUN_FIELDS},
+                          unknown_keys={k: v for k, v in data.items() if k not in _RUN_FIELDS})
                 # The id names the directory (deletion is `rmtree(_dir(run.id))`) and is the retention
                 # date of last resort (`retention_stamp` parses `id[:15]`). A hand-edited id that is not
                 # the directory's name, or not a stamp, raised out of every prune — and `_maybe_prune`
@@ -164,7 +172,7 @@ class ArtifactStore:
         d = self._dir(run.id)
         d.mkdir(parents=True, exist_ok=True)
         tmp = d / "run.json.tmp"
-        tmp.write_text(json.dumps(run.public(), indent=2, sort_keys=True), encoding="utf-8")
+        tmp.write_text(json.dumps({**run.unknown_keys, **run.public()}, indent=2, sort_keys=True), encoding="utf-8")
         os.replace(tmp, d / "run.json")
 
     def create(self, run: Run) -> Run:
