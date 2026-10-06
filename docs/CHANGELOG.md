@@ -10,6 +10,15 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The store keeps the query planner's statistics current (#626, `docs/specs/SPEC_Q1_planner_statistics.md`;
+  application 5.7.0, chart 0.70.11).** `gsd.db` had never been analysed, so SQLite planned from index shape alone, and
+  two reads read a cluster's whole table once per row: the Groups list's binding count (2.5 s at 999 groups and 50,000
+  bindings) and group detail's first-seen (5.5 s at 300,000 membership events). The store now runs SQLite's
+  recommended `PRAGMA optimize` (with `analysis_limit`) at open and after every write cycle, and each per-thread
+  reader reconnects after a refresh, because an open connection never loads new statistics: 20 ms and 1 ms, the same
+  rows. On the lab's own database, all 75 read methods return the same rows; 14 statements change plan, each faster,
+  none slower. No schema change.
+
 - **KPI thresholds are checked at render, and their unit is stated (#627; chart 0.70.10).** `kpi.thresholds.*` are
   percentages: `80` means 80 %, not `0.8`. The render now refuses a non-number (such as `"80%"`), a value outside
   `(0, 100]`, and a memory, CPU or disk value at or below `1`, which can only be a ratio written by mistake, naming the
