@@ -347,9 +347,14 @@ The name `clusterAdminSar` in this document is #322's: `update clusterrolebindin
 ## Diagram sources
 
 The figures are rendered from `docs/diagrams/remote-cluster-access/source.html`, one hand-authored page (inline
-SVG, light and dark palettes), at twice the pixel density, by `docs/diagrams/render.py`, which screenshots each
-`.fig-scroll` element in both themes and checks the page at phone width — from the repository root:
-`local-development/.venv/bin/python docs/diagrams/render.py docs/diagrams/remote-cluster-access/source.html
+SVG, light and dark palettes), at twice the pixel density, with
+[diagram-kit](https://github.com/ephico2real2/diagram-kit) (MPL-2.0). Its `diagram-render` screenshots each
+`.fig-scroll` element in both themes and writes a PNG only when the page passes its checks: a request that did not
+load, a font that fell back, a label past its box, text unreadable in one theme, a page that scrolls sideways at phone
+width. Install the kit once, pinned (`python3 -m venv .venv && .venv/bin/pip install "diagram-kit @
+git+https://github.com/ephico2real2/diagram-kit@v0.2.0" && .venv/bin/playwright install chromium`), then, from the
+repository root:
+`.venv/bin/diagram-render docs/diagrams/remote-cluster-access/source.html
 docs/diagrams/remote-cluster-access policies-who-decides,inherit-vs-remote-sar-outcomes,remote-sar-decision-flow,joining-a-cluster`. The pictures depict the decision points in §2, §3,
 §4 and §7, and the text twins beside them carry the same points. If one of those sections changes, change the picture,
 its twin and the page together. The images use `<picture>` with `prefers-color-scheme`, the form GitHub documents
