@@ -7,7 +7,8 @@ dark). The lab served application 5.8.0, and Argo CD read Synced and Healthy at 
 - **The main pass passed 84 of 84 steps** (`results.json`, theme `light`): the login path, every tab, the lookup, the
   Reports catalogue, and each of the 11 reports' form and status.
 - **The second pass passed 24 of 24** (`extra/results_extra.json`): the second cluster, the HTML reports opened in
-  Chromium, page one of every PDF.
+  Chromium, page one of every PDF. Its second-cluster captures, `extra/02`–`05`, are in the **dark** theme:
+  `e2e_extra.py` runs that stage before its light-theme step.
 - **All 11 reports were generated, downloaded and checked** as PDF, HTML and JSON (`reports/`: 11 of each). All 11
   passed the integrity check (`integrity.jsonl`). Each report's JSON names report service 5.8.0 at commit
   `665b73347b`, not dirty, snapshot schema 20.
@@ -34,7 +35,7 @@ Nothing is masked: the account name is not sensitive (the operator's ruling of 2
 | Path | Contents |
 |---|---|
 | `01-…44-*.png` | the main pass, light theme, full page at 1440 px wide, full resolution |
-| `extra/` | the second pass: the second cluster, the HTML reports, page one of each PDF |
+| `extra/` | the second pass: the second cluster (`02`–`05` in the dark theme), the HTML reports, page one of each PDF |
 | `reports/` | the 11 reports as PDF/A, HTML and JSON, as the report service wrote them |
 | `results.json`, `extra/results_extra.json`, `integrity.jsonl`, `env.json` | every step's verdict, the integrity checks, the cluster facts |
 | `evidence/` | the run logs and the OCR output |
