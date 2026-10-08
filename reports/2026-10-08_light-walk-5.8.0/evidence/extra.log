@@ -1,0 +1,36 @@
+  [ok ] open the route: https://group-sync-dashboard.apps-crc.testing → https://group-sync-dashboard.apps-crc.testing/  → 01-oauth-proxy-interstitial.png
+  [ok ] identity-provider chooser: offered: developer, ldap-local; picked developer  → 02-openshift-idp-chooser.png
+  [ok ] OpenShift login form: username filled: kubeadmin  → 03-openshift-login-form.png
+  [ok ] login: dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard
+  [ok ] cluster selector options: all clusters, dashboard, mock-privateca, mock-selfsigned, mock-trusted, shared-qa, shared-rnd
+  [ok ] switch cluster to mock-privateca: heading: mock-privateca; url https://group-sync-dashboard.apps-crc.testing/#page=overview&cluster=mock-privateca  → 04-overview-cluster-mock-privateca.png
+  [ok ] Reports tab on mock-privateca: no report form; the card says: Skip to main content OCP Access Tracking Dashboard - mock-privateca Full view — you are seeing everything v5.8.0 · 665b73347b updated 13:52:12 EDT Appearance Auto Light Dark Colours Default Deuteranopia-safe Protanopia-safe Tritanopia-safe High contrast Refresh Sign out Cluster dashboard mock-privat  → 05-reports-cluster-mock-privateca.png
+  [ok ] scope pill: Full view — you are seeing everything
+  [ok ] open the route: https://group-sync-dashboard.apps-crc.testing → https://group-sync-dashboard.apps-crc.testing/  → 06-oauth-proxy-interstitial.png
+  [ok ] identity-provider chooser: offered: developer, ldap-local; picked developer  → 07-openshift-idp-chooser.png
+  [ok ] OpenShift login form: username filled: kubeadmin  → 08-openshift-login-form.png
+  [ok ] login: dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard
+  [ok ] light theme Overview: prefers-color-scheme: light  → 09-overview-light-theme.png
+  [ok ] HTML report access-certification opens: title: Access certification pack — dashboard — OCP Access Tracking Dashboard; 39360 bytes  → 10-html-report-access-certification.png
+  [ok ] HTML report access-matrix opens: title: Access matrix — dashboard — OCP Access Tracking Dashboard; 21249 bytes  → 11-html-report-access-matrix.png
+  [ok ] HTML report binding-findings opens: title: RBAC binding findings — dashboard — OCP Access Tracking Dashboard; 32377 bytes  → 12-html-report-binding-findings.png
+  [ok ] HTML report compliance-snapshot opens: title: Compliance snapshot — dashboard — OCP Access Tracking Dashboard; 10646 bytes  → 13-html-report-compliance-snapshot.png
+  [ok ] HTML report dormant-access opens: title: Dormant and unusable access — dashboard — OCP Access Tracking Dashboard; 9737 bytes  → 14-html-report-dormant-access.png
+  [ok ] HTML report groups opens: title: Groups and membership changes — dashboard — OCP Access Tracking Dashboard; 30551 bytes  → 15-html-report-groups.png
+  [ok ] HTML report groupsync-health opens: title: GroupSync and policy-operator health — dashboard — OCP Access Tracking Dashboard; 8811 bytes  → 16-html-report-groupsync-health.png
+  [ok ] HTML report login-activity opens: title: Login activity — dashboard — OCP Access Tracking Dashboard; 9159 bytes  → 17-html-report-login-activity.png
+  [ok ] HTML report namespace-access opens: title: Namespace access report — dashboard — OCP Access Tracking Dashboard; 7778 bytes  → 18-html-report-namespace-access.png
+  [ok ] HTML report privileged-access opens: title: Privileged access review — dashboard — OCP Access Tracking Dashboard; 12637 bytes  → 19-html-report-privileged-access.png
+  [ok ] HTML report users opens: title: Users — dashboard — OCP Access Tracking Dashboard; 15058 bytes  → 20-html-report-users.png
+  [ok ] pdf page 1 → pdf-page1-access-certification.png
+  [ok ] pdf page 1 → pdf-page1-access-matrix.png
+  [ok ] pdf page 1 → pdf-page1-binding-findings.png
+  [ok ] pdf page 1 → pdf-page1-compliance-snapshot.png
+  [ok ] pdf page 1 → pdf-page1-dormant-access.png
+  [ok ] pdf page 1 → pdf-page1-groups.png
+  [ok ] pdf page 1 → pdf-page1-groupsync-health.png
+  [ok ] pdf page 1 → pdf-page1-login-activity.png
+  [ok ] pdf page 1 → pdf-page1-namespace-access.png
+  [ok ] pdf page 1 → pdf-page1-privileged-access.png
+  [ok ] pdf page 1 → pdf-page1-users.png
+24 / 24 extra steps ok; 11 / 11 PDFs rendered
