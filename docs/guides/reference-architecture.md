@@ -12,6 +12,8 @@ choice is non-obvious, the file and the name or phrase that decides it are cited
 
 ## 1. What this is
 
+The same system in seven figures, each with a text twin: [architecture-overview.md](architecture-overview.md).
+
 A read-only observer of two OpenShift operators and the RBAC they produce:
 
 * the **group-sync-operator** (`redhatcop.redhat.io/v1alpha1 GroupSync`), which pulls LDAP
