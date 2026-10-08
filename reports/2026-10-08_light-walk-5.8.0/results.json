@@ -1,0 +1,1391 @@
+{
+  "started": "2026-10-08T17:50:10Z",
+  "finished": "2026-10-08T17:52:05Z",
+  "base": "https://group-sync-dashboard.apps-crc.testing",
+  "login_user": "kubeadmin",
+  "theme": "light",
+  "steps": [
+    {
+      "t": "2026-10-08T17:50:10Z",
+      "step": "open the route",
+      "ok": true,
+      "detail": "https://group-sync-dashboard.apps-crc.testing \u2192 https://group-sync-dashboard.apps-crc.testing/",
+      "screenshot": "01-oauth-proxy-interstitial.png"
+    },
+    {
+      "t": "2026-10-08T17:50:11Z",
+      "step": "identity-provider chooser",
+      "ok": true,
+      "detail": "offered: developer, ldap-local; picked developer",
+      "screenshot": "02-openshift-idp-chooser.png"
+    },
+    {
+      "t": "2026-10-08T17:50:12Z",
+      "step": "OpenShift login form",
+      "ok": true,
+      "detail": "username filled: kubeadmin",
+      "screenshot": "03-openshift-login-form.png"
+    },
+    {
+      "t": "2026-10-08T17:50:15Z",
+      "step": "login",
+      "ok": true,
+      "detail": "dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard",
+      "screenshot": null
+    },
+    {
+      "t": "2026-10-08T17:50:15Z",
+      "step": "GET /api/whoami",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "user": "kubeadmin",
+        "email": "kubeadmin@cluster.local",
+        "authenticated": true,
+        "logout_url": "/oauth/sign_out",
+        "session": {
+          "cookie_expire_seconds": 14400,
+          "cookie_refresh_seconds": 0,
+          "idle_timeout": {
+            "enabled": false
+          }
+        },
+        "visibility": {
+          "scope": "all",
+          "enabled": true,
+          "clusters": {
+            "dashboard": {
+              "policy": "inherit",
+              "identity": "same-as-host",
+              "scope": "all"
+            },
+            "mock-privateca": {
+              "policy": "inherit",
+              "identity": "same-as-host",
+              "scope": "all"
+            },
+            "mock-selfsigned": {
+              "policy": "inherit",
+              "identity": "same-as-host",
+              "scope": "all"
+            },
+            "mock-trusted": {
+              "policy": "inherit",
+              "identity": "same-as-host",
+              "scope": "all"
+            },
+            "shared-qa": {
+              "policy": "remote-sar",
+              "identity": "same-as-host",
+              "scope": "all"
+            },
+            "shared-rnd": {
+              "policy": "remote-sar",
+              "identity": "same-as-host",
+              "scope": "all"
+            }
+          },
+          "cluster_admin": true
+        }
+      }
+    },
+    {
+      "t": "2026-10-08T17:50:15Z",
+      "step": "GET /api/version",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "leader": true,
+        "version": "5.8.0",
+        "commit": "665b73347b",
+        "branch": "main",
+        "dirty": false,
+        "features": {
+          "export": true,
+          "reporting": true,
+          "reporting_prefix": "/report",
+          "housekeeping": true
+        },
+        "timezone": {
+          "name": "America/New_York",
+          "abbrev": "EDT",
+          "utc_offset": "-0400"
+        }
+      }
+    },
+    {
+      "t": "2026-10-08T17:50:15Z",
+      "step": "GET /api/clusters",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": [
+        {
+          "id": "dashboard",
+          "api_url": "https://kubernetes.default.svc",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-10-08T17:49:46Z",
+          "error": null,
+          "groupsync_count": 3,
+          "groupsync_operator_present": true,
+          "group_count": 66,
+          "empty_groups": 0,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-10-08T16:00:00Z",
+          "operator_configs": {
+            "total": 6,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "inherit",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 6,
+          "builtin_bindings": 919,
+          "unmanaged_bindings": 86
+        },
+        {
+          "id": "mock-privateca",
+          "api_url": "https://mock-privateca:6443",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-10-08T17:49:46Z",
+          "error": null,
+          "groupsync_count": 1,
+          "groupsync_operator_present": true,
+          "group_count": 7,
+          "empty_groups": 1,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-09-14T08:00:00Z",
+          "operator_configs": {
+            "total": 1,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "inherit",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 0,
+          "builtin_bindings": 0,
+          "unmanaged_bindings": 1
+        },
+        {
+          "id": "mock-selfsigned",
+          "api_url": "https://mock-selfsigned:6443",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-10-08T17:49:48Z",
+          "error": null,
+          "groupsync_count": 1,
+          "groupsync_operator_present": true,
+          "group_count": 7,
+          "empty_groups": 1,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-09-14T08:00:00Z",
+          "operator_configs": {
+            "total": 1,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "inherit",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 0,
+          "builtin_bindings": 0,
+          "unmanaged_bindings": 1
+        },
+        {
+          "id": "mock-trusted",
+          "api_url": "https://mock-trusted:6443",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-10-08T17:49:46Z",
+          "error": null,
+          "groupsync_count": 1,
+          "groupsync_operator_present": true,
+          "group_count": 7,
+          "empty_groups": 1,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-09-14T08:00:00Z",
+          "operator_configs": {
+            "total": 1,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "inherit",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 0,
+          "builtin_bindings": 0,
+          "unmanaged_bindings": 1
+        },
+        {
+          "id": "shared-qa",
+          "api_url": "https://api.crc.testing:6443",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-10-08T17:49:49Z",
+          "error": null,
+          "groupsync_count": 3,
+          "groupsync_operator_present": true,
+          "group_count": 66,
+          "empty_groups": 0,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-10-08T16:00:00Z",
+          "operator_configs": {
+            "total": 6,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "remote-sar",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 6,
+          "builtin_bindings": 919,
+          "unmanaged_bindings": 86
+        },
+        {
+          "id": "shared-rnd",
+          "api_url": "https://api.crc.testing:6443",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-10-08T17:49:49Z",
+          "error": null,
+          "groupsync_count": 3,
+          "groupsync_operator_present": true,
+          "group_count": 66,
+          "empty_groups": 0,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-10-08T16:00:00Z",
+          "operator_configs": {
+            "total": 6,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "remote-sar",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 6,
+          "builtin_bindings": 919,
+          "unmanaged_bindings": 86
+        }
+      ]
+    },
+    {
+      "t": "2026-10-08T17:50:15Z",
+      "step": "GET /report/healthz",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "status": "ok"
+      }
+    },
+    {
+      "t": "2026-10-08T17:50:15Z",
+      "step": "GET /report/readyz",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "status": "ready",
+        "snapshot": "2026-10-08T17:46:46.549771Z",
+        "schema": 20
+      }
+    },
+    {
+      "t": "2026-10-08T17:50:15Z",
+      "step": "tab strip",
+      "ok": true,
+      "detail": "14 tabs: Home, Overview, KPIs, Groups, Users, Access granted, RBAC policy, Kyverno, Namespace audit, Logins, Usage, Reports, Library, Cluster Configurations",
+      "screenshot": null
+    },
+    {
+      "t": "2026-10-08T17:50:16Z",
+      "step": "tab Home",
+      "ok": true,
+      "detail": "heading: What changed last 30 days",
+      "screenshot": "04-tab-home.png"
+    },
+    {
+      "t": "2026-10-08T17:50:17Z",
+      "step": "tab Overview",
+      "ok": true,
+      "detail": "heading: dashboard",
+      "screenshot": "05-tab-overview.png"
+    },
+    {
+      "t": "2026-10-08T17:50:18Z",
+      "step": "tab KPIs",
+      "ok": true,
+      "detail": "heading: KPIs",
+      "screenshot": "06-tab-kpis.png"
+    },
+    {
+      "t": "2026-10-08T17:50:20Z",
+      "step": "tab Groups",
+      "ok": true,
+      "detail": "heading: Groups \u00b7 66 shown",
+      "screenshot": "07-tab-groups.png"
+    },
+    {
+      "t": "2026-10-08T17:50:22Z",
+      "step": "tab Users",
+      "ok": true,
+      "detail": "heading: Users \u00b7 61 shown",
+      "screenshot": "08-tab-users.png"
+    },
+    {
+      "t": "2026-10-08T17:50:24Z",
+      "step": "tab Access granted",
+      "ok": true,
+      "detail": "heading: dangling Dangling \u00b7 0",
+      "screenshot": "09-tab-access-granted.png"
+    },
+    {
+      "t": "2026-10-08T17:50:25Z",
+      "step": "tab RBAC policy",
+      "ok": true,
+      "detail": "heading: RBAC policy",
+      "screenshot": "10-tab-rbac-policy.png"
+    },
+    {
+      "t": "2026-10-08T17:50:26Z",
+      "step": "tab Kyverno",
+      "ok": true,
+      "detail": "heading: Kyverno \u00b7 the CEL policy family",
+      "screenshot": "11-tab-kyverno.png"
+    },
+    {
+      "t": "2026-10-08T17:50:28Z",
+      "step": "tab Namespace audit",
+      "ok": true,
+      "detail": "heading: Namespace audit",
+      "screenshot": "12-tab-namespace-audit.png"
+    },
+    {
+      "t": "2026-10-08T17:50:30Z",
+      "step": "tab Logins",
+      "ok": true,
+      "detail": "heading: Login attempts",
+      "screenshot": "13-tab-logins.png"
+    },
+    {
+      "t": "2026-10-08T17:50:32Z",
+      "step": "tab Usage",
+      "ok": true,
+      "detail": "heading: Dashboard usage",
+      "screenshot": "14-tab-usage.png"
+    },
+    {
+      "t": "2026-10-08T17:50:34Z",
+      "step": "tab Library",
+      "ok": true,
+      "detail": "heading: Library 24 runs \u00b7 4 schedules \u00b7 2 paused",
+      "screenshot": "15-tab-library.png"
+    },
+    {
+      "t": "2026-10-08T17:50:36Z",
+      "step": "tab Cluster Configurations",
+      "ok": true,
+      "detail": "heading: Cluster Configurations 38 clusters",
+      "screenshot": "16-tab-cluster-configurations.png"
+    },
+    {
+      "t": "2026-10-08T17:50:37Z",
+      "step": "lookup demo",
+      "ok": true,
+      "detail": "Groups \u00b7 6 of 66 / Namespaces \u00b7 8 of 128",
+      "screenshot": "17-lookup-demo.png"
+    },
+    {
+      "t": "2026-10-08T17:50:38Z",
+      "step": "lookup -> namespace page",
+      "ok": true,
+      "detail": "demo-prod",
+      "screenshot": "18-lookup-namespace.png"
+    },
+    {
+      "t": "2026-10-08T17:50:38Z",
+      "step": "also-line on Groups",
+      "ok": true,
+      "detail": "also matching demo: 8 namespaces \u2014 see all matches",
+      "screenshot": "19-lookup-also-line.png"
+    },
+    {
+      "t": "2026-10-08T17:50:40Z",
+      "step": "lookup at 375 px",
+      "ok": true,
+      "detail": "scrollWidth fits=True",
+      "screenshot": "20-lookup-375.png"
+    },
+    {
+      "t": "2026-10-08T17:50:41Z",
+      "step": "Reports tab",
+      "ok": true,
+      "detail": "11 reports in the catalogue, 11 enabled; PDF on, variant pdf/a-2b",
+      "screenshot": "21-reports-catalogue.png",
+      "catalogue": [
+        {
+          "name": "namespace-access",
+          "title": "Namespace access report",
+          "enabled": true
+        },
+        {
+          "name": "access-matrix",
+          "title": "Access matrix",
+          "enabled": true
+        },
+        {
+          "name": "privileged-access",
+          "title": "Privileged access review",
+          "enabled": true
+        },
+        {
+          "name": "binding-findings",
+          "title": "RBAC binding findings",
+          "enabled": true
+        },
+        {
+          "name": "groups",
+          "title": "Groups and membership changes",
+          "enabled": true
+        },
+        {
+          "name": "users",
+          "title": "Users",
+          "enabled": true
+        },
+        {
+          "name": "login-activity",
+          "title": "Login activity",
+          "enabled": true
+        },
+        {
+          "name": "dormant-access",
+          "title": "Dormant and unusable access",
+          "enabled": true
+        },
+        {
+          "name": "groupsync-health",
+          "title": "GroupSync and policy-operator health",
+          "enabled": true
+        },
+        {
+          "name": "compliance-snapshot",
+          "title": "Compliance snapshot",
+          "enabled": true
+        },
+        {
+          "name": "access-certification",
+          "title": "Access certification pack",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "t": "2026-10-08T17:50:42Z",
+      "step": "report namespace-access: form",
+      "ok": true,
+      "detail": "Namespace access report \u2014 params selectors, mnemonics, namespaces, include_members, group_by",
+      "screenshot": "22-report-namespace-access-form.png"
+    },
+    {
+      "t": "2026-10-08T17:50:49Z",
+      "step": "report namespace-access: generate",
+      "ok": true,
+      "detail": "run 20261008T175042.481524Z-e8af done in 6.3s; formats ['html', 'pdf']; sha256 c4c320a58a72d0c0\u2026; snapshot 2026-10-08T17:46:46.549771Z",
+      "screenshot": "23-report-namespace-access-status.png",
+      "run": {
+        "id": "20261008T175042.481524Z-e8af",
+        "report": "namespace-access",
+        "cluster": "dashboard",
+        "params": {
+          "selectors": null,
+          "mnemonics": null,
+          "namespaces": [
+            "group-sync-dashboard",
+            "openshift-monitoring"
+          ],
+          "include_members": false,
+          "group_by": "mnemonic"
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:50:42Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:50:42Z",
+        "finished_at": "2026-10-08T17:50:47Z",
+        "error": null,
+        "sha256": "c4c320a58a72d0c0b1cc0814fcf9a3ab9af0c7f57e24c4b70eefa5b336fe6b0a",
+        "snapshot_stamp": "2026-10-08T17:46:46.549771Z",
+        "bytes": {
+          "json": 8455,
+          "html": 7778,
+          "pdf": 31792
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 5.332,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:50:48Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 6.3,
+      "status_line": "Run 20261008T175042.481524Z-e8af \u2014 done \u00b7 sha256 c4c320a58a72d0c0\u2026 \u00b7 data as of 2026-10-08T17:46:46.549771Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:50:49Z",
+      "step": "report namespace-access: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_namespace-access_20261008T175047Z.html (7778 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_namespace-access_20261008T175047Z.html",
+      "bytes": 7778
+    },
+    {
+      "t": "2026-10-08T17:50:49Z",
+      "step": "report namespace-access: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_namespace-access_20261008T175047Z.pdf (31792 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_namespace-access_20261008T175047Z.pdf",
+      "bytes": 31792,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:50:49Z",
+      "step": "report namespace-access: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_namespace-access_20261008T175047Z.json (8455 bytes); sha256 of the file 1909d517fe72bcc0\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_namespace-access_20261008T175047Z.json",
+      "bytes": 8455,
+      "sha256_of_file": "1909d517fe72bcc079abb2e59f04127be297ed519b2a4e1dfd1ac26864e02187"
+    },
+    {
+      "t": "2026-10-08T17:50:50Z",
+      "step": "report access-matrix: form",
+      "ok": true,
+      "detail": "Access matrix \u2014 params users, groups, namespace_prefix",
+      "screenshot": "24-report-access-matrix-form.png"
+    },
+    {
+      "t": "2026-10-08T17:50:57Z",
+      "step": "report access-matrix: generate",
+      "ok": true,
+      "detail": "run 20261008T175050.302850Z-99dd done in 6.6s; formats ['html', 'pdf']; sha256 00dcccd1af1f0653\u2026; snapshot 2026-10-08T17:46:46.549771Z",
+      "screenshot": "25-report-access-matrix-status.png",
+      "run": {
+        "id": "20261008T175050.302850Z-99dd",
+        "report": "access-matrix",
+        "cluster": "dashboard",
+        "params": {
+          "users": [],
+          "groups": [],
+          "namespace_prefix": ""
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:50:50Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:50:50Z",
+        "finished_at": "2026-10-08T17:50:56Z",
+        "error": null,
+        "sha256": "00dcccd1af1f0653628323a1151254e9e145f162a2fdb60474e86857042f5f34",
+        "snapshot_stamp": "2026-10-08T17:46:46.549771Z",
+        "bytes": {
+          "json": 28193,
+          "html": 21249,
+          "pdf": 45270
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 5.71,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:50:57Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 6.6,
+      "status_line": "Run 20261008T175050.302850Z-99dd \u2014 done \u00b7 sha256 00dcccd1af1f0653\u2026 \u00b7 data as of 2026-10-08T17:46:46.549771Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:50:57Z",
+      "step": "report access-matrix: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_access-matrix_20261008T175056Z.html (21249 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_access-matrix_20261008T175056Z.html",
+      "bytes": 21249
+    },
+    {
+      "t": "2026-10-08T17:50:57Z",
+      "step": "report access-matrix: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_access-matrix_20261008T175056Z.pdf (45270 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_access-matrix_20261008T175056Z.pdf",
+      "bytes": 45270,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:50:57Z",
+      "step": "report access-matrix: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_access-matrix_20261008T175056Z.json (28193 bytes); sha256 of the file 3bd2e512cd96c3ce\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_access-matrix_20261008T175056Z.json",
+      "bytes": 28193,
+      "sha256_of_file": "3bd2e512cd96c3ced2f4f25e62d08433a97681790ffbd7722678e175d78b4ede"
+    },
+    {
+      "t": "2026-10-08T17:50:58Z",
+      "step": "report privileged-access: form",
+      "ok": true,
+      "detail": "Privileged access review \u2014 params include_members, roles",
+      "screenshot": "26-report-privileged-access-form.png"
+    },
+    {
+      "t": "2026-10-08T17:51:03Z",
+      "step": "report privileged-access: generate",
+      "ok": true,
+      "detail": "run 20261008T175058.361233Z-33c1 done in 4.9s; formats ['html', 'pdf']; sha256 d2d5f92e4a75b737\u2026; snapshot 2026-10-08T17:46:46.549771Z",
+      "screenshot": "27-report-privileged-access-status.png",
+      "run": {
+        "id": "20261008T175058.361233Z-33c1",
+        "report": "privileged-access",
+        "cluster": "dashboard",
+        "params": {
+          "include_members": true,
+          "roles": [
+            "cluster-admin",
+            "admin",
+            "edit"
+          ]
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:50:58Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:50:58Z",
+        "finished_at": "2026-10-08T17:51:01Z",
+        "error": null,
+        "sha256": "d2d5f92e4a75b7373b2ecb1084288ce62f22f85beedf334b6f780d2bc538fa92",
+        "snapshot_stamp": "2026-10-08T17:46:46.549771Z",
+        "bytes": {
+          "json": 15405,
+          "html": 12637,
+          "pdf": 34777
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 3.367,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:51:02Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 4.9,
+      "status_line": "Run 20261008T175058.361233Z-33c1 \u2014 done \u00b7 sha256 d2d5f92e4a75b737\u2026 \u00b7 data as of 2026-10-08T17:46:46.549771Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:51:03Z",
+      "step": "report privileged-access: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_privileged-access_20261008T175101Z.html (12637 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_privileged-access_20261008T175101Z.html",
+      "bytes": 12637
+    },
+    {
+      "t": "2026-10-08T17:51:03Z",
+      "step": "report privileged-access: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_privileged-access_20261008T175101Z.pdf (34777 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_privileged-access_20261008T175101Z.pdf",
+      "bytes": 34777,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:51:04Z",
+      "step": "report privileged-access: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_privileged-access_20261008T175101Z.json (15405 bytes); sha256 of the file 86b2719c3bfa0841\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_privileged-access_20261008T175101Z.json",
+      "bytes": 15405,
+      "sha256_of_file": "86b2719c3bfa0841df569e412a2a00ff55648ff0b9e66763b7179b7da797672b"
+    },
+    {
+      "t": "2026-10-08T17:51:04Z",
+      "step": "report binding-findings: form",
+      "ok": true,
+      "detail": "RBAC binding findings \u2014 params (none)",
+      "screenshot": "28-report-binding-findings-form.png"
+    },
+    {
+      "t": "2026-10-08T17:51:15Z",
+      "step": "report binding-findings: generate",
+      "ok": true,
+      "detail": "run 20261008T175104.720851Z-5fc0 done in 10.1s; formats ['html', 'pdf']; sha256 f2f576c0fa3ea972\u2026; snapshot 2026-10-08T17:46:46.549771Z",
+      "screenshot": "29-report-binding-findings-status.png",
+      "run": {
+        "id": "20261008T175104.720851Z-5fc0",
+        "report": "binding-findings",
+        "cluster": "dashboard",
+        "params": {},
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:51:04Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:51:04Z",
+        "finished_at": "2026-10-08T17:51:13Z",
+        "error": null,
+        "sha256": "f2f576c0fa3ea972259d1caf413bf7cdbc15c72468fc6c916710286597a7b656",
+        "snapshot_stamp": "2026-10-08T17:46:46.549771Z",
+        "bytes": {
+          "json": 41906,
+          "html": 32377,
+          "pdf": 60309
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 8.811,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:51:14Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 10.1,
+      "status_line": "Run 20261008T175104.720851Z-5fc0 \u2014 done \u00b7 sha256 f2f576c0fa3ea972\u2026 \u00b7 data as of 2026-10-08T17:46:46.549771Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:51:15Z",
+      "step": "report binding-findings: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_binding-findings_20261008T175113Z.html (32377 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_binding-findings_20261008T175113Z.html",
+      "bytes": 32377
+    },
+    {
+      "t": "2026-10-08T17:51:15Z",
+      "step": "report binding-findings: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_binding-findings_20261008T175113Z.pdf (60309 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_binding-findings_20261008T175113Z.pdf",
+      "bytes": 60309,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:51:15Z",
+      "step": "report binding-findings: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_binding-findings_20261008T175113Z.json (41906 bytes); sha256 of the file bc667e49bd3e3be8\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_binding-findings_20261008T175113Z.json",
+      "bytes": 41906,
+      "sha256_of_file": "bc667e49bd3e3be8e06f2f404b76a326d48a3752a56d7a401bad0576bdc35f71"
+    },
+    {
+      "t": "2026-10-08T17:51:16Z",
+      "step": "report groups: form",
+      "ok": true,
+      "detail": "Groups and membership changes \u2014 params groups, window_days, include_members",
+      "screenshot": "30-report-groups-form.png"
+    },
+    {
+      "t": "2026-10-08T17:51:26Z",
+      "step": "report groups: generate",
+      "ok": true,
+      "detail": "run 20261008T175116.210930Z-a5ba done in 10.0s; formats ['html', 'pdf']; sha256 81f6f33053749549\u2026; snapshot 2026-10-08T17:46:46.549771Z",
+      "screenshot": "31-report-groups-status.png",
+      "run": {
+        "id": "20261008T175116.210930Z-a5ba",
+        "report": "groups",
+        "cluster": "dashboard",
+        "params": {
+          "groups": [],
+          "window_days": 30,
+          "include_members": false
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:51:16Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:51:16Z",
+        "finished_at": "2026-10-08T17:51:24Z",
+        "error": null,
+        "sha256": "81f6f33053749549b1968929404a9ba52ee240323a8588efde8eda1a9db0e926",
+        "snapshot_stamp": "2026-10-08T17:46:46.549771Z",
+        "bytes": {
+          "json": 41395,
+          "html": 30551,
+          "pdf": 49774
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 8.412,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:51:25Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 10.0,
+      "status_line": "Run 20261008T175116.210930Z-a5ba \u2014 done \u00b7 sha256 81f6f33053749549\u2026 \u00b7 data as of 2026-10-08T17:46:46.549771Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:51:26Z",
+      "step": "report groups: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_groups_20261008T175124Z.html (30551 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_groups_20261008T175124Z.html",
+      "bytes": 30551
+    },
+    {
+      "t": "2026-10-08T17:51:26Z",
+      "step": "report groups: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_groups_20261008T175124Z.pdf (49774 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_groups_20261008T175124Z.pdf",
+      "bytes": 49774,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:51:26Z",
+      "step": "report groups: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_groups_20261008T175124Z.json (41395 bytes); sha256 of the file 53abad48fb88c662\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_groups_20261008T175124Z.json",
+      "bytes": 41395,
+      "sha256_of_file": "53abad48fb88c6625832166f32b71bde5107c34c1cf94136e5dc0bcd60fd54ff"
+    },
+    {
+      "t": "2026-10-08T17:51:27Z",
+      "step": "report users: form",
+      "ok": true,
+      "detail": "Users \u2014 params users, providers",
+      "screenshot": "32-report-users-form.png"
+    },
+    {
+      "t": "2026-10-08T17:51:33Z",
+      "step": "report users: generate",
+      "ok": true,
+      "detail": "run 20261008T175127.661019Z-6a7e done in 5.0s; formats ['html', 'pdf']; sha256 356ad7a05ed35f4b\u2026; snapshot 2026-10-08T17:46:46.549771Z",
+      "screenshot": "33-report-users-status.png",
+      "run": {
+        "id": "20261008T175127.661019Z-6a7e",
+        "report": "users",
+        "cluster": "dashboard",
+        "params": {
+          "users": [],
+          "providers": []
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:51:27Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:51:27Z",
+        "finished_at": "2026-10-08T17:51:31Z",
+        "error": null,
+        "sha256": "356ad7a05ed35f4b5ae021be15667e3d34b08cd306075426f4002fd0b6223334",
+        "snapshot_stamp": "2026-10-08T17:46:46.549771Z",
+        "bytes": {
+          "json": 19986,
+          "html": 15058,
+          "pdf": 39315
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 4.285,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:51:32Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 5.0,
+      "status_line": "Run 20261008T175127.661019Z-6a7e \u2014 done \u00b7 sha256 356ad7a05ed35f4b\u2026 \u00b7 data as of 2026-10-08T17:46:46.549771Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:51:33Z",
+      "step": "report users: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_users_20261008T175131Z.html (15058 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_users_20261008T175131Z.html",
+      "bytes": 15058
+    },
+    {
+      "t": "2026-10-08T17:51:33Z",
+      "step": "report users: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_users_20261008T175131Z.pdf (39315 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_users_20261008T175131Z.pdf",
+      "bytes": 39315,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:51:33Z",
+      "step": "report users: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_users_20261008T175131Z.json (19986 bytes); sha256 of the file 27d0e29bd70489e9\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_users_20261008T175131Z.json",
+      "bytes": 19986,
+      "sha256_of_file": "27d0e29bd70489e98acee0cd40a0eb1f5dc9617e079313b3e31d403726df4525"
+    },
+    {
+      "t": "2026-10-08T17:51:34Z",
+      "step": "report login-activity: form",
+      "ok": true,
+      "detail": "Login activity \u2014 params window_days, users, groups",
+      "screenshot": "34-report-login-activity-form.png"
+    },
+    {
+      "t": "2026-10-08T17:51:38Z",
+      "step": "report login-activity: generate",
+      "ok": true,
+      "detail": "run 20261008T175134.178461Z-46e1 done in 3.2s; formats ['html', 'pdf']; sha256 2e22d895075f43f6\u2026; snapshot 2026-10-08T17:46:46.549771Z",
+      "screenshot": "35-report-login-activity-status.png",
+      "run": {
+        "id": "20261008T175134.178461Z-46e1",
+        "report": "login-activity",
+        "cluster": "dashboard",
+        "params": {
+          "window_days": 30,
+          "users": [],
+          "groups": []
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:51:34Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:51:34Z",
+        "finished_at": "2026-10-08T17:51:36Z",
+        "error": null,
+        "sha256": "2e22d895075f43f6b7fb071641f0106661d75d2190959b532a21865e5c823109",
+        "snapshot_stamp": "2026-10-08T17:46:46.549771Z",
+        "bytes": {
+          "json": 10159,
+          "html": 9159,
+          "pdf": 34008
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 2.623,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:51:37Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 3.2,
+      "status_line": "Run 20261008T175134.178461Z-46e1 \u2014 done \u00b7 sha256 2e22d895075f43f6\u2026 \u00b7 data as of 2026-10-08T17:46:46.549771Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:51:38Z",
+      "step": "report login-activity: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_login-activity_20261008T175136Z.html (9159 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_login-activity_20261008T175136Z.html",
+      "bytes": 9159
+    },
+    {
+      "t": "2026-10-08T17:51:38Z",
+      "step": "report login-activity: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_login-activity_20261008T175136Z.pdf (34008 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_login-activity_20261008T175136Z.pdf",
+      "bytes": 34008,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:51:38Z",
+      "step": "report login-activity: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_login-activity_20261008T175136Z.json (10159 bytes); sha256 of the file 37b1b4b910e745f8\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_login-activity_20261008T175136Z.json",
+      "bytes": 10159,
+      "sha256_of_file": "37b1b4b910e745f8c772eeb15389d6af06d0ff1b5d176e32d28007bbe9606b7a"
+    },
+    {
+      "t": "2026-10-08T17:51:38Z",
+      "step": "report dormant-access: form",
+      "ok": true,
+      "detail": "Dormant and unusable access \u2014 params users, groups, dormant_days",
+      "screenshot": "36-report-dormant-access-form.png"
+    },
+    {
+      "t": "2026-10-08T17:51:43Z",
+      "step": "report dormant-access: generate",
+      "ok": true,
+      "detail": "run 20261008T175138.878126Z-6725 done in 3.6s; formats ['html', 'pdf']; sha256 11e5d63cf6128c05\u2026; snapshot 2026-10-08T17:46:46.549771Z",
+      "screenshot": "37-report-dormant-access-status.png",
+      "run": {
+        "id": "20261008T175138.878126Z-6725",
+        "report": "dormant-access",
+        "cluster": "dashboard",
+        "params": {
+          "users": [],
+          "groups": [],
+          "dormant_days": 90
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:51:38Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:51:38Z",
+        "finished_at": "2026-10-08T17:51:41Z",
+        "error": null,
+        "sha256": "11e5d63cf6128c059cae92a83029b53656c6115429f14ccec053732ca92a4e52",
+        "snapshot_stamp": "2026-10-08T17:46:46.549771Z",
+        "bytes": {
+          "json": 10287,
+          "html": 9737,
+          "pdf": 35296
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 2.866,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:51:42Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 3.6,
+      "status_line": "Run 20261008T175138.878126Z-6725 \u2014 done \u00b7 sha256 11e5d63cf6128c05\u2026 \u00b7 data as of 2026-10-08T17:46:46.549771Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:51:43Z",
+      "step": "report dormant-access: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_dormant-access_20261008T175141Z.html (9737 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_dormant-access_20261008T175141Z.html",
+      "bytes": 9737
+    },
+    {
+      "t": "2026-10-08T17:51:43Z",
+      "step": "report dormant-access: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_dormant-access_20261008T175141Z.pdf (35296 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_dormant-access_20261008T175141Z.pdf",
+      "bytes": 35296,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:51:43Z",
+      "step": "report dormant-access: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_dormant-access_20261008T175141Z.json (10287 bytes); sha256 of the file 464dd21ebbdd9c8e\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_dormant-access_20261008T175141Z.json",
+      "bytes": 10287,
+      "sha256_of_file": "464dd21ebbdd9c8e15728bfded6116760c400e6797eca722a2b849588295a14d"
+    },
+    {
+      "t": "2026-10-08T17:51:43Z",
+      "step": "report groupsync-health: form",
+      "ok": true,
+      "detail": "GroupSync and policy-operator health \u2014 params window_days",
+      "screenshot": "38-report-groupsync-health-form.png"
+    },
+    {
+      "t": "2026-10-08T17:51:47Z",
+      "step": "report groupsync-health: generate",
+      "ok": true,
+      "detail": "run 20261008T175143.909182Z-0a7b done in 3.4s; formats ['html', 'pdf']; sha256 658ee26d6de64729\u2026; snapshot 2026-10-08T17:46:46.549771Z",
+      "screenshot": "39-report-groupsync-health-status.png",
+      "run": {
+        "id": "20261008T175143.909182Z-0a7b",
+        "report": "groupsync-health",
+        "cluster": "dashboard",
+        "params": {
+          "window_days": 30
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:51:43Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:51:43Z",
+        "finished_at": "2026-10-08T17:51:46Z",
+        "error": null,
+        "sha256": "658ee26d6de6472970c97fba8fe4cbb69cb2b7a353fb87a34c0b1af626949d4b",
+        "snapshot_stamp": "2026-10-08T17:46:46.549771Z",
+        "bytes": {
+          "json": 9345,
+          "html": 8811,
+          "pdf": 33664
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 2.717,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:51:47Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 3.4,
+      "status_line": "Run 20261008T175143.909182Z-0a7b \u2014 done \u00b7 sha256 658ee26d6de64729\u2026 \u00b7 data as of 2026-10-08T17:46:46.549771Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:51:47Z",
+      "step": "report groupsync-health: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_groupsync-health_20261008T175146Z.html (8811 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_groupsync-health_20261008T175146Z.html",
+      "bytes": 8811
+    },
+    {
+      "t": "2026-10-08T17:51:47Z",
+      "step": "report groupsync-health: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_groupsync-health_20261008T175146Z.pdf (33664 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_groupsync-health_20261008T175146Z.pdf",
+      "bytes": 33664,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:51:48Z",
+      "step": "report groupsync-health: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_groupsync-health_20261008T175146Z.json (9345 bytes); sha256 of the file 7fcc00b211f0c4f1\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_groupsync-health_20261008T175146Z.json",
+      "bytes": 9345,
+      "sha256_of_file": "7fcc00b211f0c4f1957342e42e5604dc1192572621720ec8f451b48b8477bf90"
+    },
+    {
+      "t": "2026-10-08T17:51:48Z",
+      "step": "report compliance-snapshot: form",
+      "ok": true,
+      "detail": "Compliance snapshot \u2014 params (none)",
+      "screenshot": "40-report-compliance-snapshot-form.png"
+    },
+    {
+      "t": "2026-10-08T17:51:54Z",
+      "step": "report compliance-snapshot: generate",
+      "ok": true,
+      "detail": "run 20261008T175148.715892Z-37b7 done in 4.9s; formats ['html', 'pdf']; sha256 fd19bc9976e1e2e2\u2026; snapshot 2026-10-08T17:51:46.627061Z",
+      "screenshot": "41-report-compliance-snapshot-status.png",
+      "run": {
+        "id": "20261008T175148.715892Z-37b7",
+        "report": "compliance-snapshot",
+        "cluster": "dashboard",
+        "params": {},
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:51:48Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:51:48Z",
+        "finished_at": "2026-10-08T17:51:52Z",
+        "error": null,
+        "sha256": "fd19bc9976e1e2e21723e3de347e71566466b50266a96ae8ec46e01e1bb39796",
+        "snapshot_stamp": "2026-10-08T17:51:46.627061Z",
+        "bytes": {
+          "json": 12496,
+          "html": 10646,
+          "pdf": 36748
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 3.622,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:51:53Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 4.9,
+      "status_line": "Run 20261008T175148.715892Z-37b7 \u2014 done \u00b7 sha256 fd19bc9976e1e2e2\u2026 \u00b7 data as of 2026-10-08T17:51:46.627061Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:51:54Z",
+      "step": "report compliance-snapshot: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_compliance-snapshot_20261008T175152Z.html (10646 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_compliance-snapshot_20261008T175152Z.html",
+      "bytes": 10646
+    },
+    {
+      "t": "2026-10-08T17:51:54Z",
+      "step": "report compliance-snapshot: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_compliance-snapshot_20261008T175152Z.pdf (36748 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_compliance-snapshot_20261008T175152Z.pdf",
+      "bytes": 36748,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:51:54Z",
+      "step": "report compliance-snapshot: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_compliance-snapshot_20261008T175152Z.json (12496 bytes); sha256 of the file 0df95f82295d1109\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_compliance-snapshot_20261008T175152Z.json",
+      "bytes": 12496,
+      "sha256_of_file": "0df95f82295d1109163935d24ae29442bef34e8b4fc4a233718fd687523628a4"
+    },
+    {
+      "t": "2026-10-08T17:51:55Z",
+      "step": "report access-certification: form",
+      "ok": true,
+      "detail": "Access certification pack \u2014 params campaign, due, reviewer, users, groups, group_mnemonic, include_members",
+      "screenshot": "42-report-access-certification-form.png"
+    },
+    {
+      "t": "2026-10-08T17:52:04Z",
+      "step": "report access-certification: generate",
+      "ok": true,
+      "detail": "run 20261008T175155.077978Z-d180 done in 8.4s; formats ['html', 'pdf']; sha256 47663db7c718920a\u2026; snapshot 2026-10-08T17:51:46.627061Z",
+      "screenshot": "43-report-access-certification-status.png",
+      "run": {
+        "id": "20261008T175155.077978Z-d180",
+        "report": "access-certification",
+        "cluster": "dashboard",
+        "params": {
+          "campaign": "E2E walk 2026-10-08",
+          "due": "2026-11-07",
+          "reviewer": "kubeadmin",
+          "users": [],
+          "groups": [],
+          "group_mnemonic": [],
+          "include_members": true
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-10-08T17:51:55Z",
+        "status": "done",
+        "started_at": "2026-10-08T17:51:55Z",
+        "finished_at": "2026-10-08T17:52:03Z",
+        "error": null,
+        "sha256": "47663db7c718920af1319df79c4b2a6ed5fe56e0315293ae2e40d058826259f8",
+        "snapshot_stamp": "2026-10-08T17:51:46.627061Z",
+        "bytes": {
+          "json": 61412,
+          "html": 39360,
+          "pdf": 87001
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 8.033,
+        "origin": "viewer",
+        "expires_at": "2026-10-11T17:52:04Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 8.4,
+      "status_line": "Run 20261008T175155.077978Z-d180 \u2014 done \u00b7 sha256 47663db7c718920a\u2026 \u00b7 data as of 2026-10-08T17:51:46.627061Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-10-08T17:52:04Z",
+      "step": "report access-certification: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_access-certification_20261008T175203Z.html (39360 bytes)",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_access-certification_20261008T175203Z.html",
+      "bytes": 39360
+    },
+    {
+      "t": "2026-10-08T17:52:04Z",
+      "step": "report access-certification: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_access-certification_20261008T175203Z.pdf (87001 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_access-certification_20261008T175203Z.pdf",
+      "bytes": 87001,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-10-08T17:52:04Z",
+      "step": "report access-certification: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_access-certification_20261008T175203Z.json (61412 bytes); sha256 of the file 8ea74d3d1e60371d\u2026",
+      "screenshot": null,
+      "file": "reports/gsd_dashboard_access-certification_20261008T175203Z.json",
+      "bytes": 61412,
+      "sha256_of_file": "8ea74d3d1e60371d30ba57edeb403691b0603a65e9f83cb6bb35ced0b8ca0fab"
+    },
+    {
+      "t": "2026-10-08T17:52:05Z",
+      "step": "Recent runs table",
+      "ok": true,
+      "detail": "1 runs listed of 35",
+      "screenshot": "44-reports-recent-runs.png",
+      "runs": [
+        {
+          "id": "20261008T175155.077978Z-d180",
+          "report": "access-certification",
+          "cluster": "dashboard",
+          "generated_by": "kubeadmin",
+          "status": "done",
+          "requested_at": "2026-10-08T17:51:55Z"
+        }
+      ]
+    }
+  ],
+  "passed": 84,
+  "failed": 0
+}
