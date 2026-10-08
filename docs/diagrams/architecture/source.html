@@ -1,0 +1,448 @@
+<!-- SPDX-License-Identifier: MIT-0. Started from the diagram-kit template, https://github.com/ephico2real2/diagram-kit -->
+<title>Dashboard Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root {
+  --ground: #f5f6f8; --surface: #ffffff; --ink: #18212c; --muted: #58636f; --rule: #d7dce3;
+  --host: #a55a0b; --host-wash: #fbf1e4; --remote: #0e6f68; --remote-wash: #e3f3f1;
+  --gap: #b3261e; --gap-wash: #fbe9e7; --none: #5f6a77; --none-wash: #eef0f3;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0e131a; --surface: #151c25; --ink: #e5e9ef; --muted: #9aa5b3; --rule: #2a3440;
+    --host: #f0a53c; --host-wash: #2a2014; --remote: #3fcfc0; --remote-wash: #122a28;
+    --gap: #f2857c; --gap-wash: #2d1614; --none: #9aa5b3; --none-wash: #1b232d;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0e131a; --surface: #151c25; --ink: #e5e9ef; --muted: #9aa5b3; --rule: #2a3440;
+  --host: #f0a53c; --host-wash: #2a2014; --remote: #3fcfc0; --remote-wash: #122a28;
+  --gap: #f2857c; --gap-wash: #2d1614; --none: #9aa5b3; --none-wash: #1b232d;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55; margin: 0; }
+.page { max-width: 1060px; margin: 0 auto; padding-inline: 16px; padding-block: 40px 72px; display: grid; gap: 44px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-size: clamp(26px, 4vw, 36px); line-height: 1.15; margin: 0; font-weight: 700; text-wrap: balance; }
+h2 { font-size: 20px; margin: 0 0 6px; font-weight: 600; text-wrap: balance; }
+p { margin: 0; max-width: 72ch; }
+.lede { font-size: 17px; max-width: 70ch; }
+.muted { color: var(--muted); }
+code { font-family: var(--font-mono); font-size: .9em; }
+section { display: grid; gap: 14px; }
+figure { margin: 0; display: grid; gap: 10px; }
+.fig-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 12px; }
+.fig-scroll svg { display: block; width: 100%; min-width: 760px; height: auto; color: var(--ink); }
+figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
+.tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--rule); }
+th { font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); background: var(--ground); }
+tr:last-child td { border-bottom: 0; }
+.yes { color: var(--remote); font-weight: 600; } .no { color: var(--gap); font-weight: 600; }
+.cell-gap { background: var(--gap-wash); }
+.decisions { display: grid; gap: 12px; }
+.decision { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 20px; display: grid; gap: 8px; }
+.decision .id { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.decision .q { font-weight: 600; }
+.decision .rec { font-size: 14px; border-left: 3px solid var(--remote); padding-left: 10px; }
+.decision .rec.warn { border-left-color: var(--host); }
+a { color: var(--remote); }
+:focus-visible { outline: 2px solid var(--remote); outline-offset: 2px; }
+</style>
+
+<div class="page">
+  <header>
+    <div class="eyebrow">OCP Access Tracking Dashboard · architecture · app 5.8.0 · chart 0.70.12</div>
+    <h1>How the dashboard works inside</h1>
+    <p class="lede">Seven figures, each one claim, drawn from the code. Solid shapes are shipped behaviour; nothing here is proposed.</p>
+  </header>
+  <section>
+    <h2>1. The whole system</h2>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 980 700" role="img" aria-label="The OCP Access Tracking Dashboard in one picture: a person&#x27;s browser reaches it only through the Route and the oauth-proxy sidecar; the dashboard container reads the host API and every remote cluster with each cluster&#x27;s own token and writes one SQLite database on the data volume; the report pod reads a read-only snapshot of that database, never a cluster, and writes its documents to the artefacts volume; CronJobs start scheduled reports and the offsite backup; Prometheus scrapes metrics that carry no user or group names.">
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>
+          <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+            <rect x="20" y="14" width="165" height="30" rx="6" fill="var(--none-wash)" stroke="var(--none)"/><text x="102.5" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--none)">BROWSER</text>
+            <rect x="205" y="14" width="530" height="30" rx="6" fill="var(--host-wash)" stroke="var(--host)"/><text x="470.0" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--host)">HOST CLUSTER · the dashboard&#x27;s namespace</text>
+            <rect x="755" y="14" width="205" height="30" rx="6" fill="var(--remote-wash)" stroke="var(--remote)"/><text x="857.5" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--remote)">OUTSIDE THE NAMESPACE</text>
+            <line x1="195" y1="50" x2="195" y2="640" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="6 5"/>
+            <line x1="745" y1="50" x2="745" y2="640" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="6 5"/>
+            <rect x="30" y="70" width="150" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="44" y="92" font-weight="600">a person</text>
+            <text x="44" y="110">their browser, signed</text>
+            <text x="44" y="127" fill="var(--muted)">in with OpenShift</text>
+            <rect x="220" y="70" width="210" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="234" y="92" font-weight="600">Route</text>
+            <text x="234" y="110" font-family="IBM Plex Mono, monospace" font-size="11.5">group-sync-dashboard</text>
+            <text x="234" y="127" fill="var(--muted)">the only way in</text>
+            <path d="M180,102 H218" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah1)"/>
+            <rect x="215" y="162" width="510" height="158" rx="10" fill="none" stroke="var(--host)" stroke-width="1.2"/><text x="229" y="182" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="600" fill="var(--host)">dashboard pod</text>
+            <rect x="230" y="196" width="196" height="108" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="244" y="218" font-weight="600">oauth-proxy sidecar</text>
+            <text x="244" y="236">OpenShift login, cookie</text>
+            <text x="244" y="253" fill="var(--muted)">the one door to the</text>
+            <text x="244" y="270" fill="var(--muted)">pages, /api and /report</text>
+            <rect x="468" y="196" width="242" height="108" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="482" y="218" font-weight="600">dashboard container</text>
+            <text x="482" y="236" font-family="IBM Plex Mono, monospace" font-size="11.5">gsd.api · uvicorn :8080</text>
+            <text x="482" y="253">trusts X-Forwarded-User</text>
+            <text x="482" y="270" fill="var(--muted)">pollers · the SQLite writer</text>
+            <path d="M390,134 V194" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah1)"/>
+            <text x="398" y="152" text-anchor="start" fill="var(--muted)">Service :8080</text>
+            <path d="M426,250 H466" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah1)"/>
+            <rect x="220" y="372" width="210" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="234" y="394" font-weight="600">report service pod</text>
+            <text x="234" y="412" font-family="IBM Plex Mono, monospace" font-size="11.5">gsd.reporting · :8443</text>
+            <text x="234" y="429" fill="var(--muted)">holds no cluster credential</text>
+            <rect x="490" y="372" width="220" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="504" y="394" font-weight="600">data volume</text>
+            <text x="504" y="412" font-family="IBM Plex Mono, monospace" font-size="11.5">gsd.db · SQLite, WAL</text>
+            <text x="504" y="429" fill="var(--muted)">backups · report snapshots</text>
+            <path d="M300,304 V370" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah1)"/>
+            <text x="308" y="342" text-anchor="start" fill="var(--muted)">/report/ + ticket</text>
+            <path d="M590,304 V370" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah1)"/>
+            <text x="598" y="342" text-anchor="start" fill="var(--muted)">writes each poll</text>
+            <path d="M488,410 H432" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah1)"/>
+            <text x="440" y="402" text-anchor="start" fill="var(--muted)">reads</text>
+            <rect x="220" y="486" width="210" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="234" y="508" font-weight="600">artefacts volume</text>
+            <text x="234" y="526" font-family="IBM Plex Mono, monospace" font-size="11.5">JSON · HTML · CSV · PDF</text>
+            <text x="234" y="543" fill="var(--muted)">one run.json per run</text>
+            <path d="M325,448 V484" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah1)"/>
+            <text x="333" y="472" text-anchor="start" fill="var(--muted)">writes</text>
+            <rect x="490" y="486" width="220" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="504" y="508" font-weight="600">CronJobs</text>
+            <text x="504" y="526">one per report schedule</text>
+            <text x="504" y="543" fill="var(--muted)">offsite backup, every 6 h</text>
+            <path d="M488,512 H462 V430 H432" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah1)"/>
+            <text x="466" y="474" text-anchor="start" fill="var(--muted)">runs</text>
+            <rect x="765" y="182" width="185" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="779" y="204" font-weight="600">host API server</text>
+            <text x="779" y="222">SubjectAccessReview</text>
+            <text x="779" y="239" fill="var(--muted)">reads groups, bindings</text>
+            <rect x="765" y="268" width="185" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="779" y="290" font-weight="600">remote cluster</text>
+            <text x="779" y="308">read with its own</text>
+            <text x="779" y="325" fill="var(--muted)">poller token</text>
+            <rect x="765" y="354" width="185" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="779" y="376" font-weight="600">remote cluster</text>
+            <text x="779" y="394">one poll thread</text>
+            <text x="779" y="411" fill="var(--muted)">per enabled cluster</text>
+            <path d="M710,219 C736,219 736,214 763,214" fill="none" stroke="var(--remote)" stroke-width="1.4" marker-end="url(#ah1)"/>
+            <path d="M710,230 C736,230 736,300 763,300" fill="none" stroke="var(--remote)" stroke-width="1.4" marker-end="url(#ah1)"/>
+            <path d="M710,240 C736,240 736,386 763,386" fill="none" stroke="var(--remote)" stroke-width="1.4" marker-end="url(#ah1)"/>
+            <text x="718" y="152" text-anchor="end" fill="var(--remote)">reads: 60 s and 3600 s</text>
+            <rect x="765" y="468" width="185" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="779" y="490" font-weight="600">Prometheus</text>
+            <text x="779" y="508">scrapes /metrics, no login</text>
+            <text x="779" y="525" fill="var(--muted)">no user or group names</text>
+            <path d="M763,500 H738 V290 H712" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah1)"/>
+            <rect x="765" y="560" width="185" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="779" y="582" font-weight="600">webhook receiver</text>
+            <text x="779" y="600">one CloudEvent per</text>
+            <text x="779" y="617" fill="var(--muted)">scheduled run</text>
+            <path d="M710,540 H738 V592 H763" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah1)"/>
+            <text x="30" y="668" text-anchor="start" fill="var(--muted)">All a person sees enters through the oauth-proxy. Clusters are read; the one default write is the pod&#x27;s own Lease.</text>
+            <text x="30" y="688" text-anchor="start" fill="var(--host)" font-weight="600">Solid arrows are traffic, curves are one dashboard reading many clusters. Nothing on this page is proposed.</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Figure 1. Every component that runs in steady state, the one door a person comes through, and what each part reads and writes.</figcaption>
+    </figure>
+  </section>
+  <section>
+    <h2>2. Inside the dashboard process</h2>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 980 450" role="img" aria-label="Inside one dashboard process: a leader-election thread holds a Lease; one poll thread per enabled cluster polls and writes, but only while this pod is the leader; a cluster-secrets thread discovers clusters every 300 seconds and starts or retires poll threads; an activity-flush thread writes dashboard use every 60 seconds; each request reads one consistent snapshot. All writes go through one SQLite writer connection; each thread reads through its own connection in WAL mode.">
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>
+          <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+            <rect x="20" y="16" width="940" height="368" rx="10" fill="none" stroke="var(--host)" stroke-width="1.2"/><text x="34" y="36" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="600" fill="var(--host)">one dashboard process · gsd.api:create_app, uvicorn, one worker</text>
+            <rect x="40" y="56" width="240" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="54" y="78" font-weight="600">leader-election thread</text>
+            <text x="54" y="96" font-family="IBM Plex Mono, monospace" font-size="11.5">Lease group-sync-dashboard</text>
+            <text x="54" y="113" fill="var(--muted)">30 s, renewed every 10 s</text>
+            <rect x="40" y="172" width="240" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="54" y="194" font-weight="600">poll-&lt;cluster&gt; threads</text>
+            <text x="54" y="212">one per enabled cluster</text>
+            <text x="54" y="229" fill="var(--muted)">poll, login capture, upkeep</text>
+            <rect x="40" y="288" width="240" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="54" y="310" font-weight="600">cluster-secrets thread</text>
+            <text x="54" y="328">discovery every 300 s</text>
+            <text x="54" y="345" fill="var(--muted)">finds Secrets, ConfigMaps</text>
+            <path d="M160,132 V170" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="6 5" marker-end="url(#ah2)"/>
+            <text x="170" y="156" text-anchor="start" fill="var(--muted)">only the leader polls</text>
+            <path d="M160,288 V250" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="6 5" marker-end="url(#ah2)"/>
+            <text x="170" y="274" text-anchor="start" fill="var(--muted)">starts and retires them</text>
+            <rect x="390" y="172" width="230" height="100" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="404" y="194" font-weight="600">SQLite store · gsd.db</text>
+            <text x="404" y="212">one writer connection</text>
+            <text x="404" y="229">a reader per thread, WAL</text>
+            <text x="404" y="246" fill="var(--muted)">on the data volume</text>
+            <path d="M280,210 H388" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah2)"/>
+            <text x="290" y="202" text-anchor="start" font-family="IBM Plex Mono, monospace" font-size="11.5">poll_snapshot</text>
+            <rect x="700" y="56" width="240" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="714" y="78" font-weight="600">HTTP handlers</text>
+            <text x="714" y="96">pages, /api, /metrics</text>
+            <text x="714" y="113" fill="var(--muted)">a tier check, then a read</text>
+            <path d="M760,132 V180 H622" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah2)"/>
+            <text x="632" y="172" text-anchor="start" font-family="IBM Plex Mono, monospace" font-size="11.5">read_snapshot</text>
+            <rect x="700" y="288" width="240" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="714" y="310" font-weight="600">activity-flush thread</text>
+            <text x="714" y="328">who used which page</text>
+            <text x="714" y="345" fill="var(--muted)">written every 60 s</text>
+            <path d="M698,326 H660 V250 H622" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah2)"/>
+            <text x="30" y="410" text-anchor="start" fill="var(--muted)">Each request reads one consistent snapshot; every write goes through the one writer connection. A pod that is not the leader skips polling.</text>
+            <text x="30" y="432" text-anchor="start" fill="var(--host)" font-weight="600">Thread names as the code starts them: leader-election, poll-&lt;cluster&gt;, cluster-secrets, activity-flush.</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Figure 2. The threads one dashboard process starts, and how they share one SQLite database: one writer, many readers.</figcaption>
+    </figure>
+  </section>
+  <section>
+    <h2>3. One poll cycle</h2>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 980 640" role="img" aria-label="One poll cycle of one cluster, in the code&#x27;s order: check leadership and the credential; poll_once reads GroupSync CRs, Groups, Users, Identities and the OAuth CR and writes groups and CRs in one transaction after the users and sync events; login capture reads the oauth-server audit log; the upkeep runs checkpoint, backup, retention and KPI rollup, then on the leader the report snapshot and the usage pull; refresh_bindings runs when due, every 3600 seconds; then the thread waits out the rest of the 60-second interval.">
+          <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>
+          <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+            <rect x="70" y="20" width="520" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="84" y="42" font-weight="600">① leadership and the credential</text>
+            <text x="84" y="60">not the leader: ask again in 5 s</text>
+            <text x="84" y="77" fill="var(--muted)">self-login: use the session token</text>
+            <rect x="70" y="118" width="520" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="84" y="140" font-weight="600">② poll_once · every 60 s</text>
+            <text x="84" y="158">GroupSync CRs, Groups, Users, Identities, OAuth</text>
+            <text x="84" y="175" fill="var(--muted)">users and sync events commit first; the rest in one poll_snapshot</text>
+            <rect x="70" y="216" width="520" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="84" y="238" font-weight="600">③ login capture</text>
+            <text x="84" y="256">the oauth-server audit log, via nodes/&lt;n&gt;/proxy</text>
+            <text x="84" y="273" fill="var(--muted)">byte cursors, at most 8 MiB per node per cycle</text>
+            <rect x="70" y="314" width="520" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="84" y="336" font-weight="600">④ upkeep, in this order</text>
+            <text x="84" y="354">checkpoint, backup every 6 h (keep 4), retention, KPI rollup</text>
+            <text x="84" y="371" fill="var(--muted)">then, leader only: report snapshot every 300 s, usage pull</text>
+            <rect x="70" y="412" width="520" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="84" y="434" font-weight="600">⑤ refresh_bindings · when due, every 3600 s</text>
+            <text x="84" y="452">RoleBindings, ClusterRoleBindings, Namespaces</text>
+            <text x="84" y="469" fill="var(--muted)">NamespaceConfig, GroupConfig, Kyverno</text>
+            <rect x="70" y="510" width="520" height="60" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="84" y="532" font-weight="600">⑥ wait</text>
+            <text x="84" y="550">until 60 s after this cycle began (at least 1 s)</text>
+            <path d="M330,96 V116" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah3)"/>
+            <path d="M330,194 V214" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah3)"/>
+            <path d="M330,292 V312" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah3)"/>
+            <path d="M330,390 V410" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah3)"/>
+            <path d="M330,488 V508" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah3)"/>
+            <path d="M68,540 H40 V58 H68" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah3)"/>
+            <text transform="translate(32,299) rotate(-90)" text-anchor="middle" fill="var(--muted)">next cycle</text>
+            <rect x="650" y="20" width="300" height="94" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.5"/><text x="664" y="42" font-weight="600" fill="var(--remote)">cluster-secrets thread</text>
+            <text x="664" y="60">every 300 s, beside the cycles:</text>
+            <text x="664" y="77" fill="var(--muted)">Secret and ConfigMap discovery,</text>
+            <text x="664" y="94" fill="var(--muted)">saTokenLookup, the daily fleet ping</text>
+            <rect x="650" y="230" width="300" height="76" rx="8" fill="var(--host-wash)" stroke="var(--host)" stroke-width="1.5"/><text x="664" y="252" font-weight="600" fill="var(--host)">what waits for a backup</text>
+            <text x="664" y="270">event history waits for a backup;</text>
+            <text x="664" y="287" fill="var(--muted)">logins, use and KPI rows do not</text>
+            <text x="30" y="600" text-anchor="start" fill="var(--muted)">A cycle reads and writes, captures logins, then tends the store. Bindings are read hourly; discovery runs on its own thread.</text>
+            <text x="30" y="622" text-anchor="start" fill="var(--host)" font-weight="600">Defaults shown: pollIntervalSeconds 60, bindingIntervalSeconds 3600, discoveryIntervalSeconds 300.</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Figure 3. What one poll thread does each cycle, step by step, with the default intervals.</figcaption>
+    </figure>
+  </section>
+  <section>
+    <h2>4. How a request is answered</h2>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 980 584" role="img" aria-label="How a request is answered: the oauth-proxy admits a person by cookie, or a bearer token on /api; the dashboard reads who is asking from X-Forwarded-User; a SubjectAccessReview on the host, sent as the pod&#x27;s ServiceAccount with the viewer&#x27;s groups, decides the tier, cached for 60 seconds, and any failure falls to the self tier; each cluster&#x27;s policy can narrow it further; the answer is read in one read transaction and holds only the rows that tier may see.">
+          <defs><marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>
+          <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+            <rect x="20" y="14" width="165" height="30" rx="6" fill="var(--none-wash)" stroke="var(--none)"/><text x="102.5" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--none)">BROWSER</text>
+            <rect x="205" y="14" width="470" height="30" rx="6" fill="var(--host-wash)" stroke="var(--host)"/><text x="440.0" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--host)">DASHBOARD POD</text>
+            <rect x="695" y="14" width="265" height="30" rx="6" fill="var(--remote-wash)" stroke="var(--remote)"/><text x="827.5" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--remote)">HOST API SERVER</text>
+            <line x1="195" y1="50" x2="195" y2="532" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="6 5"/>
+            <line x1="685" y1="50" x2="685" y2="532" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="6 5"/>
+            <rect x="30" y="70" width="150" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="44" y="92" font-weight="600">a person</text>
+            <text x="44" y="110">opens a tab</text>
+            <text x="44" y="127" fill="var(--muted)">cookie sent</text>
+            <rect x="220" y="70" width="440" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="234" y="92" font-weight="600">① oauth-proxy</text>
+            <text x="234" y="110">a valid cookie, or a delegated bearer token on /api</text>
+            <path d="M180,102 H218" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah4)"/>
+            <rect x="220" y="162" width="440" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="234" y="184" font-weight="600">② who is asking</text>
+            <text x="234" y="202">X-Forwarded-User, trusted only from the proxy</text>
+            <path d="M440,134 V160" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah4)"/>
+            <rect x="220" y="254" width="440" height="94" rx="8" fill="var(--host-wash)" stroke="var(--host)" stroke-width="1.5"/><text x="234" y="276" font-weight="600" fill="var(--host)">③ the tier</text>
+            <text x="234" y="294">self: everyone, their own access only</text>
+            <text x="234" y="311" font-family="IBM Plex Mono, monospace" font-size="11.5">auditor: list clusterrolebindings</text>
+            <text x="234" y="328" font-family="IBM Plex Mono, monospace" font-size="11.5">cluster-admin: update clusterrolebindings</text>
+            <path d="M440,226 V252" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah4)"/>
+            <rect x="705" y="254" width="245" height="94" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.5"/><text x="719" y="276" font-weight="600" fill="var(--remote)">SubjectAccessReview</text>
+            <text x="719" y="294">sent as the pod&#x27;s ServiceAccount,</text>
+            <text x="719" y="311">with the viewer&#x27;s groups</text>
+            <text x="719" y="328" fill="var(--muted)">answer cached 60 s</text>
+            <path d="M660,300 H703" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah4)"/>
+            <text x="668" y="292" text-anchor="start" fill="var(--muted)">asks</text>
+            <rect x="705" y="380" width="245" height="64" rx="8" fill="var(--gap-wash)" stroke="var(--gap)" stroke-width="1.5"/><text x="719" y="402" font-weight="600" fill="var(--gap)">any failure</text>
+            <text x="719" y="420" fill="var(--gap)">falls to the self tier</text>
+            <path d="M827,348 V378" fill="none" stroke="var(--gap)" stroke-width="1.3" marker-end="url(#ah4)"/>
+            <rect x="220" y="376" width="440" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="234" y="398" font-weight="600">④ each cluster&#x27;s policy</text>
+            <text x="234" y="416" font-family="IBM Plex Mono, monospace" font-size="11.5">inherit · self-only · hidden · remote-sar</text>
+            <path d="M440,348 V374" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah4)"/>
+            <rect x="220" y="468" width="440" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="234" y="490" font-weight="600">⑤ read_snapshot</text>
+            <text x="234" y="508">one read transaction: the rows this tier may see</text>
+            <path d="M440,440 V466" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah4)"/>
+            <path d="M218,500 H105 V148" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah4)"/>
+            <text x="112" y="494" text-anchor="start" fill="var(--muted)">JSON</text>
+            <text x="30" y="564" text-anchor="start" fill="var(--host)" font-weight="600">The cluster decides the tier. Usage asks its own question (default: update clusterrolebindings); remote-sar asks the remote.</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Figure 4. From the browser to the rows it may see: the proxy, the identity, the tier the cluster decides, the cluster&#x27;s policy, one read.</figcaption>
+    </figure>
+  </section>
+  <section>
+    <h2>5. How a report is made</h2>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 980 640" role="img" aria-label="How a report is made: a person on the auditor tier gets a ticket from the dashboard, valid 300 seconds, which the browser sends, or a CronJob&#x27;s trigger uses the shared service token; both post a run to the report service, which queues at most 8; the report-worker thread opens the newest database snapshot read-only, assembles the report and writes JSON, then HTML, CSV or PDF as asked, with a run.json, to the artefacts volume; a scheduled run&#x27;s trigger then sends one CloudEvent to a webhook. The report pod never reads a cluster.">
+          <defs><marker id="ah5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>
+          <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+            <rect x="20" y="14" width="210" height="30" rx="6" fill="var(--none-wash)" stroke="var(--none)"/><text x="125.0" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--none)">WHO STARTS IT</text>
+            <rect x="250" y="14" width="450" height="30" rx="6" fill="var(--host-wash)" stroke="var(--host)"/><text x="475.0" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--host)">REPORT SERVICE POD</text>
+            <rect x="720" y="14" width="240" height="30" rx="6" fill="var(--remote-wash)" stroke="var(--remote)"/><text x="840.0" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--remote)">VOLUMES</text>
+            <line x1="240" y1="50" x2="240" y2="580" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="6 5"/>
+            <line x1="710" y1="50" x2="710" y2="580" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="6 5"/>
+            <rect x="30" y="70" width="200" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="44" y="92" font-weight="600">a person, auditor tier</text>
+            <text x="44" y="110">Generate on the Reports</text>
+            <text x="44" y="127" fill="var(--muted)">tab</text>
+            <rect x="30" y="180" width="200" height="94" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="44" y="202" font-weight="600">browser, with a ticket</text>
+            <text x="44" y="220">minted by the dashboard:</text>
+            <text x="44" y="237">HMAC, valid 300 s,</text>
+            <text x="44" y="254" fill="var(--muted)">bound to the user</text>
+            <path d="M130,146 V178" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah5)"/>
+            <rect x="30" y="330" width="200" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="44" y="352" font-weight="600">CronJob, on its cron</text>
+            <text x="44" y="370" font-family="IBM Plex Mono, monospace" font-size="11.5">trigger.py</text>
+            <text x="44" y="387" fill="var(--muted)">the shared service token</text>
+            <rect x="265" y="100" width="420" height="64" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="279" y="122" font-weight="600">POST /report/api/runs</text>
+            <text x="279" y="140">checks the ticket or the token, then queues</text>
+            <path d="M232,227 H248 V132 H263" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah5)"/>
+            <path d="M232,368 H248 V150 H263" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah5)"/>
+            <rect x="265" y="200" width="200" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="279" y="222" font-weight="600">queue</text>
+            <text x="279" y="240">at most 8 waiting</text>
+            <text x="279" y="257" fill="var(--muted)">one run at a time</text>
+            <rect x="485" y="200" width="200" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="499" y="222" font-weight="600">report-worker</text>
+            <text x="499" y="240">the thread that</text>
+            <text x="499" y="257" fill="var(--muted)">renders each run</text>
+            <path d="M375,164 V198" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah5)"/>
+            <path d="M465,238 H483" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah5)"/>
+            <rect x="265" y="320" width="420" height="96" rx="8" fill="var(--host-wash)" stroke="var(--host)" stroke-width="1.5"/><text x="279" y="342" font-weight="600" fill="var(--host)">one run</text>
+            <text x="279" y="360">① open the newest snapshot, read-only</text>
+            <text x="279" y="377">② assemble the report from it</text>
+            <text x="279" y="394">③ write JSON, then HTML · CSV · PDF as asked</text>
+            <path d="M585,276 V318" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah5)"/>
+            <rect x="730" y="320" width="220" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="744" y="342" font-weight="600">data volume</text>
+            <text x="744" y="360">report snapshot, every</text>
+            <text x="744" y="377" fill="var(--muted)">300 s, keep 2</text>
+            <path d="M728,350 H687" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah5)"/>
+            <rect x="730" y="460" width="220" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="744" y="482" font-weight="600">artefacts volume</text>
+            <text x="744" y="500">the files + run.json</text>
+            <text x="744" y="517" fill="var(--muted)">scheduled: 90 d, newest 2 kept</text>
+            <path d="M687,400 H710 V498 H728" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah5)"/>
+            <rect x="30" y="460" width="200" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="44" y="482" font-weight="600">webhook receiver</text>
+            <text x="44" y="500">one CloudEvent per</text>
+            <text x="44" y="517" fill="var(--muted)">scheduled run</text>
+            <path d="M130,406 V458" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah5)"/>
+            <text x="138" y="438" text-anchor="start" fill="var(--muted)">after --wait</text>
+            <text x="30" y="604" text-anchor="start" fill="var(--muted)">The report pod holds no cluster credential: it reads a copy of the database, never a cluster.</text>
+            <text x="30" y="626" text-anchor="start" fill="var(--host)" font-weight="600">Retention: scheduled runs 90 days, the newest 2 per schedule and cluster kept longer; manual runs 3 days, at most 500.</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Figure 5. Two ways in, one pipeline: a person&#x27;s ticket or a schedule&#x27;s token, a bounded queue, a read-only snapshot, and documents on the artefacts volume.</figcaption>
+    </figure>
+  </section>
+  <section>
+    <h2>6. Credentials and trust boundaries</h2>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 980 400" role="img" aria-label="How the dashboard gets and uses each cluster&#x27;s credential: in steady state it reads a remote cluster with that cluster&#x27;s own poller ServiceAccount token, kept in a host Secret; saTokenLookup uses the fleet account&#x27;s password once, to log in on the remote, reads the poller token Secret by name, revokes the login and writes the host Secret; Rejoin does the same with a cluster administrator&#x27;s own password, after a SelfSubjectAccessReview, and never stores it. The browser never receives a cluster token.">
+          <defs><marker id="ah6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>
+          <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+            <rect x="20" y="14" width="170" height="30" rx="6" fill="var(--none-wash)" stroke="var(--none)"/><text x="105.0" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--none)">HOW</text>
+            <rect x="205" y="14" width="240" height="30" rx="6" fill="var(--none-wash)" stroke="var(--none)"/><text x="325.0" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--none)">WHAT STARTS IT</text>
+            <rect x="460" y="14" width="280" height="30" rx="6" fill="var(--none-wash)" stroke="var(--none)"/><text x="600.0" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--none)">WHAT CROSSES TO THE REMOTE</text>
+            <rect x="755" y="14" width="205" height="30" rx="6" fill="var(--none-wash)" stroke="var(--none)"/><text x="857.5" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--none)">WHAT IS KEPT</text>
+            <rect x="20" y="62" width="170" height="76" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.5"/><text x="34" y="86" font-weight="600" fill="var(--remote)">steady state</text>
+            <rect x="205" y="62" width="240" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+            <text x="219" y="86">every poll of</text>
+            <text x="219" y="103" fill="var(--muted)">every cluster</text>
+            <rect x="460" y="62" width="280" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+            <text x="474" y="86">the remote&#x27;s own poller</text>
+            <text x="474" y="103" fill="var(--muted)">token: reads, plus the</text>
+            <text x="474" y="120" fill="var(--muted)">remote-sar question</text>
+            <rect x="755" y="62" width="205" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+            <text x="769" y="86">Secret gsd-cluster-&lt;n&gt;,</text>
+            <text x="769" y="103" fill="var(--muted)">re-read every 300 s</text>
+            <rect x="20" y="154" width="170" height="76" rx="8" fill="var(--host-wash)" stroke="var(--host)" stroke-width="1.5"/><text x="34" y="178" font-weight="600" fill="var(--host)">saTokenLookup</text>
+            <rect x="205" y="154" width="240" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+            <text x="219" y="178">the discovery thread,</text>
+            <text x="219" y="195" fill="var(--muted)">leader only, when the</text>
+            <text x="219" y="212" fill="var(--muted)">writes switch is on</text>
+            <rect x="460" y="154" width="280" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+            <text x="474" y="178">the fleet password, once:</text>
+            <text x="474" y="195" fill="var(--muted)">log in, read one Secret</text>
+            <text x="474" y="212" fill="var(--muted)">by name, revoke</text>
+            <rect x="755" y="154" width="205" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+            <text x="769" y="178">writes the host Secret</text>
+            <text x="769" y="195" fill="var(--muted)">gsd-cluster-&lt;n&gt;</text>
+            <rect x="20" y="246" width="170" height="76" rx="8" fill="var(--host-wash)" stroke="var(--host)" stroke-width="1.5"/><text x="34" y="270" font-weight="600" fill="var(--host)">Rejoin</text>
+            <rect x="205" y="246" width="240" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+            <text x="219" y="270">a cluster-admin presses</text>
+            <text x="219" y="287" fill="var(--muted)">Rejoin and types their</text>
+            <text x="219" y="304" fill="var(--muted)">own password</text>
+            <rect x="460" y="246" width="280" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+            <text x="474" y="270">one login, a self-check</text>
+            <text x="474" y="287" fill="var(--muted)">(SSAR), one Secret read,</text>
+            <text x="474" y="304" fill="var(--muted)">revoke</text>
+            <rect x="755" y="246" width="205" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+            <text x="769" y="270">the same Secret; the</text>
+            <text x="769" y="287" fill="var(--muted)">password is never kept</text>
+            <text x="30" y="352" text-anchor="start" fill="var(--muted)">The browser never receives a cluster token: /api names the credential&#x27;s kind only, and the report pod sees a 300 s ticket.</text>
+            <text x="30" y="376" text-anchor="start" fill="var(--host)" font-weight="600">Polling only reads. A remote only ever gets a SubjectAccessReview, a SelfSubjectAccessReview and a login token, which is revoked.</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Figure 6. Three ways a cluster credential is obtained or used, what crosses to the remote cluster in each, and what stays on the host. A fourth, userSelfLogin, polls with the fleet account&#x27;s session token (reference-architecture.md).</figcaption>
+    </figure>
+  </section>
+  <section>
+    <h2>7. What is kept, and for how long</h2>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 980 370" role="img" aria-label="What is kept and for how long: the SQLite database holds current cluster state, plus history kept by type: sync history 730 days, logins 400 days, dashboard use 400 days, Kyverno events 90 days, the KPI rollup 730 days, membership events kept; a local backup is taken every 6 hours and 4 are kept, an offsite copy is made every 6 hours, a report snapshot every 300 seconds with 2 kept; scheduled report runs are kept 90 days and the newest 2 per schedule beyond that, manual runs 3 days. Sync, membership and Kyverno history is pruned only after a successful backup; logins, dashboard use and KPI rows are not held.">
+          <defs><marker id="ah7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>
+          <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+            <rect x="30" y="40" width="300" height="230" rx="8" fill="var(--host-wash)" stroke="var(--host)" stroke-width="1.5"/><text x="44" y="62" font-weight="600" fill="var(--host)">gsd.db · the SQLite database</text>
+            <text x="44" y="80">current state: clusters, groups,</text>
+            <text x="44" y="97" fill="var(--muted)">users, bindings, namespaces</text>
+            <text x="44" y="114" fill="var(--muted)"></text>
+            <text x="44" y="131">history, kept by type:</text>
+            <text x="44" y="148" fill="var(--muted)">sync history · 730 days</text>
+            <text x="44" y="165" fill="var(--muted)">logins · 400 days</text>
+            <text x="44" y="182" fill="var(--muted)">dashboard use · 400 days</text>
+            <text x="44" y="199" fill="var(--muted)">Kyverno events · 90 days</text>
+            <text x="44" y="216" fill="var(--muted)">KPI daily rollup · 730 days</text>
+            <text x="44" y="233" fill="var(--muted)">membership events · kept</text>
+            <rect x="400" y="40" width="250" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="414" y="62" font-weight="600">local backups</text>
+            <text x="414" y="80">every 6 h, keep 4</text>
+            <text x="414" y="97" fill="var(--muted)">VACUUM INTO on the volume</text>
+            <rect x="700" y="40" width="250" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="714" y="62" font-weight="600">offsite copy</text>
+            <text x="714" y="80">CronJob, every 6 h</text>
+            <text x="714" y="97" fill="var(--muted)">to a PVC or S3</text>
+            <rect x="400" y="194" width="250" height="76" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><text x="414" y="216" font-weight="600">report snapshot</text>
+            <text x="414" y="234">every 300 s, keep 2</text>
+            <text x="414" y="251" fill="var(--muted)">what the report pod reads</text>
+            <rect x="700" y="194" width="250" height="76" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.5"/><text x="714" y="216" font-weight="600" fill="var(--remote)">report runs</text>
+            <text x="714" y="234">scheduled: 90 days, newest 2</text>
+            <text x="714" y="251" fill="var(--muted)">kept longer · manual: 3 days</text>
+            <path d="M330,78 H398" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah7)"/>
+            <text x="340" y="70" text-anchor="start" fill="var(--muted)">copy</text>
+            <path d="M650,78 H698" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah7)"/>
+            <path d="M330,232 H398" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah7)"/>
+            <text x="340" y="224" text-anchor="start" fill="var(--muted)">copy</text>
+            <path d="M650,232 H698" fill="none" stroke="var(--ink)" stroke-width="1.3" marker-end="url(#ah7)"/>
+            <text x="30" y="320" text-anchor="start" fill="var(--muted)">Sync, membership and Kyverno history waits for a successful backup; logins, dashboard use and KPI rows do not.</text>
+            <text x="30" y="344" text-anchor="start" fill="var(--host)" font-weight="600">Every period is a values.yaml default, except the KPI rollup&#x27;s 730 days, a code constant.</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Figure 7. The database, its copies, the report snapshot and the report runs, with each default retention.</figcaption>
+    </figure>
+  </section>
+</div>
