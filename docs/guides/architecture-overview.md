@@ -19,19 +19,20 @@ together.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/architecture/overview.dark.png">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/architecture/overview.light.png">
-  <img alt="A person's browser reaches the dashboard only through the Route and the oauth-proxy sidecar; the dashboard container reads the host API and every remote cluster with each cluster's own token and writes one SQLite database on the data volume; the report pod reads a read-only snapshot of it, never a cluster, and writes documents to the artefacts volume; CronJobs start scheduled reports and the offsite backup; Prometheus scrapes counts only." src="../diagrams/architecture/overview.light.png">
+  <img alt="A person's browser reaches the dashboard only through the Route and the oauth-proxy sidecar; the dashboard container reads the host API and every remote cluster with each cluster's own token and writes one SQLite database on the data volume; the report pod reads a read-only snapshot of it, never a cluster, and writes documents to the artefacts volume; CronJobs start scheduled reports and the offsite backup; Prometheus scrapes metrics that carry no user or group names." src="../diagrams/architecture/overview.light.png">
 </picture>
 <!-- markdownlint-enable MD033 -->
 
-*Figure 1. Every component the chart deploys, the one door a person comes through, and what each part reads and
-writes.*
+*Figure 1. Every component that runs in steady state, the one door a person comes through, and what each part reads
+and writes. Not drawn: the recovery Deployment (0 replicas unless `recovery.enabled`), the `secretsMint` hook Job,
+the PodDisruptionBudgets and the NetworkPolicy. Prometheus also scrapes the report service at `/report/metrics`.*
 
 ```text
 BROWSER            HOST CLUSTER · the dashboard's namespace                     OUTSIDE THE NAMESPACE
 a person ──HTTPS──▶ Route ──Service :8080──▶ dashboard pod
                                              ├ oauth-proxy sidecar ──▶ dashboard container ──reads──▶ host API server
                                              │      │                         │                ──reads──▶ each remote cluster
-                                             │  /report/ + ticket       one write per poll     ◀─scrapes── Prometheus
+                                             │  /report/ + ticket       writes each poll       ◀─scrapes── Prometheus
                                              ▼      ▼                         ▼
                                    report service pod ◀──reads── data volume (gsd.db, backups, report snapshots)
                                              │ writes
@@ -84,15 +85,16 @@ Where in the code:
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/architecture/poll-cycle.dark.png">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/architecture/poll-cycle.light.png">
-  <img alt="One poll cycle of one cluster, in the code's order: check leadership and the credential; poll_once reads GroupSync CRs, Groups, Users, Identities and the OAuth CR and writes them in one transaction; login capture reads the oauth-server audit log; the upkeep runs checkpoint, backup, retention and KPI rollup, then on the leader the report snapshot and the usage pull; refresh_bindings runs when due, every 3600 seconds; then the thread waits out the rest of the 60-second interval." src="../diagrams/architecture/poll-cycle.light.png">
+  <img alt="One poll cycle of one cluster, in the code's order: check leadership and the credential; poll_once reads GroupSync CRs, Groups, Users, Identities and the OAuth CR and writes groups and CRs in one transaction after the users and sync events; login capture reads the oauth-server audit log; the upkeep runs checkpoint, backup, retention and KPI rollup, then on the leader the report snapshot and the usage pull; refresh_bindings runs when due, every 3600 seconds; then the thread waits out the rest of the 60-second interval." src="../diagrams/architecture/poll-cycle.light.png">
 </picture>
 <!-- markdownlint-enable MD033 -->
 
 *Figure 3. What one poll thread does each cycle, step by step, with the default intervals.*
 
 ```text
-① leadership and the credential   not the leader: skip to ⑥; self-login: use the session token
-② poll_once (every 60 s)          GroupSync CRs, Groups, Users, Identities, OAuth → one poll_snapshot transaction
+① leadership and the credential   not the leader: ask again in 5 s; self-login: use the session token
+② poll_once (every 60 s)          GroupSync CRs, Groups, Users, Identities, OAuth → users and sync events commit
+                                  first; the rest in one poll_snapshot transaction
 ③ login capture                   the oauth-server audit log via nodes/<n>/proxy, byte cursors, ≤ 8 MiB per node per cycle
 ④ upkeep, in this order           checkpoint, backup every 6 h (keep 4), retention, KPI rollup;
                                   then, leader only: report snapshot every 300 s, usage pull
@@ -104,7 +106,8 @@ Beside the cycles: the cluster-secrets thread, every 300 s (discovery, saTokenLo
 Where in the code:
 
 - The loop and its order: `local-development/gsd/poller.py#Poller._run_cluster`; the upkeep tail:
-  `local-development/gsd/poller.py#Poller._after_poll` ("nothing is deleted before the copy that would hold it").
+  `local-development/gsd/poller.py#Poller._after_poll`; the backup gate on event history:
+  `local-development/gsd/poller.py#Poller._prune_history`.
 - `local-development/gsd/poller.py#poll_once`, `local-development/gsd/poller.py#refresh_bindings`; login capture:
   `local-development/gsd/auditlog.py`.
 - The defaults: `local-development/gsd/config.py#Settings` (`poll_interval_seconds`, `binding_interval_seconds`,
@@ -162,7 +165,7 @@ CronJob (trigger.py, the shared service token) ───────────
                                                      ③ JSON, then HTML · CSV · PDF as asked
    data volume (report snapshot every 300 s, keep 2) ──reads──▶ one run ──▶ artefacts volume (files + run.json)
    CronJob, after --wait ─▶ webhook receiver: one CloudEvent per scheduled run
-Retention: scheduled runs 2 per schedule and 90 days; manual runs 3 days, at most 500.
+Retention: scheduled runs 90 days, the newest 2 per schedule and cluster kept longer; manual runs 3 days, at most 500.
 ```
 
 Where in the code:
@@ -185,19 +188,20 @@ Where in the code:
 </picture>
 <!-- markdownlint-enable MD033 -->
 
-*Figure 6. The three ways a cluster credential is obtained or used, what crosses to the remote cluster in each, and
-what stays on the host.*
+*Figure 6. Three ways a cluster credential is obtained or used, what crosses to the remote cluster in each, and what
+stays on the host. A fourth, userSelfLogin, polls with the fleet account's session token; the reference architecture
+describes it.*
 
 ```text
 HOW             WHAT STARTS IT                             WHAT CROSSES TO THE REMOTE                    WHAT IS KEPT
 steady state    every poll of every cluster                the remote's own poller token: reads,         Secret gsd-cluster-<n>,
-                                                           plus the remote-sar question                  read again per request
+                                                           plus the remote-sar question                  re-read every 300 s
 saTokenLookup   the discovery thread, leader only,         the fleet password, once: log in,             writes the host Secret
                 when the writes switch is on               read one Secret by name, revoke               gsd-cluster-<n>
 Rejoin          a cluster-admin presses Rejoin and         one login, a self-check (SSAR),               the same Secret; the
                 types their own password                   one Secret read, revoke                       password is never kept
-The browser never receives a cluster token. Polling only reads; the only things created on a remote are a
-SubjectAccessReview and a login token, which is revoked.
+The browser never receives a cluster token. Polling only reads; a remote only ever gets a SubjectAccessReview, a
+SelfSubjectAccessReview and a login token, which is revoked.
 ```
 
 Where in the code:
@@ -213,7 +217,7 @@ Where in the code:
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/architecture/data-lifecycle.dark.png">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/architecture/data-lifecycle.light.png">
-  <img alt="What is kept and for how long: the SQLite database holds current cluster state, plus history kept by type: sync history 730 days, logins 400 days, dashboard use 400 days, Kyverno events 90 days, the KPI rollup 730 days, membership events kept; a local backup is taken every 6 hours and 4 are kept, an offsite copy is made every 6 hours, a report snapshot every 300 seconds with 2 kept; report runs are kept 2 per schedule for 90 days, manual runs 3 days. Nothing is pruned before the backup that would hold it." src="../diagrams/architecture/data-lifecycle.light.png">
+  <img alt="What is kept and for how long: the SQLite database holds current cluster state, plus history kept by type: sync history 730 days, logins 400 days, dashboard use 400 days, Kyverno events 90 days, the KPI rollup 730 days, membership events kept; a local backup is taken every 6 hours and 4 are kept, an offsite copy is made every 6 hours, a report snapshot every 300 seconds with 2 kept; scheduled report runs are kept 90 days and the newest 2 per schedule beyond that, manual runs 3 days. Sync, membership and Kyverno history is pruned only after a successful backup; logins, dashboard use and KPI rows are not held." src="../diagrams/architecture/data-lifecycle.light.png">
 </picture>
 <!-- markdownlint-enable MD033 -->
 
@@ -223,8 +227,8 @@ Where in the code:
 gsd.db  current state (clusters, groups, users, bindings, namespaces) + history by type:
         sync 730 d · logins 400 d · dashboard use 400 d · Kyverno events 90 d · KPI rollup 730 d · membership kept
   ──copy──▶ local backups (every 6 h, keep 4) ──▶ offsite copy (CronJob every 6 h, a PVC or S3)
-  ──copy──▶ report snapshot (every 300 s, keep 2) ──▶ report runs (scheduled: 2 per schedule, 90 d · manual: 3 d)
-Retention waits for a successful backup: nothing is pruned before the copy that would hold it.
+  ──copy──▶ report snapshot (every 300 s, keep 2) ──▶ report runs (scheduled: 90 d, newest 2 kept longer · manual: 3 d)
+Sync, membership and Kyverno history waits for a successful backup; logins, dashboard use and KPI rows do not.
 ```
 
 Where in the code:
@@ -232,7 +236,9 @@ Where in the code:
 - Retention defaults: `local-development/gsd/config.py#Settings`; the KPI rollup's:
   `local-development/gsd/kpi/rollup.py#KPI_DAILY_RETENTION_DAYS`.
 - Backups and the report snapshot: `local-development/gsd/store.py`; pruning held until a backup:
-  `local-development/gsd/poller.py#Poller._after_poll`.
+  `local-development/gsd/poller.py#Poller._prune_history`; the prunes it does not hold:
+  `local-development/gsd/logincapture.py#_prune`, `local-development/gsd/activity.py#ActivityRecorder.prune`,
+  `local-development/gsd/kpi/rollup.py#prune`.
 - Backup and restore for an operator: [the backup runbook](../../charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md).
 
 ---
