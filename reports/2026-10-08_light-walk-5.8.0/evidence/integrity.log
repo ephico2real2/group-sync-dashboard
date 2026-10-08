@@ -1,0 +1,12 @@
+  [ok ] access-certification     47663db7c718  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] access-matrix            00dcccd1af1f  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] binding-findings         f2f576c0fa3e  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] compliance-snapshot      fd19bc9976e1  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] dormant-access           11e5d63cf612  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] groups                   81f6f3305374  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] groupsync-health         658ee26d6de6  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] login-activity           2e22d895075f  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] namespace-access         c4c320a58a72  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] privileged-access        d2d5f92e4a75  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] users                    356ad7a05ed3  recomputed=True run=True pdf=True html=True pdf/a=True
+11 / 11 reports pass → integrity.jsonl
