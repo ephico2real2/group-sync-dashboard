@@ -10,6 +10,7 @@ records follow separately; their status and measurements belong to the work they
 - [api-access.md](guides/api-access.md) — call the API from outside the cluster with curl or Postman.
 - [AUDIT_LOG_CAPTURE.md](guides/AUDIT_LOG_CAPTURE.md) — audit-log login capture and how to check it is working.
 - [LOGIN_CAPTURE_QUICKCHECK.md](guides/LOGIN_CAPTURE_QUICKCHECK.md) — a step-by-step check that audit-log login capture works; its OAuth Debug transcript is history, not guidance.
+- [The introduction deck](presentations/access-tracking-intro/README.md) — OpenShift Access Tracking & Reporting, 19 slides: why (self-service, quarterly review evidence) and how (tiers, architecture, operations).
 - [architecture-overview.md](guides/architecture-overview.md) — the architecture in seven figures: the components, one process, a poll, a request, a report, credentials, retention.
 - [reference-architecture.md](guides/reference-architecture.md) — components, data flow and deployment constraints.
 - [image-vulnerability-scan.md](guides/image-vulnerability-scan.md) — dated image and base-image scan evidence.
