@@ -8,6 +8,7 @@ architecture, reporting, credentials, operations, rollout). Made on 2026-10-08 a
 | File | What it is |
 |---|---|
 | `deck.pdf` | the deck to present or send: 19 pages, 1920 × 1080 |
+| `deck.pptx` | the same 19 slides for PowerPoint or Keynote, 13.33 × 7.5 in, in Arial and Courier New so it looks the same without IBM Plex installed |
 | `deck.html` | the same slides as one page, which opens in any browser; the slide markup is the source |
 | `images/` | the screen-sized light screenshots the slides show, cropped from the walk below at full resolution |
 
@@ -42,3 +43,14 @@ PY
 ```
 
 Change a slide in `deck.html`, rebuild the PDF, and commit both together.
+
+## The PowerPoint file
+
+`deck.pptx` is the Slides deck's own export (Download, then *PowerPoint, basic fonts*), not a conversion of
+`deck.html`: the slide markup in `deck.html` is that deck's, so after a slide change, change it in the deck, export
+again, and commit the three files together. *PowerPoint, current fonts* keeps IBM Plex instead, for machines that
+have it.
+
+The Slides player keeps one border colour per element and draws no border on a table cell, so a card's coloured line
+is its only border (the outline is a `box-shadow`), and the tiers table colours the tier names. Check a change in the
+deck itself as well as in `deck.html`: a browser draws markup the player drops.
