@@ -3,7 +3,7 @@
 A 19-slide deck that introduces the OCP Access Tracking Dashboard in two parts: **why** (for leadership and audit:
 silent access failures, self-service, quarterly access-review evidence) and **how** (for the platform team: tiers,
 architecture, reporting, credentials, operations, rollout). Made on 2026-10-08 against application 5.8.0, chart
-0.70.12.
+0.70.12, with screenshots from the lab on 2026-10-08.
 
 | File | What it is |
 |---|---|
@@ -18,11 +18,12 @@ from `docs/diagrams/architecture/`; they are not copied here.
 
 - **Screenshots:** the light-theme walk of the lab at 5.8.0,
   [reports/2026-10-08_light-walk-5.8.0](../../../reports/2026-10-08_light-walk-5.8.0/README.md). Each crop is the top
-  1440 × 900 of one page (the certification pack's two crops are 750 px wide), never a full-page capture.
+  1440 × 900 of one page, except the certification pack's two, which are 750 px wide regions (750 × 850 and
+  750 × 690) of that walk's `extra/10-html-report-access-certification.png`. None is a full-page capture.
 - **Numbers:** each slide's footer names its source in the repository: the README (the reference cluster's 9
   bindings), `environments/crc.yaml` (the quarterly schedule), the chart's values and PrometheusRule (retention, 20
   alerts), and the reports catalogue.
-- **Speaker notes:** one per slide, in `deck.html` (hidden when presenting or printing).
+- **Speaker notes:** one per slide, in `deck.html` as `<aside>`, never displayed.
 
 ## Rebuilding the PDF
 
