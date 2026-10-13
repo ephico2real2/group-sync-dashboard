@@ -21,13 +21,14 @@ from `docs/diagrams/architecture/`; they are not copied here.
 - **Screenshots:** the light-theme walk of the lab at 5.8.0,
   [reports/2026-10-08_light-walk-5.8.0](../../../reports/2026-10-08_light-walk-5.8.0/README.md). Five crops are the top
   1440 × 900 of one page; the certification pack's two are 750 px wide regions (750 × 850 and 750 × 690) of that
-  walk's `extra/10-html-report-access-certification.png`; the six added on 2026-10-13 are regions of single cards or
-  alert rows (`caught-*.png`, `overview-clusters.png`, `lookup.png`, `logins.png`, each 1130–1140 px wide). None is a
-  full-page capture.
+  walk's `extra/10-html-report-access-certification.png`; the six added on 2026-10-13 are regions of one page each,
+  from one card or alert row to a block of cards (`caught-*.png`, `overview-clusters.png`, `lookup.png`, `logins.png`,
+  each 1130–1140 px wide). None is a full-page capture.
 - **Numbers:** each slide's footer names its source: the README (the reference cluster's 9 bindings),
   `environments/crc.yaml` (the quarterly schedule), the chart's values and PrometheusRule (retention, 20 alerts), the
   reports catalogue, the reference architecture (the review cycle and the limits), and the walk's screenshots (every
-  number on the lab slides is printed in the snippet beside it).
+  count on the lab slides is printed in the snippet beside it; the 400 days on `logins` is the chart's login
+  retention).
 - **Speaker notes:** one per slide, in `deck.html` as `<aside>`, never displayed.
 
 ## Rebuilding the PDF
