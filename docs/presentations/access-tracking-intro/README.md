@@ -1,14 +1,15 @@
 # OpenShift Access Tracking & Reporting — the introduction deck
 
-A 19-slide deck that introduces the OCP Access Tracking Dashboard in two parts: **why** (for leadership and audit:
-silent access failures, self-service, quarterly access-review evidence) and **how** (for the platform team: tiers,
-architecture, reporting, credentials, operations, rollout). Made on 2026-10-08 against application 5.8.0, chart
+A 26-slide deck that introduces the OCP Access Tracking Dashboard in two parts: **why** (for leadership and audit:
+silent access failures and the lab catching them, self-service, the audit views, quarterly access-review evidence and
+the review cycle) and **how** (for the platform team: tiers, architecture, reporting, credentials, operations, limits,
+rollout). Made on 2026-10-08 against application 5.8.0, chart
 0.70.12, with screenshots from the lab on 2026-10-08.
 
 | File | What it is |
 |---|---|
-| `deck.pdf` | the deck to present or send: 19 pages, 1920 × 1080 |
-| `deck.pptx` | the same 19 slides for PowerPoint or Keynote, 13.33 × 7.5 in, in Arial and Courier New so it looks the same without IBM Plex installed |
+| `deck.pdf` | the deck to present or send: 26 pages, 1920 × 1080 px |
+| `deck.pptx` | the same 26 slides for PowerPoint or Keynote, 13.33 × 7.5 in, in Arial and Courier New so it looks the same without IBM Plex installed |
 | `deck.html` | the same slides as one page, which opens in any browser; the slide markup is the source |
 | `images/` | the screen-sized light screenshots the slides show, cropped from the walk below at full resolution |
 
@@ -18,12 +19,15 @@ from `docs/diagrams/architecture/`; they are not copied here.
 ## Where every claim comes from
 
 - **Screenshots:** the light-theme walk of the lab at 5.8.0,
-  [reports/2026-10-08_light-walk-5.8.0](../../../reports/2026-10-08_light-walk-5.8.0/README.md). Each crop is the top
-  1440 × 900 of one page, except the certification pack's two, which are 750 px wide regions (750 × 850 and
-  750 × 690) of that walk's `extra/10-html-report-access-certification.png`. None is a full-page capture.
-- **Numbers:** each slide's footer names its source in the repository: the README (the reference cluster's 9
-  bindings), `environments/crc.yaml` (the quarterly schedule), the chart's values and PrometheusRule (retention, 20
-  alerts), and the reports catalogue.
+  [reports/2026-10-08_light-walk-5.8.0](../../../reports/2026-10-08_light-walk-5.8.0/README.md). Five crops are the top
+  1440 × 900 of one page; the certification pack's two are 750 px wide regions (750 × 850 and 750 × 690) of that
+  walk's `extra/10-html-report-access-certification.png`; the six added on 2026-10-13 are regions of single cards or
+  alert rows (`caught-*.png`, `overview-clusters.png`, `lookup.png`, `logins.png`, each 1130–1140 px wide). None is a
+  full-page capture.
+- **Numbers:** each slide's footer names its source: the README (the reference cluster's 9 bindings),
+  `environments/crc.yaml` (the quarterly schedule), the chart's values and PrometheusRule (retention, 20 alerts), the
+  reports catalogue, the reference architecture (the review cycle and the limits), and the walk's screenshots (every
+  number on the lab slides is printed in the snippet beside it).
 - **Speaker notes:** one per slide, in `deck.html` as `<aside>`, never displayed.
 
 ## Rebuilding the PDF
