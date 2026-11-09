@@ -73,7 +73,7 @@ jobs:
           # The repository is public: no credential stays in git's config. The deploy key exists only in "Push release".
           persist-credentials: false
 
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         if: vars.SUPPLY_CHAIN_SIGNING != 'false'
         with:
           cosign-release: v3.1.3   # the cosign publish.yml signs with
